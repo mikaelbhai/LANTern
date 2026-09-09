@@ -494,11 +494,27 @@ export function Player({
         )}
       </div>
 
-      {/* click-to-toggle surface, beneath the chrome */}
+      {/*
+        Click-to-toggle surface, beneath the chrome.
+
+        With the controls hidden, the first press only brings them back; it
+        takes a second one to pause. Otherwise a tap meant to find out where
+        you are in a film stops the film — which is the thing you least want
+        while someone is watching it with you.
+
+        This costs a mouse nothing: moving it already wakes the controls, so a
+        pointer user is essentially always in the second state and one click
+        still pauses. It is touch, where there is no movement to wake
+        anything, that gets the two-step.
+      */}
       <button
-        aria-label={playing ? 'Pause' : 'Play'}
+        aria-label={!chrome ? 'Show controls' : playing ? 'Pause' : 'Play'}
         onClick={() => {
           if (following) return;
+          if (!chrome) {
+            wake();
+            return;
+          }
           const next = !playing;
           setPlaying(next);
           broadcast(next, time);
