@@ -42,6 +42,23 @@ jobs:
 
       - run: npm ci
 
+      # The detached file server, built before the app and for both
+      # architectures, because the app it ships inside is universal.
+      #
+      # The placeholder comes first on purpose: tauri-build refuses to compile
+      # while a declared resource is missing, and building this binary compiles
+      # the library it depends on - so without it the build would be waiting on
+      # its own output. This is what failed the first macOS runs.
+      - name: Detached host
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/lantern-host
+          cd src-tauri
+          cargo build --release --target aarch64-apple-darwin -p lantern-host
+          cargo build --release --target x86_64-apple-darwin -p lantern-host
+          lipo -create             target/aarch64-apple-darwin/release/lantern-host             target/x86_64-apple-darwin/release/lantern-host             -output binaries/lantern-host
+          lipo -info binaries/lantern-host
+
       - name: Build
         # A universal binary rather than two downloads: nobody should have to
         # know which processor their Mac has.

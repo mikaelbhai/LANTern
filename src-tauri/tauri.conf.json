@@ -57,9 +57,6 @@
     },
     "macOS": {
       "minimumSystemVersion": "12.0"
-    },
-    "resources": {
-      "binaries/lantern-host.exe": "lantern-host.exe"
     }
   }
 }
