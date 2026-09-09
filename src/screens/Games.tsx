@@ -1,6 +1,16 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Circle, Crown, Eye, Footprints, Gamepad2, Grid3x3, Spade, Users } from 'lucide-react';
+import {
+  Banknote,
+  Circle,
+  Crown,
+  Eye,
+  Footprints,
+  Gamepad2,
+  Grid3x3,
+  Spade,
+  Users,
+} from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, Modal, SectionTitle } from '../components/ui';
 import { Chess } from './games/Chess';
@@ -8,9 +18,11 @@ import { ConnectFour } from './games/ConnectFour';
 import { Dots } from './games/Dots';
 import { Sequence } from './games/Sequence';
 import { Crossy } from './games/Crossy';
+import { Deal } from './games/Deal';
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
+import { GAME_NAMES } from '../lib/games';
 import type { GameKind, Peer } from '../lib/types';
 
 /**
@@ -30,50 +42,76 @@ const GAMES: {
   name: string;
   blurb: string;
   icon: React.ElementType;
-  /** Two only, or anyone in the room. */
+  /** Two only, or anyone in the room — which decides how it is started. */
   seats: '2' | 'party';
+  /** How many can play, written out. Not every party game seats the same. */
+  seatsLabel: string;
+  /**
+   * A hard limit, where one exists.
+   *
+   * Most of these stretch to however many turn up. Monopoly Deal does not:
+   * six hands deal thirty of its hundred and six cards before the first turn,
+   * and the deck can run dry with everything locked up in property.
+   */
+  maxPlayers?: number;
   accent: string;
 }[] = [
   {
     id: 'chess',
-    name: 'Chess',
+    name: GAME_NAMES.chess,
     blurb: 'Full rules, five board themes, three piece sets. Challenge anyone on the network.',
     icon: Crown,
     seats: '2',
+    seatsLabel: 'Two players',
     accent: '#F5A623',
   },
   {
     id: 'connect4',
-    name: 'Connect Four',
+    name: GAME_NAMES.connect4,
     blurb: 'Drop a disc, get four in a row. Two to four players, and the turn goes round.',
     icon: Circle,
     seats: 'party',
+    seatsLabel: 'Two to four',
     accent: '#39D9C8',
   },
   {
     id: 'sequence',
-    name: 'Sequence',
+    name: GAME_NAMES.sequence,
     blurb:
       'Play a card, place a chip, get five in a line. Jacks are wild or take a chip off. Two to four.',
     icon: Spade,
     seats: 'party',
+    seatsLabel: 'Two to four',
     accent: '#7BD88F',
   },
   {
     id: 'crossy',
-    name: 'Crossy Road',
+    name: GAME_NAMES.crossy,
     blurb:
       'Hop across the traffic and ride the logs. Everyone races the same road at the same time.',
     icon: Footprints,
     seats: 'party',
+    seatsLabel: 'Two to four',
     accent: '#F7E14A',
   },
   {
+    id: 'deal',
+    name: GAME_NAMES.deal,
+    blurb:
+      'Collect three sets before anyone else. Rent, Sly Deals, and a Just Say No when it counts.',
+    icon: Banknote,
+    seats: 'party',
+    seatsLabel: 'Two to five',
+    maxPlayers: 5,
+    accent: '#E86FB0',
+  },
+  {
     id: 'dots',
-    name: 'Dots & Boxes',
+    name: GAME_NAMES.dots,
     blurb: 'Draw a line, close a box, go again. Better with four people than with two.',
     icon: Grid3x3,
     seats: 'party',
+    seatsLabel: 'Two to four',
     accent: '#9B8CFF',
   },
 ];
@@ -95,6 +133,8 @@ export function Games() {
         return <Crossy onExit={exit} />;
       case 'dots':
         return <Dots onExit={exit} />;
+      case 'deal':
+        return <Deal onExit={exit} />;
       default:
         // A session for a game this build no longer has — someone on an older
         // version started a solitaire. Better to land in the hub than to
@@ -137,10 +177,23 @@ function GamesHub() {
    */
   const playTogether = async (kind: GameKind) => {
     const seed = Math.floor(Math.random() * 1_000_000);
+    // A game with a seat limit takes the first few rather than everybody, and
+    // says so — quietly dropping somebody who is sitting in the call waiting
+    // to be dealt in would be the worse half of the two.
+    const limit = GAMES.find((g) => g.id === kind)?.maxPlayers;
+    const invited = limit ? playable.slice(0, limit - 1) : playable;
+    if (invited.length < playable.length) {
+      toast({
+        kind: 'info',
+        title: `${GAME_NAMES[kind]} seats ${limit}`,
+        body: `${playable.length - invited.length} more will have to sit this one out.`,
+      });
+    }
+
     try {
       const session = await api.game.start(
         kind,
-        playable.map((p) => p.id),
+        invited.map((p) => p.id),
         seed,
       );
       setGameSession(session);
@@ -189,7 +242,7 @@ function GamesHub() {
                     <div>
                       <div className="text-sm font-medium">{g.name}</div>
                       <Badge tone={g.seats === 'party' ? 'cyan' : 'muted'}>
-                        {g.seats === 'party' ? 'Two to four' : 'Two players'}
+                        {g.seatsLabel}
                       </Badge>
                     </div>
                   </div>

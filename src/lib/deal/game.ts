@@ -12,7 +12,7 @@
  * One device therefore owns the state and tells each player only what they are
  * entitled to see. `view()` is that redaction.
  */
-import { buildDeck, SETS, isRainbow, propertyColours } from './cards';
+import { buildDeck, SETS, describe, isRainbow, propertyColours } from './cards';
 import type { Card, Colour } from './cards';
 
 export const HAND_LIMIT = 7;
@@ -54,6 +54,13 @@ export interface State {
   /** True once the turn's draw has happened. */
   drawn: boolean;
   charge: Charge | null;
+  /**
+   * An action played at somebody, waiting to be answered.
+   *
+   * Held on the state rather than resolved immediately because Just Say No can
+   * cancel it, and a second one can cancel that — see `actions.ts`.
+   */
+  pending: import('./actions').Pending | null;
   winner: string | null;
   log: string[];
 }
@@ -107,6 +114,7 @@ export function create(seed: number, playerIds: string[]): State {
     playsLeft: PLAYS_PER_TURN,
     drawn: false,
     charge: null,
+    pending: null,
     winner: null,
     log: [],
   };
@@ -164,6 +172,10 @@ export const payableCards = (player: Player): number[] => [
 export function draw(state: State): State {
   const s = clone(state);
   const player = current(s);
+
+  // Nothing left anywhere: the game cannot go on, so it is counted up.
+  if (stalled(s)) return settle(s);
+
   // An empty hand draws five, which is what stops a player being stuck with
   // nothing to do for the rest of the game.
   const want = player.hand.length === 0 ? 5 : 2;
@@ -185,6 +197,39 @@ function reshuffle(s: State): void {
   s.discard = [];
 }
 
+/**
+ * Whether the game can no longer move.
+ *
+ * Everything on the table stays there: only a discard ever comes back round.
+ * So if the deck and the discard pile are both empty and nobody is holding a
+ * card, no move exists that changes anything — the table can shuffle its
+ * wildcards between sets forever and never finish.
+ *
+ * The printed game does not cover this because it barely happens with five,
+ * but thirty cards are dealt before a six-handed game starts and the rest can
+ * end up locked in banks and property. Six-player fuzzing found it in about
+ * one game in a hundred.
+ */
+const stalled = (s: State): boolean =>
+  !s.deck.length && !s.discard.length && s.players.every((p) => p.hand.length === 0);
+
+/**
+ * Ends a game nobody can win outright: most sets takes it.
+ *
+ * Ties go to whoever has the most on the table, and then to seat order, so
+ * the result is the same on every device rather than whichever one asked.
+ */
+function settle(s: State): State {
+  let best = s.players[0];
+  for (const p of s.players) {
+    const sets = completedColours(p).length - completedColours(best).length;
+    if (sets > 0 || (sets === 0 && totalWorth(p) > totalWorth(best))) best = p;
+  }
+  s.winner = best.id;
+  s.log.push(`The deck ran out — ${best.id} leads on sets`);
+  return s;
+}
+
 /* ---------------------------------------------------------------- plays */
 
 export type Move =
@@ -198,7 +243,7 @@ export type Move =
   | { type: 'endTurn'; discard: number[] };
 
 /** Deep enough: arrays of numbers and small objects. */
-const clone = (s: State): State => ({
+export const clone = (s: State): State => ({
   ...s,
   deck: [...s.deck],
   discard: [...s.discard],
@@ -210,6 +255,15 @@ const clone = (s: State): State => ({
   })),
   charge: s.charge
     ? { ...s.charge, owed: { ...s.charge.owed }, paid: { ...s.charge.paid } }
+    : null,
+  pending: s.pending
+    ? {
+        ...s.pending,
+        targets: [...s.pending.targets],
+        spent: [...s.pending.spent],
+        refusals: [...s.pending.refusals],
+        cancelled: [...s.pending.cancelled],
+      }
     : null,
   log: [...s.log],
 });
@@ -228,6 +282,7 @@ export function bank(state: State, by: string, cardIndex: number): State | null 
   me.hand = me.hand.filter((i) => i !== cardIndex);
   me.bank.push(cardIndex);
   s.playsLeft--;
+  s.log.push(`${by} banked ${describe(c)}`);
   return s;
 }
 
@@ -257,6 +312,7 @@ export function place(
   else me.piles.push({ colour, cards: [cardIndex], house: false, hotel: false });
 
   s.playsLeft--;
+  s.log.push(`${by} laid down ${SETS[colour].name}`);
   return checkWin(s);
 }
 
@@ -293,6 +349,7 @@ export function movePile(
 
   // A pile with nothing left in it is not a pile.
   me.piles = me.piles.filter((p) => p.cards.length > 0);
+  s.log.push(`${by} moved a wildcard to ${SETS[colour].name}`);
   return checkWin(s);
 }
 
@@ -377,7 +434,8 @@ export function pay(state: State, by: string, cards: number[]): State | null {
 
 export function endTurn(state: State, by: string, discard: number[]): State | null {
   if (state.players[state.turn].id !== by) return null;
-  if (state.charge) return null;
+  // A turn cannot end while somebody owes, or while an action is unanswered.
+  if (state.charge || state.pending) return null;
 
   const player = current(state);
   const over = player.hand.length - discard.length;
@@ -392,12 +450,16 @@ export function endTurn(state: State, by: string, discard: number[]): State | nu
   s.turn = (s.turn + 1) % s.players.length;
   s.playsLeft = PLAYS_PER_TURN;
   s.drawn = false;
+  s.log.push(
+    discard.length ? `${by} ended their turn, discarding ${discard.length}` : `${by} passed`,
+  );
   return s;
 }
 
 const canAct = (state: State, by: string): boolean =>
   !state.winner &&
   !state.charge &&
+  !state.pending &&
   state.players[state.turn].id === by &&
   state.drawn &&
   state.playsLeft > 0;

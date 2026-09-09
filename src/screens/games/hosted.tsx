@@ -67,25 +67,55 @@ export function useHostedGame<S, V, I>({
   const isHost = hostId === myId;
   const seed = session?.seed ?? 1;
 
-  // The host's copy. Nobody else has one.
-  const [full, setFull] = React.useState<S | null>(() => (isHost ? create(seed, players) : null));
-  const [view, setView] = React.useState<V | null>(() =>
-    isHost ? redact(create(seed, players), myId, players) : null,
-  );
+  // The rules arrive as props and are rebuilt on every render, so they are
+  // held in refs: a callback that closed over the first render's copy would
+  // still work, but only by accident.
+  const rules = React.useRef({ create, apply, redact });
+  rules.current = { create, apply, redact };
+
+  const [full, setFull] = React.useState<S | null>(null);
+  const [view, setView] = React.useState<V | null>(null);
+
+  /**
+   * The host's copy, mirrored outside React.
+   *
+   * Applying a move inside a `setState` updater would be the obvious way to
+   * write this and is wrong twice over: the updater has to send messages over
+   * the network, which is not something React may do twice, and StrictMode
+   * does exactly that — every move applied and published two times.
+   */
+  const fullRef = React.useRef<S | null>(null);
 
   /** Sends each player their own view, and keeps the host's. */
   const publish = React.useCallback(
     (state: S) => {
+      fullRef.current = state;
       setFull(state);
-      setView(redact(state, myId, players));
+      setView(rules.current.redact(state, myId, players));
       if (!session) return;
       for (const id of players) {
         if (id === myId) continue;
-        void api.game.send(id, 'state', redact(state, id, players) as unknown).catch(() => {});
+        void api.game.send(id, 'state', rules.current.redact(state, id, players) as unknown)
+          .catch(() => {});
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session?.id, myId, players.join(',')],
+  );
+
+  /** Applies one player's move, on the host. */
+  const applyHere = React.useCallback(
+    (intent: I, by: string) => {
+      const current = fullRef.current;
+      if (!current) return;
+      const next = rules.current.apply(current, intent, by, players);
+      // Not allowed is simply not done. There is nothing useful to say to a
+      // client that asked for something illegal.
+      if (!next) return;
+      publish(next);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [publish, players.join(',')],
   );
 
   // A new game — or a new session — deals again, on the host.
@@ -94,7 +124,7 @@ export function useHostedGame<S, V, I>({
     const key = `${session?.id ?? 'solo'}:${seed}:${players.join(',')}`;
     if (dealt.current === key) return;
     dealt.current = key;
-    if (isHost) publish(create(seed, players));
+    if (isHost) publish(rules.current.create(seed, players));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, seed, isHost, players.join(',')]);
 
@@ -103,18 +133,10 @@ export function useHostedGame<S, V, I>({
     if (!isHost) return;
     return on('game:intent', (msg: { intent?: I; from?: string }) => {
       if (!msg.from || msg.intent === undefined) return;
-      setFull((current) => {
-        if (!current) return current;
-        const next = apply(current, msg.intent as I, msg.from!, players);
-        // Not allowed is simply not done. There is nothing useful to say to a
-        // client that asked for something illegal.
-        if (!next) return current;
-        publish(next);
-        return next;
-      });
+      applyHere(msg.intent as I, msg.from);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, players.join(',')]);
+  }, [isHost, applyHere]);
 
   /** The host's account of the game, arriving at a player. */
   React.useEffect(() => {
@@ -130,24 +152,18 @@ export function useHostedGame<S, V, I>({
   const send = React.useCallback(
     (intent: I) => {
       if (isHost) {
-        setFull((current) => {
-          if (!current) return current;
-          const next = apply(current, intent, myId, players);
-          if (!next) return current;
-          publish(next);
-          return next;
-        });
+        applyHere(intent, myId);
         return;
       }
       void api.game.send(hostId, 'intent', { intent } as unknown).catch(() => {});
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [isHost, hostId, myId, players.join(',')],
+    [isHost, hostId, myId, applyHere],
   );
 
   const restart = React.useCallback(() => {
     if (!isHost) return;
-    publish(create(seed, players));
+    publish(rules.current.create(seed, players));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, seed, players.join(',')]);
 

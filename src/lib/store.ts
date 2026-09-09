@@ -3,6 +3,7 @@ import { api, emit, on } from './bridge';
 import { sfx } from './audio';
 import * as rtc from './webrtc';
 import { notifyMessage } from './ringer';
+import { gameName } from './games';
 import type {
   ActivityItem,
   Attachment,
@@ -429,7 +430,7 @@ export const useStore = create<State>((set, get) => {
           get().toast({
             kind: 'info',
             title: 'Game invitation',
-            body: `${get().peers[session.from ?? '']?.name ?? 'Someone'} started ${session.game}`,
+            body: `${get().peers[session.from ?? '']?.name ?? 'Someone'} started ${gameName(session.game)}`,
           });
         }
       }),

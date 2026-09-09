@@ -397,6 +397,7 @@ export type GameKind =
   | 'sequence'
   | 'crossy'
   | 'dots'
+  | 'deal'
   | 'klondike'
   | 'freecell'
   | 'spider'
