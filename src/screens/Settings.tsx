@@ -11,6 +11,7 @@ import {
   Trash2,
   User,
   FolderSearch,
+  ExternalLink,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import {
@@ -997,9 +998,37 @@ function AboutTab() {
               </p>
             )}
             {error && (
-              <p className="text-xs text-red-400 leading-relaxed mt-2">
-                {error}
-              </p>
+              <div className="mt-2">
+                <p className="text-xs text-red-400 leading-relaxed">{error}</p>
+                {/*
+                  A way out, rather than a dead end.
+
+                  A download can fail for reasons the app cannot fix from
+                  inside itself — an older build whose downloader predates the
+                  fix, a network that blocks it, GitHub being unreachable. The
+                  release page always works, because opening it is the system's
+                  job rather than this app's.
+                */}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    icon={<ExternalLink size={13} />}
+                    onClick={() => update.url && void api.files.open(update.url)}
+                    disabled={!update.url}
+                  >
+                    Open the download page
+                  </Button>
+                  {update.asset && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void api.files.open(update.asset!.url)}
+                    >
+                      Download in browser
+                    </Button>
+                  )}
+                </div>
+              </div>
             )}
             {update.url && (
               <p className="text-2xs font-mono text-dim mt-1 selectable break-all">
