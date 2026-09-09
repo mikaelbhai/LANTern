@@ -394,6 +394,7 @@ export interface StagedEntry {
 export type GameKind =
   | 'chess'
   | 'connect4'
+  | 'sequence'
   | 'dots'
   | 'klondike'
   | 'freecell'

@@ -1,11 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Circle, Crown, Eye, Gamepad2, Grid3x3, Users } from 'lucide-react';
+import { Circle, Crown, Eye, Gamepad2, Grid3x3, Spade, Users } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, Modal, SectionTitle } from '../components/ui';
 import { Chess } from './games/Chess';
 import { ConnectFour } from './games/ConnectFour';
 import { Dots } from './games/Dots';
+import { Sequence } from './games/Sequence';
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
@@ -49,6 +50,15 @@ const GAMES: {
     accent: '#39D9C8',
   },
   {
+    id: 'sequence',
+    name: 'Sequence',
+    blurb:
+      'Play a card, place a chip, get five in a line. Jacks are wild or take a chip off. Two to four.',
+    icon: Spade,
+    seats: 'party',
+    accent: '#7BD88F',
+  },
+  {
     id: 'dots',
     name: 'Dots & Boxes',
     blurb: 'Draw a line, close a box, go again. Better with four people than with two.',
@@ -69,6 +79,8 @@ export function Games() {
         return <Chess opponentId={activeGame.opponentId} onExit={exit} />;
       case 'connect4':
         return <ConnectFour onExit={exit} />;
+      case 'sequence':
+        return <Sequence onExit={exit} />;
       case 'dots':
         return <Dots onExit={exit} />;
       default:

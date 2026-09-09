@@ -27,7 +27,11 @@ export function GameShell({
   onExit: () => void;
   onUndo?: () => void;
   canUndo?: boolean;
-  onRestart: () => void;
+  /**
+   * Optional: in a hosted game only the host may deal again, so everyone else
+   * has no restart to offer.
+   */
+  onRestart?: () => void;
   moves: number;
   running: boolean;
   extraControls?: React.ReactNode;
@@ -86,6 +90,8 @@ export function GameShell({
               Undo
             </Button>
           )}
+          {/* Absent in a hosted game unless this device is the one dealing. */}
+          {onRestart && (
           <Button
             size="xs"
             icon={<RotateCcw size={11} />}
@@ -96,6 +102,7 @@ export function GameShell({
           >
             New
           </Button>
+          )}
           <IconButton label="Card theme" size="sm" onClick={() => setThemeOpen(true)}>
             <Palette size={14} />
           </IconButton>

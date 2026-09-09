@@ -2058,6 +2058,53 @@ pub fn game_move(
     true
 }
 
+/// Sends something to one player rather than the whole table.
+///
+/// Card games have hands, and a hand nobody else can see cannot be delivered
+/// by broadcasting it. `game_move` is right for a game whose whole position is
+/// public — Connect Four, Dots — because every device can derive the same
+/// board from the same moves. Do that with cards and every client can read
+/// every hand.
+///
+/// So one device runs the game and tells each player only what they are
+/// entitled to see. `channel` says which direction this is going: "state" is
+/// the host describing the table to a player, "intent" is a player asking the
+/// host to do something.
+#[tauri::command]
+pub fn game_send(
+    state: State<'_, AppState>,
+    peer_id: String,
+    channel: String,
+    payload: serde_json::Value,
+) -> bool {
+    // Only the two known channels, so this cannot be used to inject arbitrary
+    // events into another device's frontend.
+    let kind = match channel.as_str() {
+        "state" => "gamestate",
+        "intent" => "gameintent",
+        _ => return false,
+    };
+
+    let (links, me, device_id) = state.with(|s| {
+        let device = s
+            .peers
+            .get(&peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone());
+        (s.links.clone(), s.device_id.clone(), device)
+    });
+
+    links.send(
+        &device_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: kind.into(),
+            payload,
+        },
+    )
+}
+
 /// Records this player's progress and reports the race back.
 #[tauri::command]
 pub fn game_report(

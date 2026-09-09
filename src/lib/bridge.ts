@@ -87,6 +87,8 @@ export async function startBridge() {
       'call:state',
       'game:invite',
       'game:move',
+      'game:state',
+      'game:intent',
       'net:changed',
       'service:failed',
       'host:changed',
@@ -296,6 +298,16 @@ export const api = {
      */
     move: (sessionId: string, payload: unknown) =>
       call<boolean>('game_move', { sessionId, payload }),
+
+    /**
+     * Sends to one player rather than the table.
+     *
+     * `state` is the host describing the game to somebody; `intent` is a
+     * player asking the host to do something. Card games need this because a
+     * hand nobody else can see cannot be broadcast.
+     */
+    send: (peerId: string, channel: 'state' | 'intent', payload: unknown) =>
+      call<boolean>('game_send', { peerId, channel, payload }),
     leave: (sessionId: string) => call<void>('game_leave', { sessionId }),
   },
   /** Synchronised viewing across devices. */
