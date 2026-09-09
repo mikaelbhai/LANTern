@@ -69,6 +69,28 @@ if (-not $SkipDesktop) {
     }
   }
 
+  # The detached host, built before the app.
+  #
+  # It ships inside the installer as a resource, and tauri-build checks that
+  # every declared resource exists *while compiling* - including during the
+  # compile that would produce this very binary. Pointing the resource at
+  # cargo's output directory therefore makes the build depend on its own
+  # output. Staging it under binaries/ breaks that: a placeholder satisfies
+  # the check on a clean tree, and the real binary replaces it right after.
+  Write-Host "`n=== desktop: detached host ===" -ForegroundColor Cyan
+  $staged = "$root\src-tauri\binaries\lantern-host.exe"
+  New-Item -ItemType Directory -Force -Path (Split-Path $staged) | Out-Null
+  if (-not (Test-Path $staged)) { New-Item -ItemType File -Path $staged | Out-Null }
+
+  # cargo needs the crate directory; the app build runs npm from the root.
+  Push-Location "$root\src-tauri"
+  cargo build --release --bin lantern-host
+  $hostExit = $LASTEXITCODE
+  Pop-Location
+  if ($hostExit -ne 0) { Write-Error "lantern-host build failed"; exit 1 }
+  Copy-Item "$root\src-tauri\target\release\lantern-host.exe" $staged -Force
+  Write-Host "  lantern-host  $([math]::Round((Get-Item $staged).Length / 1MB, 2)) MB"
+
   Invoke-DesktopBuild
   if ($LASTEXITCODE -ne 0) {
     Write-Host "  link failed - clearing the lock and retrying once" -ForegroundColor Yellow

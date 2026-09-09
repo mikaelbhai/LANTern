@@ -46,6 +46,7 @@ export function PeerFolders() {
   const [open, setOpen] = React.useState<{ peerId: string; share: Share } | null>(null);
   const [path, setPath] = React.useState('');
   const [entries, setEntries] = React.useState<Entry[]>([]);
+  const [problem, setProblem] = React.useState<string | null>(null);
   const [browsing, setBrowsing] = React.useState(false);
 
   const load = React.useCallback(async () => {
@@ -77,6 +78,7 @@ export function PeerFolders() {
       try {
         const listing = await api.peers.browse(peerId, share.slug, next);
         setEntries((listing?.entries as Entry[]) ?? []);
+        setProblem((listing as { error?: string })?.error ?? null);
         setPath(next);
         setOpen({ peerId, share });
       } finally {
@@ -131,6 +133,8 @@ export function PeerFolders() {
         <div className="flex-1 scroll-y p-3">
           {browsing ? (
             <p className="text-xs text-muted px-1">Reading…</p>
+          ) : problem ? (
+            <p className="text-xs text-gold/90 px-1 leading-relaxed max-w-lg">{problem}</p>
           ) : entries.length === 0 ? (
             <p className="text-xs text-muted px-1">This folder is empty.</p>
           ) : (

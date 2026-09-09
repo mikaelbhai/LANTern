@@ -4,12 +4,15 @@
 //! server, a STUN server for ICE, a static HTTP server for published folders,
 //! and SQLite for history. No component reaches the internet.
 
+// Four modules are public because `src/bin/lantern-host.rs` — the process
+// that keeps serving files after the window closes — is a separate binary
+// that links this library. Everything else stays private to it.
 mod audiotrack;
 mod commands;
-mod db;
+pub mod db;
 mod discovery;
 mod ebml;
-mod hosting;
+pub mod hosting;
 mod library;
 mod identity;
 mod media;
@@ -17,10 +20,10 @@ mod model;
 mod mp4;
 mod net;
 mod phrase;
-mod shares;
+pub mod shares;
 mod sidecar;
 mod signaling;
-mod state;
+pub mod state;
 mod transfers;
 mod stun;
 #[cfg(desktop)]
@@ -119,6 +122,9 @@ pub fn run() {
             commands::media_scan,
             commands::media_can_switch_audio,
             commands::media_set_tracks,
+            commands::service_get,
+            commands::service_set,
+            commands::service_running,
             commands::peers_shares,
             commands::peers_browse,
             commands::peers_block,
@@ -166,8 +172,41 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running LANTern");
+        .build(tauri::generate_context!())
+        .expect("error while running LANTern")
+        .run(|app, event| {
+            // Only one process can hold the hosting port. While the app is
+            // open it should be this one, so a detached host from a previous
+            // session is stopped before anything else happens.
+            if let tauri::RunEvent::Ready = event {
+                commands::stop_host_service(app);
+            }
+
+            // On the way out, hand hosting back — if that was asked for. The
+            // host waits for the port, because this process is still holding
+            // it as it exits.
+            #[cfg(desktop)]
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let state = app.state::<state::AppState>();
+                let keep = state.with(|s| {
+                    s.db.as_ref()
+                        .and_then(|db| {
+                            db.query_row(
+                                "SELECT value FROM preferences WHERE key = 'keep_hosting'",
+                                [],
+                                |r| r.get::<_, String>(0),
+                            )
+                            .ok()
+                        })
+                        .map(|v| v == "1")
+                        .unwrap_or(false)
+                });
+                if keep {
+                    commands::start_host_service(app, &state);
+                }
+            }
+        });
 }
 
 /* ------------------------------------------------------- container probing */

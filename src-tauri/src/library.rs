@@ -167,7 +167,17 @@ pub async fn peer_listing(
     };
 
     let body = get(&host, port, &route).await.ok()?;
-    let mut listing: serde_json::Value = serde_json::from_str(&body).ok()?;
+
+    // An older LANTern does not know `?json=1` and answers with the HTML page
+    // meant for browsers. Saying so beats showing an empty folder, which is
+    // indistinguishable from the folder actually being empty and sends people
+    // looking for a fault in the wrong place.
+    let Ok(mut listing) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return Some(serde_json::json!({
+            "entries": [],
+            "error": "That device is running an older version of LANTern, which cannot list                       its folders for the app. Update it and try again.",
+        }));
+    };
 
     // Give each entry an address that works from here, so the UI never has to
     // reassemble one.

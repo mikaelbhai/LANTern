@@ -53,6 +53,7 @@ import { useNow } from '../lib/hooks';
 import type { StagedEntry, Transfer } from '../lib/types';
 import { readText } from '../lib/clipboard';
 import { pickFolder } from '../lib/picker';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 type Filter = 'all' | 'in' | 'out' | 'active';
 type KindFilter = 'all' | 'image' | 'video' | 'audio' | 'file';
@@ -113,6 +114,7 @@ export function Files() {
 
 function Transfers() {
   const transfers = useStore((s) => s.transfers);
+  const addTransfers = useStore((s) => s.addTransfers);
   const peers = useStore((s) => s.peers);
   const [filter, setFilter] = React.useState<Filter>('all');
   const [kind, setKind] = React.useState<KindFilter>('all');
@@ -258,7 +260,8 @@ function Transfers() {
         />
       </div>
 
-      <div className="flex-1 scroll-y">
+      <PullToRefresh className="flex-1" onRefresh={() => api.files.list().then((list) => addTransfers(list))}>
+      <div>
         {list.length === 0 ? (
           <Empty
             icon={<Upload size={20} />}
@@ -273,6 +276,7 @@ function Transfers() {
           </ul>
         )}
       </div>
+      </PullToRefresh>
 
       <AnimatePresence>
         {dragOver && (

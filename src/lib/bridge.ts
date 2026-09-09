@@ -297,6 +297,17 @@ export const api = {
       call<void>('party_sync', { partyId, playing, positionSec }),
     leave: (partyId: string) => call<void>('party_leave', { partyId }),
   },
+  /**
+   * Serving files without the app open.
+   *
+   * A separate, tiny process keeps the published folders reachable after the
+   * window closes — including while the app itself is being rebuilt.
+   */
+  service: {
+    get: () => call<boolean>('service_get'),
+    set: (enabled: boolean) => call<void>('service_set', { enabled }),
+    running: () => call<boolean>('service_running'),
+  },
   /** Tray and launch behaviour. No-ops in a plain browser. */
   system: {
     traySupported: () => call<boolean>('tray_supported'),

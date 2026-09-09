@@ -1268,6 +1268,161 @@ pub fn media_set_tracks(
     media::save_tracks(&state, &id, Some(&audio_lang), Some(&subtitle_lang));
 }
 
+/* ------------------------------------------------ hosting without the app */
+
+/// Where the detached host records that it is running.
+fn host_pid_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    app.path().app_data_dir().ok().map(|d| d.join("host.pid"))
+}
+
+/// The `lantern-host` binary that ships beside this one.
+///
+/// Two places, because the layout differs: in a build tree it sits next to the
+/// app binary in `target/release`, and in an installed copy it is a bundled
+/// resource. Checking both means the feature works while developing as well as
+/// after installing, rather than only in whichever was tested.
+fn host_binary(app: &AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let name = if cfg!(windows) { "lantern-host.exe" } else { "lantern-host" };
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(beside) = exe.parent().map(|d| d.join(name)) {
+            if beside.exists() {
+                return Some(beside);
+            }
+        }
+    }
+
+    let resource = app.path().resource_dir().ok()?.join(name);
+    resource.exists().then_some(resource)
+}
+
+/// Stops the detached host, if one is running.
+///
+/// Called at startup before anything binds: only one process can hold the
+/// hosting port, and while the app is open it should be the app. Returns
+/// whether one was actually stopped.
+pub fn stop_host_service(app: &AppHandle) -> bool {
+    let Some(pid_file) = host_pid_file(app) else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(&pid_file) else {
+        return false;
+    };
+    let Ok(pid) = text.trim().parse::<u32>() else {
+        let _ = std::fs::remove_file(&pid_file);
+        return false;
+    };
+
+    #[cfg(windows)]
+    let stopped = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    #[cfg(not(windows))]
+    let stopped = std::process::Command::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let _ = std::fs::remove_file(&pid_file);
+    stopped
+}
+
+/// Launches the detached host so files stay served after the app closes.
+///
+/// Detached on purpose: it must outlive the process starting it, which is
+/// usually in the middle of quitting. The host waits for the hosting port to
+/// come free rather than failing, because this app still holds it for the
+/// moment it takes to exit.
+pub fn start_host_service(app: &AppHandle, state: &AppState) -> bool {
+    use tauri::Manager;
+
+    let Some(binary) = host_binary(app) else {
+        return false;
+    };
+    let Ok(dir) = app.path().app_data_dir() else {
+        return false;
+    };
+    let (port, name) = state.with(|s| (s.net.host_port, s.instance.clone()));
+
+    let mut cmd = std::process::Command::new(binary);
+    cmd.arg("--data-dir")
+        .arg(&dir)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--name")
+        .arg(&name)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // No console, and not a child that dies with this process.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+
+    cmd.spawn().is_ok()
+}
+
+/// Whether files should keep being served after the window closes.
+#[tauri::command]
+pub fn service_get(state: State<'_, AppState>) -> bool {
+    state.with(|s| {
+        s.db.as_ref()
+            .and_then(|db| {
+                db.query_row(
+                    "SELECT value FROM preferences WHERE key = 'keep_hosting'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
+}
+
+/// Turns the detached host on or off.
+///
+/// Turning it off stops one that is already running, so the setting takes
+/// effect now rather than at the next restart.
+#[tauri::command]
+pub fn service_set(app: AppHandle, state: State<'_, AppState>, enabled: bool) {
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('keep_hosting', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![if enabled { "1" } else { "0" }],
+            );
+        }
+    });
+    if !enabled {
+        stop_host_service(&app);
+    }
+}
+
+/// Whether the detached host is running right now.
+#[tauri::command]
+pub fn service_running(app: AppHandle) -> bool {
+    host_pid_file(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some()
+}
+
 /* -------------------------------------------- browsing a peer's folders */
 
 /// Everything a peer is publishing.

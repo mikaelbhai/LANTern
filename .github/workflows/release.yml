@@ -1,0 +1,75 @@
+# Builds the macOS app, which cannot be built on the Windows machine the rest
+# of LANTern is developed on: Tauri links against the macOS SDK, and there is
+# no cross-compile for it. A runner with a Mac is the whole reason this file
+# exists.
+#
+# Windows and Android are still built locally by rebuild-all.ps1 — they work
+# there, and building them here as well would mean maintaining the Android SDK
+# and NDK setup twice for no gain.
+#
+# Push a tag and the .dmg appears on that tag's release, alongside the
+# installer and APKs uploaded by hand.
+name: macOS build
+
+on:
+  push:
+    tags: ['v*']
+  # So it can be run against a branch without cutting a release first.
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Apple Silicon and Intel, so one release covers both.
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      # Compiling the Rust core from scratch is most of the run time.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build
+        # A universal binary rather than two downloads: nobody should have to
+        # know which processor their Mac has.
+        run: npx tauri build --target universal-apple-darwin --bundles dmg
+        env:
+          # Unsigned. LANTern is sideloaded on every platform it ships to, and
+          # a paid developer certificate is not a reasonable prerequisite for a
+          # LAN tool. macOS will ask for confirmation on first launch; the
+          # release notes say so.
+          CI: true
+
+      - name: Name the artifact after the version
+        id: named
+        run: |
+          version=$(node -p "require('./package.json').version")
+          src=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
+          out="LANTern_${version}_universal.dmg"
+          cp "$src" "$out"
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ steps.named.outputs.path }}
+
+      # Only when a tag was pushed; a manual run just leaves the artifact.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.named.outputs.path }}

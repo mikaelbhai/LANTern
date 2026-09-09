@@ -76,6 +76,49 @@ const MODES: {
   },
 ];
 
+/**
+ * Keeping the folders served after the window closes.
+ *
+ * Closing LANTern — or rebuilding it — used to take the file server down with
+ * it: anyone mid-download lost the transfer, and a library that was there a
+ * moment ago vanished from everyone else's Theatre. A separate, tiny process
+ * can hold the port instead. It serves files and nothing else; calls and chat
+ * need somebody in front of them.
+ */
+function KeepHosting() {
+  const [on, setOn] = React.useState(false);
+  const [supported, setSupported] = React.useState(true);
+
+  React.useEffect(() => {
+    void api.service
+      .get()
+      .then(setOn)
+      .catch(() => setSupported(false));
+  }, []);
+
+  if (!supported) return null;
+
+  return (
+    <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3 flex items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium">Keep serving when LANTern is closed</p>
+        <p className="text-2xs text-muted leading-relaxed mt-0.5">
+          A small background process holds the published folders open, so downloads survive
+          the app closing and your library stays visible to everyone else. It serves files
+          only — no calls, no messages — and stops the moment you open LANTern again.
+        </p>
+      </div>
+      <Toggle
+        checked={on}
+        onChange={(v) => {
+          setOn(v);
+          void api.service.set(v);
+        }}
+      />
+    </div>
+  );
+}
+
 export function Hosting() {
   const shares = useStore((s) => s.shares);
   const setShares = useStore((s) => s.setShares);
@@ -120,6 +163,7 @@ export function Hosting() {
       <div className="flex-1 scroll-y p-4">
         {/* Publishing is exactly where "nobody can reach my files" matters. */}
         <NetworkPrivacy />
+        <KeepHosting />
 
         {shares.length === 0 ? (
           <Empty

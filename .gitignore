@@ -37,3 +37,6 @@ support.js
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Staged detached-host binary, produced by rebuild-all.ps1.
+src-tauri/binaries/
