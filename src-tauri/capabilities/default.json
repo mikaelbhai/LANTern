@@ -18,6 +18,23 @@
     "dialog:default",
     "fs:default",
     "notification:default",
-    "os:default"
+    "os:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.github.com/*"
+        },
+        {
+          "url": "https://github.com/*"
+        },
+        {
+          "url": "https://objects.githubusercontent.com/*"
+        },
+        {
+          "url": "https://release-assets.githubusercontent.com/*"
+        }
+      ]
+    }
   ]
 }

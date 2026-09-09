@@ -8,13 +8,32 @@
  * is downloaded or installed automatically. The result is a version number and
  * a link.
  *
- * The request is made from the webview rather than from Rust deliberately. The
- * webview already has a TLS stack; adding one to the native side would mean
- * shipping an HTTPS client inside an offline app, where it could be reached by
- * any other code path. Here it is one `fetch`, to one host, that the content
- * security policy names explicitly.
+ * Both the check and the download are made natively, through Tauri's HTTP
+ * plugin, rather than with the webview's own `fetch`. That was not the first
+ * choice: a webview fetch needs no HTTP client on the native side, which is
+ * the safer shape for an offline application. But GitHub serves release assets
+ * with no `Access-Control-Allow-Origin` header at all, so a browser-origin
+ * request for one is refused as cross-origin no matter how the content
+ * security policy is written. The download simply cannot be done that way.
+ *
+ * The concern that argued against a native client — that it could be reached
+ * from anywhere else in the app — is answered by scoping it instead of
+ * avoiding it. `capabilities/default.json` allows exactly four hosts, all of
+ * them GitHub's, and the plugin refuses everything else whoever calls it.
  */
 import { isTauri } from './bridge';
+
+/**
+ * `fetch`, going through the native side when there is one.
+ *
+ * In a plain browser — the simulator — the global stays, so the update screen
+ * can still be developed without a Tauri shell around it.
+ */
+async function request(input: string, init?: RequestInit): Promise<Response> {
+  if (!isTauri()) return fetch(input, init);
+  const { fetch: nativeFetch } = await import('@tauri-apps/plugin-http');
+  return nativeFetch(input, init);
+}
 
 /**
  * Where releases are published.
@@ -98,7 +117,7 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   const current = await currentVersion();
 
   try {
-    const response = await fetch(
+    const response = await request(
       `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`,
       {
         headers: { Accept: 'application/vnd.github+json' },
@@ -212,7 +231,7 @@ export async function downloadUpdate(
   asset: ReleaseAsset,
   onProgress?: (received: number, total: number) => void,
 ): Promise<ArrayBuffer> {
-  const response = await fetch(asset.url);
+  const response = await request(asset.url);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
 
   const total = asset.size;

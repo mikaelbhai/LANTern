@@ -326,7 +326,10 @@ function PeerCard({ peer, onNavigate }: { peer: Peer; onNavigate: (s: Screen) =>
             <ScopeBadge scope={peer.scope} />
             <Tooltip content={`Round-trip time${peer.lossPct ? ` · ${peer.lossPct}% loss` : ''}`}>
               <span className={`text-2xs font-mono ${latencyTone(peer.latencyMs)}`}>
-                {peer.latencyMs.toFixed(1)} ms
+                {/* A negative reading means it has not been timed yet. Showing
+                    "0.0 ms" for that claimed a perfect link that nobody had
+                    measured, and over a network it is not even possible. */}
+                {peer.latencyMs < 0 ? '— ms' : `${peer.latencyMs.toFixed(1)} ms`}
               </span>
             </Tooltip>
           </div>

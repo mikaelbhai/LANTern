@@ -96,7 +96,10 @@ pub fn start(
                                     addresses: found.clone(),
                                     port: info.get_port(),
                                     layer: ConnLayer::Direct,
-                                    latency_ms: 0.0,
+                                    // Not measured yet. Zero would be rendered as a real reading of
+                    // 0.0 ms, which is both impossible over a network and
+                    // indistinguishable from a working measurement.
+                    latency_ms: -1.0,
                                     loss_pct: 0.0,
                                     status: PeerStatus::Available,
                                     status_message: None,

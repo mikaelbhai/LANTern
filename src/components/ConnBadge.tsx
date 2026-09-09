@@ -118,6 +118,9 @@ export function ScopeBadge({ scope }: { scope: PeerScope }) {
 }
 
 export function latencyTone(ms: number): string {
+  // Negative means it has not been timed yet. Without this the placeholder
+  // came out cyan — the colour reserved for the best links there are.
+  if (ms < 0) return 'text-muted';
   if (ms < 5) return 'text-cyan';
   if (ms < 25) return 'text-gold';
   return 'text-danger';

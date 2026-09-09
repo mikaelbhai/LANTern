@@ -245,7 +245,10 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                     },
                     port,
                     layer: crate::model::ConnLayer::Direct,
-                    latency_ms: 0.0,
+                    // Not measured yet. Zero would be rendered as a real reading of
+                    // 0.0 ms, which is both impossible over a network and
+                    // indistinguishable from a working measurement.
+                    latency_ms: -1.0,
                     loss_pct: 0.0,
                     status: crate::model::PeerStatus::Available,
                     status_message: None,
@@ -265,6 +268,37 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
     // A peer we can reach is a library we can read. Theatre showed only local
     // titles until something asked.
     crate::library::spawn_refresh(app, state);
+
+    // Time the link now that there is one, rather than leaving the card
+    // showing a placeholder until somebody presses ping. One handshake against
+    // a peer that just spoke to us costs nothing.
+    {
+        let app = app.clone();
+        let state = state.clone();
+        let peer_id = envelope.from.clone();
+        tauri::async_runtime::spawn(async move {
+            let target = state.with(|s| {
+                s.peers
+                    .get(&peer_id)
+                    .map(|p| (p.ip.clone(), p.port))
+                    .filter(|(ip, port)| !ip.is_empty() && *port != 0)
+            });
+            let Some((ip, port)) = target else { return };
+
+            let timeout = std::time::Duration::from_millis(1200);
+            let Some(ms) = crate::net::probe_tcp(&ip, port, timeout).await else {
+                return;
+            };
+
+            let peers = state.with(|s| {
+                if let Some(p) = s.peers.get_mut(&peer_id) {
+                    p.latency_ms = ms;
+                }
+                s.peers.values().cloned().collect::<Vec<_>>()
+            });
+            let _ = app.emit("peers:changed", &peers);
+        });
+    }
 }
 
 /// Dials a peer we have discovered but are not yet linked to.

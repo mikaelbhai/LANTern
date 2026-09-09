@@ -41,6 +41,12 @@ if-addrs = "0.13"
 rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
+# Downloading an update. GitHub serves release assets without any
+# `Access-Control-Allow-Origin` header, so a webview `fetch` is refused
+# as cross-origin however the CSP is written — the download has to be
+# made natively. The plugin's scope, in capabilities/default.json,
+# limits it to the GitHub release hosts and nothing else.
+tauri-plugin-http = "2"
 tauri-plugin-clipboard-manager = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
