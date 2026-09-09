@@ -19,6 +19,7 @@ import { Tooltip } from './ui';
 import { useStore } from '../lib/store';
 import { cn, formatDuration } from '../lib/utils';
 import type { Screen } from '../lib/nav';
+import { currentVersion } from '../lib/update';
 
 export const NAV_ITEMS: {
   id: Screen;
@@ -44,6 +45,14 @@ export function Sidebar({
   onOpenProfile: () => void;
 }) {
   const collapsed = useStore((s) => s.settings.sidebarCollapsed);
+
+  // Asked once: it cannot change while the app is running.
+  const [version, setVersion] = React.useState('');
+  React.useEffect(() => {
+    void currentVersion()
+      .then(setVersion)
+      .catch(() => setVersion(''));
+  }, []);
   const setSettings = useStore((s) => s.setSettings);
   const profile = useStore((s) => s.profile);
   const rooms = useStore((s) => s.rooms);
@@ -80,7 +89,19 @@ export function Sidebar({
         {collapsed ? (
           <LanternMark size={22} pulse={pulse} />
         ) : (
-          <Wordmark size="md" pulse={pulse} />
+          <>
+            <Wordmark size="md" pulse={pulse} />
+            {/*
+              The running version, beside the name.
+              Read from the build rather than typed in, so it cannot go stale
+              the way the About tab's hardcoded "1.0.0" did — and it makes
+              "which build am I looking at" answerable at a glance, which
+              matters while several devices are being updated by hand.
+            */}
+            <span className="ml-1.5 text-[10px] font-mono text-muted no-drag" title="Version">
+              {version}
+            </span>
+          </>
         )}
       </div>
 
