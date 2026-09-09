@@ -117,6 +117,21 @@ export function CallOverlay() {
 
   const transmitting = pushToTalk ? pushing : !selfMuted;
 
+  /**
+   * Mute the microphone for real.
+   *
+   * This used to be presentation only: the button swapped its icon and the
+   * label read "Unmute" while the track carried on transmitting. Someone who
+   * believed they were muted was still being heard, which is the worst
+   * direction for this particular control to fail in.
+   *
+   * Driven from `transmitting` rather than `selfMuted` so push-to-talk goes
+   * through the same path instead of having one of its own.
+   */
+  React.useEffect(() => {
+    rtc.setMicrophoneEnabled(transmitting);
+  }, [transmitting]);
+
   const react = (emoji: string) => {
     const id = Date.now() + Math.random();
     setFloatReactions((r) => [...r, { id, emoji, peerId: profile.id }]);

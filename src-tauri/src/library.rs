@@ -72,6 +72,44 @@ async fn get(host: &str, port: u16, path: &str) -> std::io::Result<String> {
 /// Entries are stamped with the peer's id and an absolute stream URL pointing
 /// back at that peer, so playing one streams from the device holding the file
 /// rather than copying it first.
+/// Points every URL in a peer's manifest at the address we reached it on.
+///
+/// A machine with more than one network interface answers on several
+/// addresses, and it builds its manifest using whichever one it considers its
+/// own. That is frequently not the one that works from here: a phone on the
+/// second interface's subnet cannot reach the first interface's address at
+/// all, so the library arrived full of posters, subtitles and audio tracks
+/// pointing somewhere unreachable while the peer itself was plainly online.
+///
+/// Only `streamUrl` used to be corrected, so a film would start and have no
+/// artwork, no subtitles and no way to change language.
+///
+/// Every string in the manifest that addresses the peer's own server is
+/// rewritten, so a field added later is covered without anyone remembering to
+/// come back here.
+fn rehost(value: &mut serde_json::Value, host: &str, port: u16) {
+    match value {
+        serde_json::Value::String(text) => {
+            if let Some(rest) = text.strip_prefix("http://") {
+                // Split off the authority; keep the path and query exactly.
+                let path = rest.split_once('/').map(|(_, p)| p).unwrap_or("");
+                *text = format!("http://{host}:{port}/{path}");
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                rehost(item, host, port);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (_, field) in fields.iter_mut() {
+                rehost(field, host, port);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub async fn fetch_peer(peer_id: &str, host: &str, port: u16) -> Vec<serde_json::Value> {
     let Ok(body) = get(host, port, "/shares.json").await else {
         return Vec::new();
@@ -110,16 +148,9 @@ pub async fn fetch_peer(peer_id: &str, host: &str, port: u16) -> Vec<serde_json:
                 serde_json::Value::String(format!("{peer_id}:{slug}:{rel}")),
             );
             fields.insert("peerId".into(), serde_json::Value::String(peer_id.into()));
-            if let Some(url) = entry.get("streamUrl").and_then(|v| v.as_str()) {
-                // The peer built the URL from its own address; trust the host
-                // we actually reached it on instead, which is the one that
-                // works from here.
-                let path = url.splitn(4, '/').nth(3).unwrap_or_default();
-                fields.insert(
-                    "streamUrl".into(),
-                    serde_json::Value::String(format!("http://{host}:{port}/{path}")),
-                );
-            }
+
+            // Every address in the manifest, not just the one to press play on.
+            rehost(&mut item, host, port);
             out.push(item);
         }
     }
@@ -171,4 +202,49 @@ pub fn spawn_refresh(app: &AppHandle, state: &AppState) {
     let app = app.clone();
     let state = state.clone();
     tauri::async_runtime::spawn(refresh_all(app, state));
+}
+
+#[cfg(test)]
+mod rehost_tests {
+    use super::rehost;
+
+    #[test]
+    fn every_address_in_the_manifest_is_corrected() {
+        let mut item = serde_json::json!({
+            "title": "A Film",
+            "streamUrl": "http://192.168.1.5:7981/media/A%20Film.mkv",
+            "posterUrl": "http://192.168.1.5:7981/media/A%20Film.mkv?thumb=1",
+            "subtitles": [
+                { "label": "English", "url": "http://192.168.1.5:7981/media/A%20Film.mkv?subtitle=3" }
+            ],
+            "durationSec": 5971.0
+        });
+
+        rehost(&mut item, "10.0.0.9", 7981);
+
+        assert_eq!(
+            item["streamUrl"], "http://10.0.0.9:7981/media/A%20Film.mkv",
+            "the film itself"
+        );
+        assert_eq!(
+            item["posterUrl"], "http://10.0.0.9:7981/media/A%20Film.mkv?thumb=1",
+            "artwork was the field that stayed broken"
+        );
+        assert_eq!(
+            item["subtitles"][0]["url"],
+            "http://10.0.0.9:7981/media/A%20Film.mkv?subtitle=3",
+            "nested inside an array"
+        );
+        assert_eq!(item["durationSec"], 5971.0, "non-URL fields are untouched");
+        assert_eq!(item["title"], "A Film", "plain strings are untouched");
+    }
+
+    #[test]
+    fn a_query_string_survives_intact() {
+        let mut v = serde_json::Value::String(
+            "http://192.168.1.5:7981/media/x.mkv?audio=4&codec=E-AC-3&t=2362".into(),
+        );
+        rehost(&mut v, "10.0.0.9", 7981);
+        assert_eq!(v, "http://10.0.0.9:7981/media/x.mkv?audio=4&codec=E-AC-3&t=2362");
+    }
 }

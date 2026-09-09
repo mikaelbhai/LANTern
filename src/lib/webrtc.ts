@@ -274,6 +274,33 @@ function releaseMedia() {
   screenStream = null;
 }
 
+/* ---------------------------------------------------------------- mute */
+
+/**
+ * Stops or resumes sending the microphone.
+ *
+ * `track.enabled = false` is what mute means here: the track stays in the
+ * session and the connection is untouched, but it carries silence. Removing
+ * the track instead would renegotiate the call and be audible as a gap at the
+ * other end.
+ *
+ * The microphone track is muted at its source rather than the sender's,
+ * because while a screen is being shared the sender carries a mix of the
+ * microphone and the screen's own audio — muting the sender would silence the
+ * film everyone is listening to along with the person's voice.
+ */
+export function setMicrophoneEnabled(enabled: boolean): void {
+  for (const track of localStream?.getAudioTracks() ?? []) {
+    track.enabled = enabled;
+  }
+}
+
+/** Whether the microphone is currently being transmitted. */
+export function isMicrophoneEnabled(): boolean {
+  const track = localStream?.getAudioTracks()[0];
+  return track ? track.enabled : false;
+}
+
 /* --------------------------------------------------------- screen share */
 
 /**
