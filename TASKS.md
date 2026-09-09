@@ -5,6 +5,8 @@ explicit instruction: everything else works first.
 
 ## Done
 
+- [x] v1.1.0 published: github.com/mikaelbhai/LANTern/releases/tag/v1.1.0
+- [x] APK version derived from tauri.conf.json by the build script
 - [x] Screen share carries system audio, mixed with the microphone
 - [x] Watch party — "Watch together" starts one; the player already followed
 - [x] Pairing phrases actually work: six words encode IPv4 + port in 48 bits
