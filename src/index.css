@@ -330,3 +330,25 @@ html[data-tv='true'] [role='button']:focus-visible {
   transform: scale(1.04);
   transition: transform 120ms ease-out;
 }
+
+/*
+ * Dots & Boxes line thickness.
+ *
+ * The lines are the only thing you can tap, and a hairline is unhittable with
+ * a finger: at phone width sixty of them measured under 24px. The gap track
+ * they live in is widened on a touch screen — and on a television, where the
+ * "pointer" is a remote and the target has to be visible from a sofa.
+ */
+.dots-board {
+  --dots-gap: 11px;
+}
+
+@media (pointer: coarse) {
+  .dots-board {
+    --dots-gap: 22px;
+  }
+}
+
+html[data-tv='true'] .dots-board {
+  --dots-gap: 24px;
+}

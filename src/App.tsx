@@ -142,12 +142,42 @@ export default function App() {
   };
 
   if (tv) {
-    // Theatre only. Everything else on a TV wants a keyboard that a remote
-    // control is not, and a sidebar the D-pad has to cross to reach anything
-    // is a tax on every single press.
+    /*
+      Theatre and Games, and nothing else.
+
+      Chats, Files and Settings all want a keyboard that a remote control is
+      not. Games do not: every one of them is a grid you move around with a
+      pad and select with a button, which is exactly what a television has.
+      Leaving them off meant a room full of people around a TV could watch
+      something together but not play anything together, which is a strange
+      thing for this application to be unable to do.
+
+      Two buttons rather than a sidebar: a rail the pad has to cross on the way
+      to everything is a tax on every single press.
+    */
     return (
-      <div className="h-full w-full bg-base text-txt overflow-hidden">
-        <Theatre />
+      <div className="h-full w-full flex flex-col bg-base text-txt overflow-hidden">
+        <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-edge">
+          <button
+            onClick={() => setScreen('theatre')}
+            className={cn(
+              'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
+              screen === 'games' ? 'text-dim hover:text-txt' : 'bg-gold/15 text-gold',
+            )}
+          >
+            Theatre
+          </button>
+          <button
+            onClick={() => setScreen('games')}
+            className={cn(
+              'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
+              screen === 'games' ? 'bg-gold/15 text-gold' : 'text-dim hover:text-txt',
+            )}
+          >
+            Games
+          </button>
+        </div>
+        <div className="flex-1 min-h-0">{screen === 'games' ? <Games /> : <Theatre />}</div>
       </div>
     );
   }

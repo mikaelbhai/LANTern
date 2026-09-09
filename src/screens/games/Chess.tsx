@@ -1,26 +1,8 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  Flag,
-  Handshake,
-  RotateCcw,
-  Settings2,
-} from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Flag, Handshake, RotateCcw, Settings2 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
-import {
-  Badge,
-  Button,
-  IconButton,
-  Modal,
-  Segmented,
-  Select,
-  Toggle,
-  Tooltip,
-} from '../../components/ui';
+import { Badge, Button, IconButton, Modal, Segmented, Select, Toggle, Tooltip } from '../../components/ui';
 import { BOARD_THEMES, ChessPiece, PIECE_SET_NAMES, type PieceSetId } from '../../lib/chessArt';
 import {
   type Color,
@@ -274,7 +256,26 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
   }, [flipped]);
 
   return (
-    <div className="h-full flex flex-col lg:flex-row gap-3 p-3 min-h-0">
+    <div className="h-full flex flex-col min-h-0">
+      {/*
+        The same header every other game has.
+
+        Chess keeps its own layout — it has more to show than the others — but
+        the way out of it should not be different. "Leave game" was buried at
+        the bottom of the right-hand sidebar, which is a long way for a thumb
+        and further for a D-pad, and it was called something else besides.
+      */}
+      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-3 gap-2">
+        <IconButton label="Back to games" size="sm" onClick={onExit}>
+          <ArrowLeft size={15} />
+        </IconButton>
+        <span className="text-sm font-semibold shrink-0">Chess</span>
+        {lan && opponent && (
+          <Badge tone="cyan">vs {opponent.name}</Badge>
+        )}
+      </header>
+
+    <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 p-3">
       {/* board column */}
       <div className="flex-1 min-w-0 flex flex-col items-center justify-center gap-2">
         <PlayerStrip
@@ -582,6 +583,7 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
         onReview={() => setViewIndex(history.length - 1)}
         onExit={onExit}
       />
+    </div>
     </div>
   );
 }

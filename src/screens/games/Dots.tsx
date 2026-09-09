@@ -86,8 +86,10 @@ export function Dots({ onExit }: { onExit: () => void }) {
 
   // Laid out on a grid of alternating dot and line tracks: a dot, then the
   // gap a horizontal line sits in, and so on.
+  // The gap track is where the tappable lines live, so its width is set in CSS
+  // and grows on a touch screen or a television. See `.dots-board`.
   const cell = 'clamp(26px, 6vw, 46px)';
-  const gap = '10px';
+  const gap = 'var(--dots-gap)';
 
   return (
     <GameShell
@@ -141,7 +143,7 @@ export function Dots({ onExit }: { onExit: () => void }) {
 
           <div className="order-1 lg:order-2 overflow-auto">
             <div
-              className="grid"
+              className="dots-board grid"
               style={{
                 gridTemplateColumns: `repeat(${SETUP.cols}, ${gap} ${cell}) ${gap}`,
                 gridTemplateRows: `repeat(${SETUP.rows}, ${gap} ${cell}) ${gap}`,
@@ -231,7 +233,10 @@ function Segment({
       disabled={taken || !myTurn}
       aria-label={`Line ${line}`}
       className={cn(
-        'place-self-stretch rounded-full transition-colors m-[3px]',
+        // Padding rather than margin: the button fills its track so the whole
+        // gap is tappable, while the line drawn inside it stays slim.
+        'place-self-stretch rounded-full transition-colors',
+        'bg-clip-content p-[3px]',
         taken ? '' : myTurn ? 'bg-edge hover:bg-gold/60 cursor-pointer' : 'bg-edge/50',
       )}
       style={
