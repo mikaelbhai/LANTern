@@ -114,7 +114,16 @@ export function Sidebar({
 
       <ActiveCallChip collapsed={collapsed} />
 
-      <nav className="flex-1 py-2 px-2 space-y-0.5 scroll-y no-scrollbar">
+      {/*
+        A flex column, not a block with vertical spacing.
+
+        Collapsed, every item is wrapped in a Tooltip whose root is an
+        inline-flex span. Inline elements flow horizontally and ignore
+        `space-y`, so the whole navigation collapsed into a single row of
+        icons across the top of the rail. Laying the column out explicitly
+        makes it independent of whatever the children happen to be.
+      */}
+      <nav className="flex-1 flex flex-col gap-0.5 py-2 px-2 scroll-y no-scrollbar">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
           const on = screen === item.id;
@@ -168,7 +177,8 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="p-2 border-t border-edge space-y-0.5 shrink-0">
+      {/* Same reason as the nav above: Settings is tooltip-wrapped when collapsed. */}
+      <div className="p-2 border-t border-edge flex flex-col gap-0.5 shrink-0">
         {(() => {
           const on = screen === 'settings';
           const btn = (

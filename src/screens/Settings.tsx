@@ -10,6 +10,7 @@ import {
   Phone,
   Trash2,
   User,
+  FolderSearch,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import {
@@ -34,6 +35,7 @@ import {
 } from '../lib/update';
 import { useLocalStorage } from '../lib/hooks';
 import { api } from '../lib/bridge';
+import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
 
@@ -507,6 +509,18 @@ function FilesTab() {
           {/* Knowing the path and being able to look in it are different
               things; typing it into a file manager by hand is the sort of
               small friction that makes an app feel unfinished. */}
+          {/* Typing a path by hand is a way to get it wrong; this is the
+              same picker the rest of the app uses. */}
+          <IconButton
+            label="Choose download folder"
+            size="sm"
+            onClick={async () => {
+              const picked = await pickFolder();
+              if (picked?.path) upd({ downloadDir: picked.path });
+            }}
+          >
+            <FolderSearch size={13} />
+          </IconButton>
           <IconButton
             label="Open download folder"
             size="sm"
@@ -709,8 +723,46 @@ function PrivacyTab() {
   const ask = (title: string, body: string, run: () => void) =>
     setConfirm({ title, body, run });
 
+  // Devices refused outright. Read from the backend rather than the peer list,
+  // because a blocked device is removed from that list — the whole point is
+  // that it stops appearing.
+  const [blocked, setBlocked] = React.useState<
+    { deviceId: string; name: string; blockedAt: number }[]
+  >([]);
+  const loadBlocked = React.useCallback(() => {
+    void api.peers.blocked().then(setBlocked).catch(() => setBlocked([]));
+  }, []);
+  React.useEffect(loadBlocked, [loadBlocked]);
+
   return (
     <>
+      <Group title="Who may reach this device">
+        <p className="px-3 pt-1 pb-2 text-2xs text-muted leading-relaxed">
+          Anyone on your network can see this device and ask to send it something —
+          nothing arrives without you accepting it. Trusting a peer (from its card on
+          Home) lets its files come straight through; blocking one refuses it
+          altogether: no messages, no calls, no files, and it stops being listed.
+        </p>
+
+        {blocked.length === 0 ? (
+          <p className="px-3 pb-2 text-2xs text-dim">Nothing is blocked.</p>
+        ) : (
+          blocked.map((b) => (
+            <Row key={b.deviceId} label={b.name || 'Unknown device'} hint={b.deviceId}>
+              <Button
+                size="sm"
+                onClick={async () => {
+                  await api.peers.block(b.deviceId, false);
+                  loadBlocked();
+                }}
+              >
+                Unblock
+              </Button>
+            </Row>
+          ))
+        )}
+      </Group>
+
       <Group title="App lock">
         <Row label="Require a PIN to open LANTern" hint="Uses biometrics where available">
           <Toggle

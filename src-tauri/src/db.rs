@@ -82,6 +82,15 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         -- Choices that are not about one title: the language someone reaches
         -- for by default. Kept apart from `progress` so a title with no saved
         -- position still opens in the right language.
+        -- Devices refused outright. Kept apart from `peers`, which is a cache
+        -- of who has been seen: a block has to outlive a peer disappearing
+        -- from the list, or blocking someone would last until they reconnect.
+        CREATE TABLE IF NOT EXISTS blocked (
+            device_id  TEXT PRIMARY KEY,
+            name       TEXT NOT NULL DEFAULT '',
+            blocked_at INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS preferences (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL

@@ -293,7 +293,40 @@ html[data-tv='true'] :focus-visible {
   border-radius: 6px;
 }
 
-/* A TV is watched from across a room, and every panel edge is overscan risk. */
+/*
+ * A television is read from three metres away, not thirty centimetres.
+ *
+ * Everything is sized in rem, so lifting the root size scales the whole
+ * interface at once rather than requiring a second set of sizes. 24px is
+ * roughly a 1.7x lift on the 14px desktop base, which is about the ratio
+ * between a desk and a sofa.
+ */
 html[data-tv='true'] {
-  font-size: 18px;
+  font-size: 24px;
+}
+
+/* Cards have to grow with it, or a 4K panel shows forty tiny thumbnails. */
+html[data-tv='true'] [class*='minmax(196px'],
+html[data-tv='true'] [class*='minmax(260px'] {
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)) !important;
+}
+
+/*
+ * A safe margin. Televisions overscan: a panel can crop several percent of
+ * every edge, and a control sitting flush against one simply is not there.
+ */
+html[data-tv='true'] body {
+  padding: 2vh 2vw;
+}
+
+/* Focus has to be unmissable across a room, not a polite hairline. */
+html[data-tv='true'] :focus-visible {
+  outline: 4px solid rgb(var(--c-gold));
+  outline-offset: 4px;
+}
+
+/* The selected card should also lift, so focus reads at a glance. */
+html[data-tv='true'] [role='button']:focus-visible {
+  transform: scale(1.04);
+  transition: transform 120ms ease-out;
 }

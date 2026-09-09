@@ -33,6 +33,7 @@ import { useLocalStorage } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { cn, formatBytes } from '../lib/utils';
 import type { MediaItem, WatchParty } from '../lib/types';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 export function Theatre() {
   const peers = useStore((s) => s.peers);
@@ -242,7 +243,8 @@ export function Theatre() {
         </div>
       )}
 
-      <div className="flex-1 scroll-y">
+      <PullToRefresh className="flex-1" onRefresh={() => api.media.scan().then(setItems)}>
+      <div>
         {loading ? (
           <div className="p-6 space-y-6">
             <div className="h-[300px] rounded-card bg-surface animate-pulse" />
@@ -310,6 +312,7 @@ export function Theatre() {
           </>
         )}
       </div>
+      </PullToRefresh>
 
       <DetailSheet
         onWatchTogether={(i) => void watchTogether(i)}
@@ -662,6 +665,20 @@ function Card({
       transition={{ type: 'spring', stiffness: 300, damping: 24 }}
       className="relative rounded-card overflow-hidden border border-white/10 bg-surface cursor-pointer group/card"
       onClick={onPlay}
+      // Selectable by keyboard and by a remote control. A div with an onClick
+      // is invisible to both: on a television the pad could never land on a
+      // film, which made the whole screen unusable from a sofa.
+      role="button"
+      tabIndex={0}
+      aria-label={item.title}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPlay();
+        }
+        // The pad's own "details" gesture, and a keyboard equivalent.
+        if (e.key === 'ContextMenu' || e.key === 'i') onInfo();
+      }}
     >
       <TitleCard
         title={item.title}

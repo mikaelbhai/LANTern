@@ -288,7 +288,17 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
         eprintln!("transfer {transfer_id}: no source url on file");
         return;
     };
-    let dir = download_dir(&app);
+    // Where the person receiving it said to put it. `accept` carries the
+    // choice through: a folder chosen for this transfer, the one set in
+    // Settings, or - when neither is set - the platform's downloads folder.
+    let chosen = state.with(|s| s.download_into.get(&transfer_id).cloned()).flatten();
+    let dir = match chosen {
+        Some(path) if !path.trim().is_empty() => std::path::PathBuf::from(path),
+        _ => download_dir(&app),
+    };
+    state.with(|s| {
+        s.download_into.remove(&transfer_id);
+    });
     let _ = std::fs::create_dir_all(&dir);
 
     let (name, size) = state.with(|s| {

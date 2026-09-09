@@ -37,6 +37,7 @@ import { cn, formatBytes, relativeTime } from '../../lib/utils';
 import { useNow } from '../../lib/hooks';
 import type { Share, ShareMode, StagedEntry } from '../../lib/types';
 import { copyText } from '../../lib/clipboard';
+import { NetworkPrivacy } from '../../components/NetworkPrivacy';
 
 const MODES: {
   id: ShareMode;
@@ -117,6 +118,9 @@ export function Hosting() {
       </div>
 
       <div className="flex-1 scroll-y p-4">
+        {/* Publishing is exactly where "nobody can reach my files" matters. */}
+        <NetworkPrivacy />
+
         {shares.length === 0 ? (
           <Empty
             icon={<Globe size={20} />}

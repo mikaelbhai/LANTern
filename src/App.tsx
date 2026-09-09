@@ -25,7 +25,8 @@ import { useIsMobile } from './lib/hooks';
 import { SCREEN_TITLES, type Screen } from './lib/nav';
 import { cn } from './lib/utils';
 import { useBackDismiss } from './lib/hooks';
-import { enableDpadNavigation, isTv } from './lib/tv';
+import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
+import { IncomingFile } from './components/IncomingFile';
 
 export default function App() {
   const onboarded = useStore((s) => s.onboarded);
@@ -50,7 +51,13 @@ export default function App() {
     // The arrows only become navigation on a device whose only input is a
     // four-way pad; anywhere else they belong to the focused control.
     document.documentElement.dataset.tv = 'true';
-    return enableDpadNavigation();
+    const stop = enableDpadNavigation();
+    // After the first render has produced something to land on.
+    const settle = window.setTimeout(focusFirst, 400);
+    return () => {
+      window.clearTimeout(settle);
+      stop();
+    };
   }, [tv]);
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -174,6 +181,9 @@ export default function App() {
         </main>
 
         {isMobile && <MobileTabBar screen={screen} onNavigate={go} />}
+
+      {/* Follows you across screens: a file offer should not wait behind one. */}
+      <IncomingFile />
       </div>
 
       {isMobile && (

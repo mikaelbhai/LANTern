@@ -125,6 +125,13 @@ export const api = {
     addManualPeer: (ip: string, port: number) =>
       call<Peer>('net_add_manual_peer', { ip, port }),
     addByPhrase: (phrase: string) => call<Peer>('net_add_by_phrase', { phrase }),
+    /** The networks this device is on, and whether one of them blocks peers. */
+    connectionProfiles: () =>
+      call<{ alias: string; category: string; blocksPeers: boolean }[]>(
+        'net_connection_profiles',
+      ),
+    /** Asks Windows to trust a network. Elevation is prompted for by Windows. */
+    setPrivate: (alias: string) => call<void>('net_set_private', { alias }),
     diagnose: (peerId: string) => call<DiagStep[]>('net_diagnose', { peerId }),
     /** Re-announce over mDNS and re-dial known peers. Returns peers known. */
     refresh: () => call<number>('net_refresh'),
@@ -143,6 +150,12 @@ export const api = {
   peers: {
     list: () => call<Peer[]>('peers_list'),
     ping: (peerId: string) => call<number>('peers_ping', { peerId }),
+    /** Refuses a device outright: no link, no calls, no files, not listed. */
+    block: (peerId: string, blocked: boolean) =>
+      call<void>('peers_block', { peerId, blocked }),
+    /** Everything currently blocked, for the list in Settings. */
+    blocked: () =>
+      call<{ deviceId: string; name: string; blockedAt: number }[]>('peers_blocked'),
     trust: (peerId: string, trusted: boolean) =>
       call<void>('peers_trust', { peerId, trusted }),
   },
@@ -161,8 +174,12 @@ export const api = {
      * through the signalling link.
      */
     offer: (peerId: string, paths: string[]) => call<Transfer[]>('files_offer', { peerId, paths }),
-    /** Starts pulling an offered file, resuming from whatever is on disk. */
-    accept: (id: string) => call<void>('files_accept', { id }),
+    /**
+     * Starts pulling an offered file, resuming from whatever is on disk.
+     *
+     * `dir` is where it should land. Omitted means the usual folder.
+     */
+    accept: (id: string, dir?: string) => call<void>('files_accept', { id, dir: dir ?? null }),
     list: () => call<Transfer[]>('files_list'),
     /** Names and sizes for paths the native dialog returned. */
     stat: (paths: string[]) =>

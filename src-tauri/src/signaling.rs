@@ -101,6 +101,15 @@ impl Links {
         }
     }
 
+    /// Closes a link outright, whatever generation it is on.
+    ///
+    /// Dropping the sender ends the pump on the other side of the channel,
+    /// which closes the socket. Used when a device is blocked: a block that
+    /// only applied to the next connection would leave the current one live.
+    pub fn drop_link(&self, device_id: &str) {
+        self.map.lock().expect("links poisoned").remove(device_id);
+    }
+
     pub fn has(&self, device_id: &str) -> bool {
         self.map.lock().expect("links poisoned").contains_key(device_id)
     }
@@ -336,6 +345,17 @@ async fn handle(
     // Our own advertisement can come back to us on a multi-homed host.
     if peer_id == me {
         return Ok(());
+    }
+
+    // A blocked device gets nothing. This is the narrowest point every other
+    // feature passes through — chat, calls, file offers and library requests
+    // all ride this link — so refusing here refuses all of them at once,
+    // rather than each screen having to remember to check.
+    if state.with(|s| s.blocked.contains(&peer_id)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "device is blocked",
+        ));
     }
 
     if !we_dialled {

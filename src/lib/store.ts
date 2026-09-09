@@ -198,6 +198,15 @@ interface State {
 
   pushActivity: (a: Omit<ActivityItem, 'id' | 'ts'>) => void;
   toast: (t: Omit<Toast, 'id'>) => void;
+  /**
+   * A file someone is offering, waiting on a yes or no.
+   *
+   * Held in the store rather than in the Files screen so the question follows
+   * you — a transfer offered while you are in a call or watching something
+   * should not sit unseen behind them.
+   */
+  pendingOffer: Transfer | null;
+  clearPendingOffer: () => void;
   dismissToast: (id: string) => void;
 
   setActiveGame: (g: State['activeGame']) => void;
@@ -306,6 +315,8 @@ export const useStore = create<State>((set, get) => {
     activity: persisted.activity ?? [],
     toasts: [],
     activeGame: null,
+    pendingOffer: null,
+    clearPendingOffer: () => set({ pendingOffer: null }),
 
     async init() {
       if (initialised) return;
@@ -354,6 +365,10 @@ export const useStore = create<State>((set, get) => {
       on('transfer:offer', (t: Transfer) => {
         get().addTransfers([t]);
         const peer = get().peers[t.peerId];
+        // Ask, unless this peer is trusted and set to come straight through.
+        if (!(peer?.trusted && get().settings.files.autoAcceptTrusted)) {
+          set({ pendingOffer: t });
+        }
         // Anything else waits as "queued" for the user to accept, so a device
         // on the network cannot push files at you unasked.
         if (peer?.trusted && get().settings.files.autoAcceptTrusted) {

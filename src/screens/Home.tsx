@@ -27,6 +27,7 @@ import { osGlyph, osLabel, relativeTime } from '../lib/utils';
 import { useNow } from '../lib/hooks';
 import type { Screen } from '../lib/nav';
 import type { Peer } from '../lib/types';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
   const peers = useStore((s) => s.peers);
@@ -64,7 +65,8 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       <NetworkHealthBar onNavigate={onNavigate} />
 
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 scroll-y p-4">
+        <PullToRefresh className="flex-1 min-w-0" onRefresh={refresh}>
+        <div className="p-4">
           <SectionTitle
             right={
               <div className="flex items-center gap-2">
@@ -112,6 +114,7 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             </div>
           )}
         </div>
+        </PullToRefresh>
 
         <ActivityFeed />
       </div>

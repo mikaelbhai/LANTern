@@ -335,19 +335,74 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [time, seekTo, wake, onClose]);
 
+  /**
+   * Turns the phone sideways for fullscreen, and back on the way out.
+   *
+   * A film is wider than it is tall and a phone is not, so fullscreen in
+   * portrait is a letterboxed strip with the rest of the screen black. Every
+   * video app rotates here, and its absence reads as the app being unfinished.
+   *
+   * The lock is only allowed while actually fullscreen, and only on a device
+   * that can rotate — a desktop has no orientation to lock and the call throws,
+   * which is why every one of these is allowed to fail quietly.
+   */
+  const lockLandscape = async () => {
+    try {
+      await (screen.orientation as ScreenOrientation & {
+        lock?: (o: string) => Promise<void>;
+      }).lock?.('landscape');
+    } catch {
+      /* desktop, or the platform refuses; the video plays either way */
+    }
+  };
+
+  const releaseOrientation = () => {
+    try {
+      // Unlock rather than forcing portrait: the phone returns to whatever its
+      // own rotation setting says, which is what someone holding it sideways
+      // on purpose expects.
+      screen.orientation?.unlock?.();
+    } catch {
+      /* as above */
+    }
+  };
+
   const toggleFullscreen = async () => {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
         setFullscreen(false);
+        releaseOrientation();
       } else if (shellRef.current) {
         await shellRef.current.requestFullscreen();
         setFullscreen(true);
+        await lockLandscape();
       }
     } catch {
       /* fullscreen refused — controls stay as they are */
     }
   };
+
+  /**
+   * Leaving fullscreen by any other route still puts the phone back.
+   *
+   * Back, the system gesture, and Escape all exit fullscreen without going
+   * through the button, and a phone left locked sideways afterwards is worse
+   * than never having rotated it.
+   */
+  React.useEffect(() => {
+    const onChange = () => {
+      const on = !!document.fullscreenElement;
+      setFullscreen(on);
+      if (!on) releaseOrientation();
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange);
+      // Closing the player mid-fullscreen must not strand the rotation.
+      releaseOrientation();
+    };
+  }, []);
 
   const pct = duration ? (time / duration) * 100 : 0;
   const bufferedPct = duration ? (buffered / duration) * 100 : 0;

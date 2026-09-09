@@ -50,6 +50,14 @@ pub struct Inner {
     pub pending_update: Option<String>,
     /// Peers that are linked but whose library could not be read.
     pub library_unreachable: Vec<String>,
+    /// Where a given transfer should be saved, when the receiver chose.
+    pub download_into: std::collections::HashMap<String, Option<String>>,
+    /// Devices refused outright: no link, no calls, no files, not listed.
+    ///
+    /// Keyed by device id rather than address, because an address is not an
+    /// identity — a blocked device that reconnects on a new IP is the same
+    /// device and stays blocked.
+    pub blocked: std::collections::HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -94,6 +102,8 @@ impl AppState {
             thumb_dir: None,
             pending_update: None,
             library_unreachable: Vec::new(),
+            download_into: std::collections::HashMap::new(),
+            blocked: std::collections::HashSet::new(),
         })))
     }
 

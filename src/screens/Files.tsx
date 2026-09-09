@@ -51,6 +51,7 @@ import {
 import { useNow } from '../lib/hooks';
 import type { StagedEntry, Transfer } from '../lib/types';
 import { readText } from '../lib/clipboard';
+import { pickFolder } from '../lib/picker';
 
 type Filter = 'all' | 'in' | 'out' | 'active';
 type KindFilter = 'all' | 'image' | 'video' | 'audio' | 'file';
@@ -298,6 +299,7 @@ function kindIcon(t: Transfer, size = 15) {
 
 function ActiveTransferRow({ transfer: t }: { transfer: Transfer }) {
   const peer = useStore((s) => s.peers[t.peerId]);
+  const downloadDir = useStore((st) => st.settings.files.downloadDir);
   const pct = t.size ? (t.sent / t.size) * 100 : 0;
 
   return (
@@ -317,9 +319,27 @@ function ActiveTransferRow({ transfer: t }: { transfer: Transfer }) {
           {peer?.name ?? 'Unknown peer'}
         </span>
         {t.direction === 'in' && t.state === 'queued' ? (
-          <IconButton label="Accept" size="xs" onClick={() => void api.files.accept(t.id)}>
-            <Play size={11} />
-          </IconButton>
+          <>
+            <IconButton
+              label="Accept"
+              size="xs"
+              onClick={() => void api.files.accept(t.id, downloadDir || undefined)}
+            >
+              <Play size={11} />
+            </IconButton>
+            {/* The usual folder is right most of the time and wrong exactly
+                when it matters, so the other choice is one tap away here too. */}
+            <IconButton
+              label="Save to…"
+              size="xs"
+              onClick={async () => {
+                const picked = await pickFolder();
+                if (picked?.path) void api.files.accept(t.id, picked.path);
+              }}
+            >
+              <FolderOpen size={11} />
+            </IconButton>
+          </>
         ) : (
           <IconButton
             label={t.state === 'paused' ? 'Resume' : 'Pause'}

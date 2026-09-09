@@ -97,7 +97,21 @@ pub fn boot(app: AppHandle, state: AppState) {
             });
             state.with(|s| s.thumb_dir = Some(dir.join("thumbnails")));
             match crate::db::open(&dir) {
-                Ok(conn) => state.with(|s| s.db = Some(conn)),
+                Ok(conn) => {
+                    // Blocks are read before anything can connect, so a device
+                    // blocked in a previous session cannot slip a link in
+                    // during startup.
+                    let mut blocked = std::collections::HashSet::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id FROM blocked") {
+                        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            blocked.extend(rows.flatten());
+                        }
+                    }
+                    state.with(|s| {
+                        s.blocked = blocked;
+                        s.db = Some(conn);
+                    });
+                }
                 Err(e) => eprintln!("history store unavailable: {e}"),
             }
         }
@@ -1099,8 +1113,20 @@ pub fn files_offer(
 }
 
 /// Starts (or resumes) pulling a file a peer has offered.
+///
+/// `dir` is where the person receiving it wants it: a folder they picked for
+/// this transfer, or the one they set as their usual. Empty means the
+/// platform's downloads folder, which is what happens when nobody has said.
 #[tauri::command]
-pub fn files_accept(app: AppHandle, state: State<'_, AppState>, id: String) {
+pub fn files_accept(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    dir: Option<String>,
+) {
+    state.with(|s| {
+        s.download_into.insert(id.clone(), dir.clone());
+    });
     let owned = (*state).clone();
     tauri::async_runtime::spawn(crate::transfers::accept(app, owned, id));
 }
@@ -1240,6 +1266,215 @@ pub fn media_set_tracks(
     });
 
     media::save_tracks(&state, &id, Some(&audio_lang), Some(&subtitle_lang));
+}
+
+/* ------------------------------------------------------ who may reach us */
+
+/// Blocks or unblocks a device.
+///
+/// A block is refused at the signalling link, which every other feature runs
+/// over, so it covers messages, calls, file offers and library access
+/// together. The peer is dropped from the list and its live link closed, so
+/// the effect is immediate rather than "from the next reconnection".
+#[tauri::command]
+pub fn peers_block(app: AppHandle, state: State<'_, AppState>, peer_id: String, blocked: bool) {
+    let device_id = state.with(|s| {
+        s.peers
+            .get(&peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone())
+    });
+    let name = state.with(|s| {
+        s.peers
+            .get(&peer_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
+    });
+
+    state.with(|s| {
+        if blocked {
+            s.blocked.insert(device_id.clone());
+            s.peers.remove(&peer_id);
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "INSERT INTO blocked (device_id, name, blocked_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(device_id) DO UPDATE SET name = ?2",
+                    rusqlite::params![device_id, name, crate::model::now_ms() as i64],
+                );
+            }
+        } else {
+            s.blocked.remove(&device_id);
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "DELETE FROM blocked WHERE device_id = ?1",
+                    rusqlite::params![device_id],
+                );
+            }
+        }
+    });
+
+    // Close any link it already has, or a block would only apply next time.
+    if blocked {
+        let links = state.with(|s| s.links.clone());
+        links.drop_link(&device_id);
+    }
+
+    let peers: Vec<Peer> = state.with(|s| s.peers.values().cloned().collect());
+    let _ = app.emit("peers:changed", &peers);
+}
+
+/// Every device currently refused, for the list in Settings.
+#[tauri::command]
+pub fn peers_blocked(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = db.prepare("SELECT device_id, name, blocked_at FROM blocked ORDER BY blocked_at DESC")
+        else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map([], |r| {
+            Ok(serde_json::json!({
+                "deviceId": r.get::<_, String>(0)?,
+                "name": r.get::<_, String>(1)?,
+                "blockedAt": r.get::<_, i64>(2)?,
+            }))
+        });
+        rows.map(|rows| rows.flatten().collect()).unwrap_or_default()
+    })
+}
+
+/* ------------------------------------------------- network reachability */
+
+/// One network this device is attached to, and whether Windows trusts it.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionProfile {
+    pub alias: String,
+    /// "Private", "Public" or "DomainAuthenticated".
+    pub category: String,
+    /// True when peers on this network cannot reach us because of it.
+    pub blocks_peers: bool,
+}
+
+/// Runs a PowerShell snippet and returns its output.
+///
+/// Windows-only by nature: this is asking a question only Windows can answer.
+#[cfg(windows)]
+fn powershell(script: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()
+}
+
+/// The networks this device is on, and whether any of them is blocking peers.
+///
+/// A "Public" network in Windows means "do not let anything in", and the
+/// firewall rules LANTern installs are scoped to Private. The result is a
+/// device that can reach out — so discovery, messages and calls all work —
+/// while every attempt by a peer to open a connection to it is dropped.
+/// Nothing in the app fails loudly; a phone simply shows an empty library.
+///
+/// This is the check behind offering to change it.
+#[tauri::command]
+pub fn net_connection_profiles() -> Vec<ConnectionProfile> {
+    #[cfg(windows)]
+    {
+        // One line per adapter: alias, then category.
+        let script = "Get-NetConnectionProfile | ForEach-Object { \"$($_.InterfaceAlias)`t$($_.NetworkCategory)\" }";
+        let Some(text) = powershell(script) else {
+            return Vec::new();
+        };
+
+        return text
+            .lines()
+            .filter_map(|line| {
+                let (alias, category) = line.trim_end().split_once('\t')?;
+                if alias.is_empty() {
+                    return None;
+                }
+                Some(ConnectionProfile {
+                    alias: alias.to_string(),
+                    category: category.to_string(),
+                    blocks_peers: category.eq_ignore_ascii_case("Public"),
+                })
+            })
+            .collect();
+    }
+
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+/// Asks Windows to treat one network as Private.
+///
+/// This is a change to the machine's firewall posture, so it is never done
+/// quietly: the command is run elevated, which means Windows shows its own
+/// consent prompt naming the action, and the user can refuse it there. LANTern
+/// only ever offers — it cannot make the change on its own.
+///
+/// Private is the correct setting for a home or office network, and the one
+/// Windows itself asks about when a network is first joined. It is what makes
+/// a machine reachable by the other devices on it, which is the whole point of
+/// this application.
+#[tauri::command]
+pub fn net_set_private(alias: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // Only an adapter Windows itself just named. The alias reaches a shell,
+        // so it is matched against the live list rather than trusted, and a
+        // name that is not on it is refused outright.
+        let known = net_connection_profiles();
+        if !known.iter().any(|p| p.alias == alias) {
+            return Err("no such network on this device".into());
+        }
+        if alias.contains(['\'', '"', '`', ';', '&', '|', '$', '\n', '\r']) {
+            return Err("that network name cannot be used safely".into());
+        }
+
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        // -Verb RunAs is the elevation prompt. Without it the call fails with
+        // access denied, because changing a network's category is an
+        // administrative action.
+        let inner = format!(
+            "Set-NetConnectionProfile -InterfaceAlias '{alias}' -NetworkCategory Private"
+        );
+        let script = format!(
+            "Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait \
+             -ArgumentList '-NoProfile','-NonInteractive','-Command',\"{inner}\""
+        );
+
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map_err(|e| format!("could not ask Windows: {e}"))?;
+
+        if !status.success() {
+            return Err("Windows refused, or the prompt was dismissed.".into());
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = alias;
+        Err("Only Windows has network profiles.".into())
+    }
 }
 
 /* --------------------------------------------------------------- updates */
