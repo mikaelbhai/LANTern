@@ -623,7 +623,7 @@ fn clean(raw: &str) -> String {
 
 
 /// Percent-encodes a single path segment for use in a URL.
-fn percent_encode(segment: &str) -> String {
+pub(crate) fn percent_encode(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for byte in segment.as_bytes() {
         match byte {

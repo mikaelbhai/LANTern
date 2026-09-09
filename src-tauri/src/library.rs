@@ -72,6 +72,126 @@ async fn get(host: &str, port: u16, path: &str) -> std::io::Result<String> {
 /// Entries are stamped with the peer's id and an absolute stream URL pointing
 /// back at that peer, so playing one streams from the device holding the file
 /// rather than copying it first.
+/// The first address a peer answers on, and the port to use with it.
+///
+/// A device with several network interfaces advertises several addresses and
+/// only some of them are routable from here, so every caller that wants to
+/// talk to a peer has to find the working one. This is that search, in one
+/// place.
+pub async fn reachable_address(state: &AppState, peer_id: &str) -> Option<(String, u16)> {
+    // `state.with` hands back whatever the closure returns, so the Option is
+    // unwrapped outside it rather than with `?` inside.
+    let found: Option<(Vec<String>, u16)> = state.with(|s| {
+        let default_port = s.net.host_port;
+        s.peers
+            .values()
+            .find(|p| p.id == peer_id || p.device_id == peer_id)
+            .map(|p| {
+                let mut addresses = p.addresses.clone();
+                if !p.ip.is_empty() && !addresses.contains(&p.ip) {
+                    addresses.insert(0, p.ip.clone());
+                }
+                (addresses, default_port)
+            })
+    });
+    let (addresses, port) = found?;
+
+    for address in addresses {
+        if get(&address, port, "/shares.json").await.is_ok() {
+            return Some((address, port));
+        }
+    }
+    None
+}
+
+/// Everything a peer is publishing, media and plain folders alike.
+///
+/// `fetch_peer` deliberately keeps only media shares, because Theatre is a
+/// library of titles. This is the other half: the folders somebody published
+/// to hand files around, which until now could only be opened by typing their
+/// address into a browser.
+pub async fn peer_shares(state: &AppState, peer_id: &str) -> Vec<serde_json::Value> {
+    let Some((host, port)) = reachable_address(state, peer_id).await else {
+        return Vec::new();
+    };
+    let Ok(body) = get(&host, port, "/shares.json").await else {
+        return Vec::new();
+    };
+    let Ok(shares) = serde_json::from_str::<Vec<serde_json::Value>>(&body) else {
+        return Vec::new();
+    };
+
+    shares
+        .into_iter()
+        .filter_map(|share| {
+            let slug = share.get("slug")?.as_str()?.to_string();
+            let name = share
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&slug)
+                .to_string();
+            let mode = share
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("files")
+                .to_string();
+            Some(serde_json::json!({
+                "slug": slug,
+                "name": name,
+                "mode": mode,
+                "url": format!("http://{host}:{port}/{slug}"),
+            }))
+        })
+        .collect()
+}
+
+/// One directory inside a peer's published folder.
+pub async fn peer_listing(
+    state: &AppState,
+    peer_id: &str,
+    slug: &str,
+    path: &str,
+) -> Option<serde_json::Value> {
+    let (host, port) = reachable_address(state, peer_id).await?;
+
+    let encoded = path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(crate::media::percent_encode)
+        .collect::<Vec<_>>()
+        .join("/");
+    let route = if encoded.is_empty() {
+        format!("/{slug}?json=1")
+    } else {
+        format!("/{slug}/{encoded}?json=1")
+    };
+
+    let body = get(&host, port, &route).await.ok()?;
+    let mut listing: serde_json::Value = serde_json::from_str(&body).ok()?;
+
+    // Give each entry an address that works from here, so the UI never has to
+    // reassemble one.
+    if let Some(entries) = listing.get_mut("entries").and_then(|v| v.as_array_mut()) {
+        for entry in entries.iter_mut() {
+            let Some(rel) = entry.get("path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let encoded = rel
+                .split('/')
+                .map(crate::media::percent_encode)
+                .collect::<Vec<_>>()
+                .join("/");
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert(
+                    "url".into(),
+                    serde_json::Value::String(format!("http://{host}:{port}/{slug}/{encoded}")),
+                );
+            }
+        }
+    }
+    Some(listing)
+}
+
 /// Points every URL in a peer's manifest at the address we reached it on.
 ///
 /// A machine with more than one network interface answers on several

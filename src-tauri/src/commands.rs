@@ -1268,6 +1268,34 @@ pub fn media_set_tracks(
     media::save_tracks(&state, &id, Some(&audio_lang), Some(&subtitle_lang));
 }
 
+/* -------------------------------------------- browsing a peer's folders */
+
+/// Everything a peer is publishing.
+#[tauri::command]
+pub async fn peers_shares(
+    state: State<'_, AppState>,
+    peer_id: String,
+) -> Res<Vec<serde_json::Value>> {
+    let owned = (*state).clone();
+    Ok(crate::library::peer_shares(&owned, &peer_id).await)
+}
+
+/// One directory inside a peer's published folder.
+///
+/// `path` is relative to the share; empty is its root.
+#[tauri::command]
+pub async fn peers_browse(
+    state: State<'_, AppState>,
+    peer_id: String,
+    slug: String,
+    path: String,
+) -> Res<serde_json::Value> {
+    let owned = (*state).clone();
+    Ok(crate::library::peer_listing(&owned, &peer_id, &slug, &path)
+        .await
+        .unwrap_or_else(|| serde_json::json!({ "entries": [] })))
+}
+
 /* ------------------------------------------------------ who may reach us */
 
 /// Blocks or unblocks a device.

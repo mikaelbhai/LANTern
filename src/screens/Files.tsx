@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { CreateShareModal, Hosting, rootOf, toEntries } from './files/Hosting';
+import { PeerFolders } from './files/PeerFolders';
 import {
   Badge,
   Button,
@@ -57,7 +58,7 @@ type Filter = 'all' | 'in' | 'out' | 'active';
 type KindFilter = 'all' | 'image' | 'video' | 'audio' | 'file';
 type SortKey = 'recent' | 'name' | 'size';
 
-type Tab = 'transfers' | 'hosting';
+type Tab = 'transfers' | 'hosting' | 'peers';
 
 export function Files() {
   const [tab, setTab] = React.useState<Tab>('transfers');
@@ -75,12 +76,26 @@ export function Files() {
           options={[
             { value: 'transfers', label: 'Transfers' },
             {
+              value: 'peers',
+              // Where "how do I see other people's folders" is answered. It
+              // used to have no answer: a peer's published folder could only
+              // be opened by typing its address into a browser.
+              label: 'On other devices',
+            },
+            {
               value: 'hosting',
+              // "Hosting" is what the feature is called internally; "Published
+              // folders" is what someone is actually looking for when they go
+              // hunting for the directories they are sharing. The count says
+              // there is something in there without having to open it - a bare
+              // dot did not, and this tab kept being missed.
               label: (
                 <span className="flex items-center gap-1.5">
-                  Hosting
+                  Published folders
                   {liveShares > 0 && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-cyan" />
+                    <span className="min-w-[16px] h-4 px-1 grid place-items-center rounded-full bg-cyan/20 border border-cyan/40 text-[10px] font-semibold text-cyan">
+                      {liveShares}
+                    </span>
                   )}
                 </span>
               ),
@@ -90,7 +105,7 @@ export function Files() {
       </header>
 
       <div className="flex-1 min-h-0">
-        {tab === 'transfers' ? <Transfers /> : <Hosting />}
+        {tab === 'transfers' ? <Transfers /> : tab === 'peers' ? <PeerFolders /> : <Hosting />}
       </div>
     </div>
   );

@@ -140,9 +140,10 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
 async fn serve_root(
     State(state): State<Arc<AppState>>,
     AxumPath(slug): AxumPath<String>,
+    Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    respond(state, slug, String::new(), &headers).await
+    respond(state, slug, String::new(), &headers, params.contains_key("json")).await
 }
 
 async fn serve_path(
@@ -173,7 +174,7 @@ async fn serve_path(
         let codec = params.get("codec").cloned().unwrap_or_default();
         return serve_audio_selection(&state, &slug, &path, index, &codec, seek).await;
     }
-    respond(state, slug, path, &headers).await
+    respond(state, slug, path, &headers, params.contains_key("json")).await
 }
 
 /// Spawns ffmpeg without letting Windows open a console for it.
@@ -433,6 +434,9 @@ async fn respond(
     slug: String,
     rel: String,
     headers: &HeaderMap,
+    // True when another LANTern asked for a directory as data, rather than a
+    // browser asking for a page to look at.
+    as_json: bool,
 ) -> Response {
     let range = headers
         .get(header::RANGE)
@@ -491,6 +495,10 @@ async fn respond(
         if tokio::fs::try_exists(&index).await.unwrap_or(false) {
             Some(index)
         } else if mode == ShareMode::Files {
+            // `?json=1` is another LANTern asking; anything else is a browser.
+            if as_json {
+                return listing_json(&root, &target, &slug).await;
+            }
             return listing(&root, &target, &slug).await;
         } else {
             None
@@ -706,6 +714,67 @@ fn resolve(root: &Path, rel: &str) -> Option<PathBuf> {
         (Err(_), Ok(_)) => Some(out),
         _ => None,
     }
+}
+
+/// A directory as JSON, for another LANTern to read.
+///
+/// The HTML listing exists so any browser on the network can open a share
+/// with no app at all, and that stays. But a peer's own Files screen needs the
+/// same information as data, and scraping the HTML for it would be absurd.
+/// `?json=1` returns the entries directly.
+async fn listing_json(root: &Path, dir: &Path, slug: &str) -> Response {
+    let rel = dir.strip_prefix(root).unwrap_or(Path::new(""));
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+    if let Ok(mut rd) = tokio::fs::read_dir(dir).await {
+        while let Ok(Some(entry)) = rd.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let (is_dir, size) = match entry.metadata().await {
+                Ok(m) => (m.is_dir(), m.len()),
+                Err(_) => (false, 0),
+            };
+            let path = if rel_str.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel_str}/{name}")
+            };
+            entries.push(serde_json::json!({
+                "name": name,
+                "isDir": is_dir,
+                "size": size,
+                "path": path,
+            }));
+        }
+    }
+    // Folders first, then by name, so a listing reads the way a file manager
+    // does rather than in whatever order the filesystem happened to give.
+    entries.sort_by(|a, b| {
+        let dir_a = a["isDir"].as_bool().unwrap_or(false);
+        let dir_b = b["isDir"].as_bool().unwrap_or(false);
+        dir_b.cmp(&dir_a).then_with(|| {
+            a["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+        })
+    });
+
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_static("*"),
+            ),
+        ],
+        serde_json::json!({ "slug": slug, "path": rel_str, "entries": entries }).to_string(),
+    )
+        .into_response()
 }
 
 async fn listing(root: &Path, dir: &Path, slug: &str) -> Response {

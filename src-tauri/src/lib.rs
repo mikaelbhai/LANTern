@@ -119,6 +119,8 @@ pub fn run() {
             commands::media_scan,
             commands::media_can_switch_audio,
             commands::media_set_tracks,
+            commands::peers_shares,
+            commands::peers_browse,
             commands::peers_block,
             commands::peers_blocked,
             commands::net_connection_profiles,

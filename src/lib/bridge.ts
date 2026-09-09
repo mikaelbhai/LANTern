@@ -150,6 +150,17 @@ export const api = {
   peers: {
     list: () => call<Peer[]>('peers_list'),
     ping: (peerId: string) => call<number>('peers_ping', { peerId }),
+    /** Everything a peer is publishing — media libraries and plain folders. */
+    shares: (peerId: string) =>
+      call<{ slug: string; name: string; mode: string; url: string }[]>('peers_shares', {
+        peerId,
+      }),
+    /** One directory inside a peer's published folder. */
+    browse: (peerId: string, slug: string, path: string) =>
+      call<{ entries: { name: string; isDir: boolean; size: number; path: string; url: string }[] }>(
+        'peers_browse',
+        { peerId, slug, path },
+      ),
     /** Refuses a device outright: no link, no calls, no files, not listed. */
     block: (peerId: string, blocked: boolean) =>
       call<void>('peers_block', { peerId, blocked }),
