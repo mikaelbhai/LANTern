@@ -2025,6 +2025,39 @@ pub fn game_start(
     session
 }
 
+/// Sends one move to everyone else in the game.
+///
+/// Only the move travels, never the board. Every player applies the same moves
+/// in the same order and arrives at the same position, so a game of any size
+/// costs a few dozen bytes a turn — and a slow link delays one player's move
+/// rather than stalling everybody's screen.
+///
+/// There is no referee. Turn-based games have a deterministic turn order, so
+/// each client can check for itself whether the sender was entitled to move;
+/// a move out of turn is dropped by every recipient independently.
+#[tauri::command]
+pub fn game_move(
+    state: State<'_, AppState>,
+    session_id: String,
+    payload: serde_json::Value,
+) -> bool {
+    let (links, me, ok) = state.with(|s| {
+        let ok = s.session.as_ref().is_some_and(|g| g.id == session_id);
+        (s.links.clone(), s.device_id.clone(), ok)
+    });
+    if !ok {
+        return false;
+    }
+
+    links.broadcast(&Envelope {
+        v: 1,
+        from: me,
+        kind: "gamemove".into(),
+        payload: serde_json::json!({ "sessionId": session_id, "move": payload }),
+    });
+    true
+}
+
 /// Records this player's progress and reports the race back.
 #[tauri::command]
 pub fn game_report(

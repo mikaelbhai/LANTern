@@ -287,6 +287,15 @@ export const api = {
         elapsedMs,
         finished,
       }),
+
+    /**
+     * Sends one move to the other players.
+     *
+     * Only the move travels; every client replays the same sequence and
+     * arrives at the same board.
+     */
+    move: (sessionId: string, payload: unknown) =>
+      call<boolean>('game_move', { sessionId, payload }),
     leave: (sessionId: string) => call<void>('game_leave', { sessionId }),
   },
   /** Synchronised viewing across devices. */

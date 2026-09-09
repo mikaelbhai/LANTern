@@ -138,6 +138,7 @@ pub fn run() {
             commands::media_set_progress,
             commands::game_start,
             commands::game_report,
+            commands::game_move,
             commands::game_leave,
             commands::party_start,
             commands::party_sync,

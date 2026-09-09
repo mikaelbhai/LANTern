@@ -384,7 +384,21 @@ export interface StagedEntry {
   mime: string;
 }
 
-export type GameKind = 'chess' | 'klondike' | 'freecell' | 'spider' | 'pyramid';
+/**
+ * The games on offer.
+ *
+ * The solitaires are on their way out: a LAN application is a strange place to
+ * put a game you play alone while everyone else watches. They stay until the
+ * multiplayer ones that replace them are finished.
+ */
+export type GameKind =
+  | 'chess'
+  | 'connect4'
+  | 'dots'
+  | 'klondike'
+  | 'freecell'
+  | 'spider'
+  | 'pyramid';
 
 /** How far one player has got, in a race. */
 export interface GameProgress {

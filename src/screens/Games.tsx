@@ -1,64 +1,60 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Crown, Eye, Gamepad2, Layers, Spade, Swords, Triangle } from 'lucide-react';
+import { Circle, Crown, Eye, Gamepad2, Grid3x3, Users } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, Modal, SectionTitle } from '../components/ui';
 import { Chess } from './games/Chess';
-import { Klondike } from './games/Klondike';
-import { FreeCell } from './games/FreeCell';
-import { Spider } from './games/Spider';
-import { Pyramid } from './games/Pyramid';
+import { ConnectFour } from './games/ConnectFour';
+import { Dots } from './games/Dots';
+import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
 import type { GameKind, Peer } from '../lib/types';
 
+/**
+ * What is on offer.
+ *
+ * Every one of these is played against other people. The four solitaires that
+ * used to be here have gone: a LAN application is a strange place to put a
+ * game you play by yourself while everyone else watches, and turning them into
+ * races only papered over that — you were still playing alone, just with a
+ * scoreboard.
+ *
+ * What replaced them needs no hidden information, so every device can hold the
+ * whole position and no referee is needed. See `screens/games/turns.tsx`.
+ */
 const GAMES: {
   id: GameKind;
   name: string;
   blurb: string;
   icon: React.ElementType;
-  multiplayer: boolean;
+  /** Two only, or anyone in the room. */
+  seats: '2' | 'party';
   accent: string;
 }[] = [
   {
     id: 'chess',
     name: 'Chess',
-    blurb: 'Full rules, five board themes, three piece sets. Pass-and-play or challenge a peer.',
+    blurb: 'Full rules, five board themes, three piece sets. Challenge anyone on the network.',
     icon: Crown,
-    multiplayer: true,
+    seats: '2',
     accent: '#F5A623',
   },
   {
-    id: 'klondike',
-    name: 'Klondike',
-    blurb: 'The classic. Draw one or three, unlimited undo, and a daily deal shared by every LANTern.',
-    icon: Spade,
-    multiplayer: false,
+    id: 'connect4',
+    name: 'Connect Four',
+    blurb: 'Drop a disc, get four in a row. Two to four players, and the turn goes round.',
+    icon: Circle,
+    seats: 'party',
     accent: '#39D9C8',
   },
   {
-    id: 'freecell',
-    name: 'FreeCell',
-    blurb: 'Numbered deals from 1 to a million. Supermoves enforced, hints when you are stuck.',
-    icon: Layers,
-    multiplayer: false,
+    id: 'dots',
+    name: 'Dots & Boxes',
+    blurb: 'Draw a line, close a box, go again. Better with four people than with two.',
+    icon: Grid3x3,
+    seats: 'party',
     accent: '#9B8CFF',
-  },
-  {
-    id: 'spider',
-    name: 'Spider',
-    blurb: 'One, two or four suits. Completed runs fly home on their own.',
-    icon: Swords,
-    multiplayer: false,
-    accent: '#7BD88F',
-  },
-  {
-    id: 'pyramid',
-    name: 'Pyramid',
-    blurb: 'Clear the pyramid by pairing to thirteen. Kings go on their own.',
-    icon: Triangle,
-    multiplayer: false,
-    accent: '#E05C5C',
   },
 ];
 
@@ -71,14 +67,15 @@ export function Games() {
     switch (activeGame.kind) {
       case 'chess':
         return <Chess opponentId={activeGame.opponentId} onExit={exit} />;
-      case 'klondike':
-        return <Klondike onExit={exit} />;
-      case 'freecell':
-        return <FreeCell onExit={exit} />;
-      case 'spider':
-        return <Spider onExit={exit} />;
-      case 'pyramid':
-        return <Pyramid onExit={exit} />;
+      case 'connect4':
+        return <ConnectFour onExit={exit} />;
+      case 'dots':
+        return <Dots onExit={exit} />;
+      default:
+        // A session for a game this build no longer has — someone on an older
+        // version started a solitaire. Better to land in the hub than to
+        // render nothing at all.
+        return <GamesHub />;
     }
   }
 
@@ -88,6 +85,47 @@ export function Games() {
 function GamesHub() {
   const setActiveGame = useStore((s) => s.setActiveGame);
   const [challenge, setChallenge] = React.useState<GameKind | null>(null);
+
+  const peers = useStore((s) => s.peers);
+  const call = useStore((s) => s.call);
+  const setGameSession = useStore((s) => s.setGameSession);
+  const toast = useStore((s) => s.toast);
+
+  // In a call, the people in it. Otherwise everyone online.
+  //
+  // The call is the better answer whenever there is one: those are the people
+  // you are already playing with, and pulling in a peer who is not part of the
+  // conversation would be an interruption rather than an invitation.
+  const inCall = !!call && call.state === 'active';
+  const playable = React.useMemo(() => {
+    const online = Object.values(peers).filter((p) => p.status !== 'offline');
+    if (!inCall) return online;
+    const members = new Set((call?.participants ?? []).map((p) => p.peerId));
+    return online.filter((p) => members.has(p.id));
+  }, [peers, inCall, call]);
+
+  /**
+   * Deals one hand to everybody and starts it.
+   *
+   * The seed is minted here and travels with the session, so every player
+   * deals the identical board. Nothing else about the game crosses the wire —
+   * only how far along each person is.
+   */
+  const playTogether = async (kind: GameKind) => {
+    const seed = Math.floor(Math.random() * 1_000_000);
+    try {
+      const session = await api.game.start(
+        kind,
+        playable.map((p) => p.id),
+        seed,
+      );
+      setGameSession(session);
+    } catch {
+      // Playing alone is still better than not playing.
+      toast({ kind: 'error', title: 'Could not reach the others', body: 'Starting on your own.' });
+    }
+    setActiveGame({ kind });
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -126,7 +164,9 @@ function GamesHub() {
                     </span>
                     <div>
                       <div className="text-sm font-medium">{g.name}</div>
-                      {g.multiplayer && <Badge tone="cyan">LAN multiplayer</Badge>}
+                      <Badge tone={g.seats === 'party' ? 'cyan' : 'muted'}>
+                        {g.seats === 'party' ? 'Two to four' : 'Two players'}
+                      </Badge>
                     </div>
                   </div>
 
@@ -141,9 +181,25 @@ function GamesHub() {
                     >
                       Play
                     </Button>
-                    {g.multiplayer && (
+                    {/*
+                      Chess is a game against one person; the rest are races
+                      against everyone. So chess asks who, and the others just
+                      start — asking a room of four which three to include is
+                      a dialog that earns nothing.
+                    */}
+                    {g.id === 'chess' ? (
                       <Button size="sm" full onClick={() => setChallenge(g.id)}>
                         Challenge
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        full
+                        icon={<Users size={13} />}
+                        onClick={() => void playTogether(g.id)}
+                        disabled={playable.length === 0}
+                      >
+                        {inCall ? 'Play with the call' : 'Play together'}
                       </Button>
                     )}
                   </div>

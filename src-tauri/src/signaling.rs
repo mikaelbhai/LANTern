@@ -483,6 +483,7 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         "typing" => "typing",
         "party" => "party:changed",
         "game" => "game:session",
+        "gamemove" => "game:move",
         "signal" => "call:state",
         _ => return,
     };

@@ -18,6 +18,7 @@ import type {
   Share,
   Transfer,
   VoiceClip,
+  GameSession,
 } from './types';
 import { uid } from './utils';
 
@@ -165,6 +166,15 @@ interface State {
   toasts: Toast[];
 
   activeGame: { kind: GameKind; opponentId?: string } | null;
+  /**
+   * The game everyone is playing together, if there is one.
+   *
+   * Held here rather than in the Games screen because it arrives while you are
+   * somewhere else entirely — usually mid-call — and has to be able to pull
+   * you in from wherever you are.
+   */
+  gameSession: GameSession | null;
+  setGameSession: (s: GameSession | null) => void;
 
   // actions
   init: () => Promise<void>;
@@ -315,6 +325,8 @@ export const useStore = create<State>((set, get) => {
     activity: persisted.activity ?? [],
     toasts: [],
     activeGame: null,
+    gameSession: null,
+    setGameSession: (session) => set({ gameSession: session }),
     pendingOffer: null,
     clearPendingOffer: () => set({ pendingOffer: null }),
 
@@ -362,6 +374,37 @@ export const useStore = create<State>((set, get) => {
       // A peer has offered a file. The Rust side has already recorded it and
       // knows where to fetch it from; all that is decided here is whether to
       // start, which for a trusted peer is immediate.
+      /**
+       * Somebody started a game that includes this device.
+       *
+       * People in a call are pulled straight in rather than asked. That is the
+       * point of playing together: you are already talking, and a dialog in
+       * the middle of it asking whether you would like to join the thing your
+       * friend just announced out loud is a step nobody wants. Outside a call
+       * it is an invitation, because being yanked into a game by someone you
+       * are not talking to is another matter entirely.
+       */
+      on('game:session', (session: GameSession & { from?: string }) => {
+        const me = get().profile.id;
+        const mine = session.players?.includes('me') || session.players?.includes(me);
+        if (!mine) return;
+
+        get().setGameSession(session);
+
+        const inCall = !!get().call && get().call?.state === 'active';
+        const alreadyPlaying = get().activeGame?.kind === session.game;
+
+        if (inCall && !alreadyPlaying) {
+          set({ activeGame: { kind: session.game } });
+        } else if (!inCall && !alreadyPlaying) {
+          get().toast({
+            kind: 'info',
+            title: 'Game invitation',
+            body: `${get().peers[session.from ?? '']?.name ?? 'Someone'} started ${session.game}`,
+          });
+        }
+      }),
+
       on('transfer:offer', (t: Transfer) => {
         get().addTransfers([t]);
         const peer = get().peers[t.peerId];

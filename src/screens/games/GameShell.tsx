@@ -19,6 +19,7 @@ export function GameShell({
   extraControls,
   status,
   children,
+  standings,
   onThemeChange,
 }: {
   title: string;
@@ -32,6 +33,14 @@ export function GameShell({
   extraControls?: React.ReactNode;
   status?: React.ReactNode;
   children: (theme: CardTheme) => React.ReactNode;
+  /**
+   * Live standings, when this game is being raced.
+   *
+   * Passed in rather than rendered by each game so the layout is decided once:
+   * beside the board on a wide screen, above it on a narrow one, and absent
+   * entirely when playing alone.
+   */
+  standings?: React.ReactNode;
   onThemeChange?: (t: CardThemeId) => void;
 }) {
   const [themeId, setThemeId] = useLocalStorage<CardThemeId>(themeKey, 'classic');
@@ -93,7 +102,16 @@ export function GameShell({
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-auto">{children(theme)}</div>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {standings ? (
+          <div className="flex flex-col lg:flex-row gap-3 p-3 h-full">
+            {standings}
+            <div className="flex-1 min-w-0">{children(theme)}</div>
+          </div>
+        ) : (
+          children(theme)
+        )}
+      </div>
 
       <Modal open={themeOpen} onClose={() => setThemeOpen(false)} title="Card theme">
         <div className="grid grid-cols-5 gap-2">
