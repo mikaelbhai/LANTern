@@ -110,13 +110,19 @@ fn rehost(value: &mut serde_json::Value, host: &str, port: u16) {
     }
 }
 
-pub async fn fetch_peer(peer_id: &str, host: &str, port: u16) -> Vec<serde_json::Value> {
-    let Ok(body) = get(host, port, "/shares.json").await else {
-        return Vec::new();
-    };
-    let Ok(shares) = serde_json::from_str::<Vec<serde_json::Value>>(&body) else {
-        return Vec::new();
-    };
+/// Reads a peer's shared library.
+///
+/// `None` means the peer's file server could not be reached at this address;
+/// `Some(vec![])` means it answered and is sharing nothing. Collapsing the two
+/// into an empty list is what made a blocked port look identical to an empty
+/// library, and left Theatre with nothing to say.
+pub async fn fetch_peer(
+    peer_id: &str,
+    host: &str,
+    port: u16,
+) -> Option<Vec<serde_json::Value>> {
+    let body = get(host, port, "/shares.json").await.ok()?;
+    let shares = serde_json::from_str::<Vec<serde_json::Value>>(&body).ok()?;
 
     let mut out = Vec::new();
     for share in shares {
@@ -154,7 +160,7 @@ pub async fn fetch_peer(peer_id: &str, host: &str, port: u16) -> Vec<serde_json:
             out.push(item);
         }
     }
-    out
+    Some(out)
 }
 
 /// Refreshes the library from every peer with a live link, then republishes it.
@@ -173,6 +179,15 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
     });
 
     let mut remote = Vec::new();
+
+    // Peers that are linked and talking, but whose library could not be read
+    // from any of their addresses. This is worth naming rather than showing an
+    // empty Theatre: it means the peer is right there and something between
+    // the two devices is dropping the connection to its file server - most
+    // often a firewall that allows the app on one network profile and not the
+    // other, which looks exactly like "calls work but videos do not".
+    let mut unreachable: Vec<String> = Vec::new();
+
     for peer in peers {
         if !links.contains(&peer.device_id) {
             continue;
@@ -183,18 +198,30 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         if !peer.ip.is_empty() && !addresses.contains(&peer.ip) {
             addresses.push(peer.ip.clone());
         }
+
+        let mut reached = false;
         for address in addresses {
-            let items = fetch_peer(&peer.device_id, &address, default_port).await;
-            if !items.is_empty() {
+            if let Some(items) = fetch_peer(&peer.device_id, &address, default_port).await {
                 remote.extend(items);
+                reached = true;
                 break;
             }
+        }
+
+        // Answered on none of its addresses, while the signalling link to it is
+        // live. The peer is there; the path to its file server is not.
+        if !reached {
+            unreachable.push(peer.name.clone());
         }
     }
 
     let all: Vec<serde_json::Value> = local.into_iter().chain(remote).collect();
-    state.with(|s| s.media = all.clone());
+    state.with(|s| {
+        s.media = all.clone();
+        s.library_unreachable = unreachable.clone();
+    });
     let _ = app.emit("media:changed", &all);
+    let _ = app.emit("library:unreachable", &unreachable);
 }
 
 /// Kicks off a refresh without making the caller wait for the network.

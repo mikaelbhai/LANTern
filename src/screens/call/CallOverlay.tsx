@@ -27,6 +27,7 @@ import { useStore } from '../../lib/store';
 import { startHoldTone, startRingback, sfx } from '../../lib/audio';
 import { ring } from '../../lib/ringer';
 import * as rtc from '../../lib/webrtc';
+import { Zoomable } from './Zoomable';
 import { cn, formatDuration } from '../../lib/utils';
 import { ScreenShareStage, ShareSourcePicker } from './ScreenShare';
 import { InCallChat } from './InCallChat';
@@ -114,6 +115,24 @@ export function CallOverlay() {
       window.removeEventListener('keyup', up);
     };
   }, [pushToTalk, pttKey, call.state]);
+
+  /**
+   * Starts or stops sending the camera.
+   *
+   * A call that began as voice becomes a video call here, which is the point:
+   * people ring to talk and then want to show something.
+   */
+  const toggleCamera = async () => {
+    if (selfCam) {
+      await rtc.disableCamera();
+      setSelfCam(false);
+      return;
+    }
+    // `useSelfVideo` watches this flag and picks the stream up from the
+    // session, so there is nothing to hand it here.
+    const stream = await rtc.enableCamera();
+    if (stream) setSelfCam(true);
+  };
 
   const transmitting = pushToTalk ? pushing : !selfMuted;
 
@@ -236,7 +255,7 @@ export function CallOverlay() {
         className="fixed bottom-5 right-5 z-[95] w-[232px] rounded-card overflow-hidden border border-edge-strong bg-surface shadow-2xl"
       >
         <div className="h-[130px] bg-base relative cursor-grab active:cursor-grabbing">
-          {call.kind === 'video' && selfCam && selfStream ? (
+          {selfCam && selfStream ? (
             <video
               ref={(el) => {
                 if (el && selfStream) el.srcObject = selfStream;
@@ -244,7 +263,7 @@ export function CallOverlay() {
               autoPlay
               playsInline
               muted
-              className="h-full w-full object-cover scale-x-[-1]"
+              className="h-full w-full object-contain scale-x-[-1]"
             />
           ) : (
             <div className="h-full w-full grid place-items-center">
@@ -490,15 +509,20 @@ export function CallOverlay() {
           icon={selfMuted ? <MicOff size={16} /> : <Mic size={16} />}
         />
 
-        {call.kind === 'video' && (
-          <ControlButton
-            label={selfCam ? 'Turn camera off' : 'Turn camera on'}
-            active={selfCam}
-            danger={!selfCam}
-            onClick={() => setSelfCam(!selfCam)}
-            icon={selfCam ? <Video size={16} /> : <VideoOff size={16} />}
-          />
-        )}
+        {/*
+          Offered on every call, not only ones that started as video. A voice
+          call negotiates an empty video track up front (see webrtc.ts), so
+          turning the camera on here is a track swap rather than a
+          renegotiation - the audio does not break and the other side simply
+          starts seeing a picture.
+        */}
+        <ControlButton
+          label={selfCam ? 'Turn camera off' : 'Turn camera on'}
+          active={selfCam}
+          danger={!selfCam}
+          onClick={() => void toggleCamera()}
+          icon={selfCam ? <Video size={16} /> : <VideoOff size={16} />}
+        />
 
         <ControlButton
           label={call.screenShare ? 'Stop sharing' : 'Share screen'}
@@ -777,6 +801,12 @@ function Tile({
       )}
     >
       {stream && (
+        <Zoomable
+          className={cn('h-full w-full', !showVideo && 'hidden')}
+          // Only the large tile gets buttons; on a thumbnail they would cover
+          // the face they are drawn over.
+          controls={large}
+        >
         <video
           ref={videoRef}
           autoPlay
@@ -784,11 +814,18 @@ function Tile({
           // Never play your own microphone back at yourself.
           muted={isSelf}
           className={cn(
-            'h-full w-full object-cover',
+            // Fitted, not cropped. `object-cover` fills the tile by cutting
+            // the edges off, which on a shared screen removes exactly the
+            // part someone is pointing at, and on a portrait phone camera
+            // takes the top of everyone's head. Letterboxing against the
+            // tile's own background is the honest presentation; zooming is
+            // there for anyone who wants to fill the frame.
+            'h-full w-full object-contain',
             isSelf && mirror && 'scale-x-[-1]',
             !showVideo && 'hidden',
           )}
         />
+        </Zoomable>
       )}
       {showVideo ? null : (
         <div className="h-full w-full grid place-items-center bg-base">

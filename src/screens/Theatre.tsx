@@ -50,6 +50,22 @@ export function Theatre() {
   const [party, setParty] = React.useState<WatchParty | null>(null);
 
   React.useEffect(() => on('party:changed', (p) => setParty(p as WatchParty | null)), []);
+
+  /**
+   * Peers that are online but whose library could not be read.
+   *
+   * Worth saying out loud. An empty Theatre beside a peer that is plainly
+   * connected - you can call them - reads as "they have shared nothing", when
+   * what actually happened is that something between the two machines refused
+   * the connection to their file server. A firewall that allows the app on one
+   * network profile and not another produces exactly that, and gives no other
+   * sign anywhere in the app.
+   */
+  const [unreachable, setUnreachable] = React.useState<string[]>([]);
+  React.useEffect(
+    () => on('library:unreachable', (names) => setUnreachable((names as string[]) ?? [])),
+    [],
+  );
   const [loading, setLoading] = React.useState(true);
   const [playing, setPlaying] = React.useState<MediaItem | null>(null);
   const [detail, setDetail] = React.useState<MediaItem | null>(null);
@@ -209,6 +225,22 @@ export function Theatre() {
           </Button>
         </div>
       </header>
+
+      {unreachable.length > 0 && (
+        <div className="shrink-0 mx-4 mt-3 rounded-card border border-gold/30 bg-gold/10 px-3 py-2">
+          <p className="text-xs text-gold/90 leading-relaxed">
+            <span className="font-medium">
+              Can&rsquo;t read {unreachable.join(', ')}
+              {unreachable.length > 1 ? "'s libraries" : "'s library"}.
+            </span>{' '}
+            {unreachable.length > 1 ? 'Those devices are' : 'That device is'} online — messages
+            and calls work — but the connection to{' '}
+            {unreachable.length > 1 ? 'their' : 'its'} files is being refused. On Windows that
+            is usually the firewall: the network it is on has to be set to Private, or LANTern
+            allowed on a Public one.
+          </p>
+        </div>
+      )}
 
       <div className="flex-1 scroll-y">
         {loading ? (

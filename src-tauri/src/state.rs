@@ -48,6 +48,8 @@ pub struct Inner {
     pub thumb_dir: Option<std::path::PathBuf>,
     /// Filename announced by `update_begin`, awaiting its bytes.
     pub pending_update: Option<String>,
+    /// Peers that are linked but whose library could not be read.
+    pub library_unreachable: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -91,6 +93,7 @@ impl AppState {
             avatar: None,
             thumb_dir: None,
             pending_update: None,
+            library_unreachable: Vec::new(),
         })))
     }
 

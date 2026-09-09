@@ -132,6 +132,22 @@ function createSession(peerId: string, callId: string, kind: CallKind): Session 
   const session: Session = { callId, kind, pc, pending: [], remote };
   sessions.set(peerId, session);
 
+  // A voice call still negotiates a video track, carrying nothing.
+  //
+  // Turning the camera on mid-call otherwise means adding a track, which means
+  // a fresh offer and answer — a renegotiation both sides have to survive, and
+  // an audible gap while they do. Agreeing the shape of the call up front
+  // costs one empty m-line in the SDP and makes the upgrade a `replaceTrack`:
+  // instant, and with nothing to fail.
+  if (kind === 'voice') {
+    try {
+      pc.addTransceiver('video', { direction: 'sendrecv' });
+    } catch {
+      // An older webview without transceiver support simply cannot upgrade;
+      // the voice call is unaffected.
+    }
+  }
+
   pc.onicecandidate = (e) => {
     if (e.candidate) {
       void send(peerId, { callId, kind, type: 'ice', candidate: e.candidate.toJSON() });
@@ -299,6 +315,82 @@ export function setMicrophoneEnabled(enabled: boolean): void {
 export function isMicrophoneEnabled(): boolean {
   const track = localStream?.getAudioTracks()[0];
   return track ? track.enabled : false;
+}
+
+/* ------------------------------------------------------- camera on/off */
+
+/**
+ * Starts sending the camera on a call that began as voice.
+ *
+ * The video track goes into the transceiver reserved when the call was set
+ * up, so nothing is renegotiated and the audio never breaks. Returns the local
+ * stream so the caller can show a preview, or null if there is no camera or
+ * permission was refused.
+ */
+export async function enableCamera(): Promise<MediaStream | null> {
+  let track = localStream?.getVideoTracks()[0] ?? null;
+
+  if (!track) {
+    try {
+      const captured = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
+      });
+      track = captured.getVideoTracks()[0] ?? null;
+      if (track && localStream) localStream.addTrack(track);
+      else if (track) localStream = captured;
+    } catch {
+      return null;
+    }
+  }
+  if (!track) return null;
+
+  track.enabled = true;
+
+  for (const session of sessions.values()) {
+    // While a screen is being shared the video sender is carrying the screen;
+    // taking it over with the camera would stop the share without being asked.
+    if (screenStream) continue;
+
+    const sender =
+      session.pc.getSenders().find((s) => s.track?.kind === 'video') ??
+      session.pc.getTransceivers().find((t) => t.receiver.track?.kind === 'video')?.sender ??
+      session.pc.getSenders().find((s) => !s.track);
+
+    if (sender) await sender.replaceTrack(track).catch(() => {});
+  }
+
+  await Promise.all([...sessions.values()].map((s) => tuneForLan(s.pc)));
+  return localStream;
+}
+
+/**
+ * Stops sending the camera, without ending the call.
+ *
+ * The track is stopped rather than merely disabled, so the camera light goes
+ * out — a disabled track still holds the device open, and a light that stays
+ * on after someone turns their camera off is not a small thing.
+ */
+export async function disableCamera(): Promise<void> {
+  for (const session of sessions.values()) {
+    if (screenStream) continue;
+    const sender = session.pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (sender) await sender.replaceTrack(null).catch(() => {});
+  }
+
+  for (const track of localStream?.getVideoTracks() ?? []) {
+    track.stop();
+    localStream?.removeTrack(track);
+  }
+}
+
+/** Whether the camera is currently being sent. */
+export function isCameraOn(): boolean {
+  const track = localStream?.getVideoTracks()[0];
+  return !!track && track.readyState === 'live' && track.enabled;
 }
 
 /* --------------------------------------------------------- screen share */

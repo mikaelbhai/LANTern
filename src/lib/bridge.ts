@@ -91,6 +91,7 @@ export async function startBridge() {
       'service:failed',
       'host:changed',
       'media:changed',
+      'library:unreachable',
       'party:changed',
       'game:session',
     ];
