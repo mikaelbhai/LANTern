@@ -118,34 +118,58 @@ if (-not $SkipAndroid) {
   Set-Content -Path $propPath -Value $props -Encoding utf8
   Write-Host "  $v (code $code)"
 
-  Write-Host "`n=== android: rust core (aarch64, release) ===" -ForegroundColor Cyan
+  # The native core, once per architecture.
+  #
+  # An APK only runs where it has a matching library. Building for arm64 alone
+  # produced an APK that most phones accept and a good many other devices
+  # refuse outright as "incompatible", with nothing on screen to say why - a
+  # 32-bit ARM television being the case that found this. Since there is no way
+  # for someone sideloading to know which build they need, every APK now
+  # carries all three.
+  #
+  #   arm64-v8a     every phone of the last decade, most modern TV boxes
+  #   armeabi-v7a   32-bit ARM: budget TV boxes, older tablets
+  #   x86_64        Chromebooks and emulators
+  #
+  # i686 is deliberately absent: nothing shipping today is 32-bit x86, and it
+  # would be another 7 MB in every download.
+  $abis = @(
+    @{ target = "aarch64-linux-android";   jni = "arm64-v8a" },
+    @{ target = "armv7-linux-androideabi"; jni = "armeabi-v7a" },
+    @{ target = "x86_64-linux-android";    jni = "x86_64" }
+  )
+
   Set-Location "$root\src-tauri"
 
-  # --features custom-protocol is what embeds dist/ into the binary. Without
-  # it Tauri serves the frontend from the Vite dev server at localhost:1420,
-  # and the APK opens to "Failed to request http://localhost:1420/" on a phone
-  # that has no dev server. This is the flag the Tauri CLI passes for a
-  # production build; the cargo profile alone does not decide it.
-  #
-  # The APK itself stays debug-signed and sideloadable - only the Rust core
-  # is built as production.
-  #
-  # Android 15 requires shared libraries whose LOAD segments are aligned to
-  # 16 KB pages; without this flag the OS shows a compatibility warning and
-  # future releases will refuse to load the library at all.
-  $env:RUSTFLAGS = "-C link-arg=-Wl,-z,max-page-size=16384"
-  cargo build --release --target aarch64-linux-android --lib --features custom-protocol
-  if ($LASTEXITCODE -ne 0) { Write-Error "android rust build failed"; exit 1 }
-  Remove-Item Env:\RUSTFLAGS -ErrorAction SilentlyContinue
+  foreach ($abi in $abis) {
+    Write-Host "`n=== android: rust core ($($abi.jni), release) ===" -ForegroundColor Cyan
 
-  $apk = "$root\src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm64-debug.apk"
-  Write-Host "`n=== android: stripping native library ===" -ForegroundColor Cyan
-  $src = "$root\src-tauri\target\aarch64-linux-android\release\liblantern_lib.so"
-  $dstDir = "$root\src-tauri\gen\android\app\src\main\jniLibs\arm64-v8a"
-  New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
-  & "$ndkBin\llvm-strip.exe" --strip-debug -o "$dstDir\liblantern_lib.so" $src
-  $mb = [math]::Round((Get-Item "$dstDir\liblantern_lib.so").Length / 1MB, 1)
-  Write-Host "  liblantern_lib.so  $mb MB"
+    # --features custom-protocol is what embeds dist/ into the binary. Without
+    # it Tauri serves the frontend from the Vite dev server at localhost:1420,
+    # and the APK opens to "Failed to request http://localhost:1420/" on a
+    # device that has no dev server. This is the flag the Tauri CLI passes for
+    # a production build; the cargo profile alone does not decide it.
+    #
+    # The APK itself stays debug-signed and sideloadable - only the Rust core
+    # is built as production.
+    #
+    # Android 15 requires shared libraries whose LOAD segments are aligned to
+    # 16 KB pages; without this flag the OS shows a compatibility warning and
+    # future releases will refuse to load the library at all.
+    $env:RUSTFLAGS = "-C link-arg=-Wl,-z,max-page-size=16384"
+    cargo build --release --target $abi.target --lib --features custom-protocol
+    if ($LASTEXITCODE -ne 0) { Write-Error "$($abi.jni) rust build failed"; exit 1 }
+    Remove-Item Env:\RUSTFLAGS -ErrorAction SilentlyContinue
+
+    $dstDir = "$root\src-tauri\gen\android\app\src\main\jniLibs\$($abi.jni)"
+    New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
+    & "$ndkBin\llvm-strip.exe" --strip-debug -o "$dstDir\liblantern_lib.so" `
+      "$root\src-tauri\target\$($abi.target)\release\liblantern_lib.so"
+    $mb = [math]::Round((Get-Item "$dstDir\liblantern_lib.so").Length / 1MB, 1)
+    Write-Host "  $($abi.jni)  $mb MB"
+  }
+
+  $apk = "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
 
   Write-Host "`n=== android: gradle ===" -ForegroundColor Cyan
   # Delete the previous APK first. Gradle packages incrementally, and when
@@ -156,29 +180,28 @@ if (-not $SkipAndroid) {
   Remove-Item $apk -ErrorAction SilentlyContinue
 
   Set-Location "$root\src-tauri\gen\android"
-  .\gradlew.bat assembleArm64Debug -x rustBuildArm64Debug --no-daemon -q
+  .\gradlew.bat assembleUniversalDebug -x rustBuildUniversalDebug --no-daemon -q
   if ($LASTEXITCODE -ne 0) { Write-Error "gradle build failed"; exit 1 }
 
   Write-Host "  APK  $([math]::Round((Get-Item $apk).Length / 1MB, 1)) MB  $apk"
 
   if ($Tv) {
-    # Built from the same sources and the same native library, with only the
-    # applicationId and the label changed (see app/build.gradle.kts). Gradle
-    # writes to the same path, so the phone APK is copied aside first or the
-    # second build would overwrite it.
+    # The same application and the same native libraries, under its own name
+    # and package (see app/build.gradle.kts). Gradle writes to the same output
+    # path, so the phone APK is copied aside first.
     Write-Host "`n=== android: LANTV ===" -ForegroundColor Cyan
     $phoneApk = "$root\src-tauri\gen\android\LANTern-phone.apk"
     Copy-Item $apk $phoneApk -Force
 
     Remove-Item $apk -ErrorAction SilentlyContinue
-    .\gradlew.bat assembleArm64Debug -PlanternTv=true -x rustBuildArm64Debug --no-daemon -q
+    .\gradlew.bat assembleUniversalDebug -PlanternTv=true -x rustBuildUniversalDebug --no-daemon -q
     if ($LASTEXITCODE -ne 0) { Write-Error "LANTV build failed"; exit 1 }
 
     $tvApk = "$root\src-tauri\gen\android\LANTV.apk"
     Copy-Item $apk $tvApk -Force
     Write-Host "  LANTV  $([math]::Round((Get-Item $tvApk).Length / 1MB, 1)) MB  $tvApk"
 
-    # Leave the phone APK where the rest of the script expects to find it.
+    # Leave the phone APK where the rest of the script expects it.
     Copy-Item $phoneApk $apk -Force
     Remove-Item $phoneApk -Force
   }
