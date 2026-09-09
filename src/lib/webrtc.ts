@@ -283,20 +283,82 @@ function releaseMedia() {
  * on a video track, so swapping what feeds it avoids a second offer/answer
  * round and the visible stall that comes with it.
  */
+/**
+ * The graph that mixes the microphone with whatever the screen is playing.
+ *
+ * Held open for the life of a share and torn down with it: an AudioContext is
+ * a real audio device, and leaving one running keeps the process awake.
+ */
+let shareMix: { ctx: AudioContext; track: MediaStreamTrack } | null = null;
+
+/**
+ * Combines the microphone and the shared screen's audio into one track.
+ *
+ * There is already an audio sender carrying the microphone, and adding a
+ * second track would mean a fresh offer/answer for a new m-line — the same
+ * stall `replaceTrack` exists to avoid. Mixing both sources into a single
+ * track keeps the negotiated shape of the call exactly as it was.
+ *
+ * The screen's audio is captured digitally rather than through a speaker, so
+ * it cannot feed back into the microphone; no echo cancellation is needed on
+ * that side.
+ */
+function mixShareAudio(microphone: MediaStreamTrack | null, system: MediaStreamTrack): MediaStreamTrack | null {
+  try {
+    const ctx = new AudioContext();
+    const destination = ctx.createMediaStreamDestination();
+
+    ctx.createMediaStreamSource(new MediaStream([system])).connect(destination);
+    if (microphone && microphone.readyState === 'live') {
+      ctx.createMediaStreamSource(new MediaStream([microphone])).connect(destination);
+    }
+
+    const mixed = destination.stream.getAudioTracks()[0] ?? null;
+    if (!mixed) {
+      void ctx.close();
+      return null;
+    }
+
+    shareMix = { ctx, track: mixed };
+    return mixed;
+  } catch {
+    // No WebAudio, or the device refused another context. The share still
+    // works; it just carries picture only.
+    return null;
+  }
+}
+
 export async function startScreenShare(): Promise<MediaStream | null> {
+  // Asking for audio is a request, not a guarantee: the picker offers a
+  // "share audio" tick on Chromium desktop, Android has no such capture at
+  // all, and a machine with no loopback device simply returns video. Any of
+  // those is fine, but a request for audio that the platform rejects outright
+  // would fail the whole call, so it falls back to video alone.
   const display = await navigator.mediaDevices
-    .getDisplayMedia({ video: { frameRate: 30 }, audio: false })
-    .catch(() => null);
+    .getDisplayMedia({ video: { frameRate: 30 }, audio: true })
+    .catch(() =>
+      navigator.mediaDevices
+        .getDisplayMedia({ video: { frameRate: 30 }, audio: false })
+        .catch(() => null),
+    );
   if (!display) return null;
 
   screenStream = display;
   const track = display.getVideoTracks()[0];
   if (!track) return null;
 
+  const systemAudio = display.getAudioTracks()[0] ?? null;
+  const mixed = systemAudio ? mixShareAudio(localStream?.getAudioTracks()[0] ?? null, systemAudio) : null;
+
   for (const session of sessions.values()) {
     const sender = session.pc.getSenders().find((s) => s.track?.kind === 'video');
     if (sender) await sender.replaceTrack(track).catch(() => {});
     else session.pc.addTrack(track, display);
+
+    if (mixed) {
+      const audio = session.pc.getSenders().find((s) => s.track?.kind === 'audio');
+      if (audio) await audio.replaceTrack(mixed).catch(() => {});
+    }
   }
 
   // The browser's own "stop sharing" bar bypasses our UI entirely.
@@ -309,10 +371,22 @@ export async function stopScreenShare(): Promise<void> {
   screenStream = null;
 
   const camera = localStream?.getVideoTracks()[0] ?? null;
+  // Back to the bare microphone: the mix included the screen, which is gone.
+  const microphone = localStream?.getAudioTracks()[0] ?? null;
+
   for (const session of sessions.values()) {
     const sender = session.pc.getSenders().find((s) => s.track?.kind === 'video');
     if (sender) await sender.replaceTrack(camera).catch(() => {});
+
+    if (shareMix) {
+      const audio = session.pc.getSenders().find((s) => s.track?.kind === 'audio');
+      if (audio) await audio.replaceTrack(microphone).catch(() => {});
+    }
   }
+
+  shareMix?.track.stop();
+  void shareMix?.ctx.close().catch(() => {});
+  shareMix = null;
 }
 
 export function isSharingScreen(): boolean {

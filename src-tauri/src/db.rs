@@ -58,6 +58,18 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             last_seen INTEGER NOT NULL
         );
 
+        -- Where the viewer got to in each title.
+        --
+        -- Kept in its own table rather than on the library rows: the library
+        -- is rebuilt from disk on every scan, and a position that vanished
+        -- when a folder was rescanned would be worse than none at all.
+        CREATE TABLE IF NOT EXISTS progress (
+            id           TEXT PRIMARY KEY,
+            progress_sec REAL NOT NULL,
+            duration_sec REAL,
+            updated_at   INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS calls (
             id          TEXT PRIMARY KEY,
             kind        TEXT NOT NULL,
@@ -65,7 +77,29 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             started_at  INTEGER NOT NULL,
             duration_ms INTEGER NOT NULL,
             outcome     TEXT NOT NULL
+        );
+
+        -- Choices that are not about one title: the language someone reaches
+        -- for by default. Kept apart from `progress` so a title with no saved
+        -- position still opens in the right language.
+        CREATE TABLE IF NOT EXISTS preferences (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );",
     )?;
+
+    // Which audio and subtitle track was chosen, alongside the position it was
+    // chosen at. Added after the table shipped, so this runs as an alteration
+    // rather than a column in the CREATE above — an existing library must keep
+    // the positions it already has.
+    for column in ["audio_lang", "subtitle_lang"] {
+        // A duplicate-column error is the expected outcome on every run after
+        // the first, and means the schema is already current.
+        let _ = conn.execute(
+            &format!("ALTER TABLE progress ADD COLUMN {column} TEXT"),
+            [],
+        );
+    }
+
     Ok(())
 }

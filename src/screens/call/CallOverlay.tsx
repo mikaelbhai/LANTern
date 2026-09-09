@@ -167,7 +167,7 @@ export function CallOverlay() {
     // The live entry when we have it, the name we recorded when we do not.
     const fromName = from?.name ?? other?.name ?? 'Unknown peer';
     return (
-      <div className="fixed inset-0 z-[95] glass grid place-items-center">
+      <div className="fixed inset-0 z-[95] scrim grid place-items-center">
         <motion.div
           initial={{ scale: 0.94, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}

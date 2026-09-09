@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { X, Check, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { sfx } from '../lib/audio';
+import { useBackDismiss } from '../lib/hooks';
 
 export const spring = { type: 'spring' as const, stiffness: 180, damping: 20 };
 
@@ -172,6 +173,10 @@ export function Modal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // Escape is the desktop gesture; back is the Android one. Doing this here
+  // means every dialog in the app gets it, rather than each remembering to.
+  useBackDismiss(open, onClose);
+
   return (
     <AnimatePresence>
       {open && (
@@ -180,7 +185,7 @@ export function Modal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 glass"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 scrim"
           onMouseDown={(e) => e.target === e.currentTarget && onClose()}
         >
           <motion.div

@@ -24,6 +24,10 @@
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
+    <!-- A television has no touchscreen, and the Play Store hides any app that
+         does not say so from TV devices entirely. Declaring it optional is what
+         makes this installable there. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
         android:icon="@mipmap/ic_launcher"

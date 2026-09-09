@@ -237,9 +237,13 @@ function ShareCard({
               <Badge tone="muted">Stopped</Badge>
             )}
           </div>
-          <div className="text-2xs text-muted truncate mt-0.5" title={share.path}>
+          <button
+            className="text-2xs text-muted truncate mt-0.5 block max-w-full text-left hover:text-gold"
+            title={`Open ${share.path}`}
+            onClick={() => void api.files.open(share.path)}
+          >
             {share.path}
-          </div>
+          </button>
           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
             <Badge tone="neutral">{mode.label}</Badge>
             <span className="text-2xs text-muted">

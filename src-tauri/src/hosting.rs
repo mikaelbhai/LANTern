@@ -77,7 +77,7 @@ async fn shares_json(State(state): State<Arc<AppState>>) -> Response {
     });
 
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"))],
         serde_json::to_string(&shares).unwrap_or_else(|_| "[]".into()),
     )
         .into_response()
@@ -157,7 +157,219 @@ async fn serve_path(
     if let Some(track) = params.get("subtitle").and_then(|n| n.parse::<u64>().ok()) {
         return serve_embedded_subtitle(&state, &slug, &path, track).await;
     }
+    // `?audio=N` streams the file with one chosen audio track, remuxed on the
+    // fly. The webview cannot switch tracks itself, so the switch happens
+    // before the bytes leave this machine.
+    // `?thumb=1` returns a still frame. Generating it here, once, is what
+    // stops every client decoding the video itself just to draw a card.
+    if params.contains_key("thumb") {
+        return serve_thumbnail(&state, &slug, &path).await;
+    }
+    if let Some(index) = params.get("audio").and_then(|n| n.parse::<u64>().ok()) {
+        let seek = params
+            .get("t")
+            .and_then(|t| t.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let codec = params.get("codec").cloned().unwrap_or_default();
+        return serve_audio_selection(&state, &slug, &path, index, &codec, seek).await;
+    }
     respond(state, slug, path, &headers).await
+}
+
+/// Spawns ffmpeg without letting Windows open a console for it.
+///
+/// A GUI app has no console, so Windows creates one for any child process that
+/// wants a terminal — which is why generating a thumbnail flashed a black
+/// window over whatever the user was doing. CREATE_NO_WINDOW suppresses it.
+fn ffmpeg_command(program: &Path) -> tokio::process::Command {
+    // Nothing is mutated off Windows, where there is no console to suppress.
+    #[allow(unused_mut)]
+    let mut cmd = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        // tokio's Command carries this method itself, so unlike the
+        // std::process call in audiotrack.rs no trait import is needed.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+/// A still frame from a video, generated once and cached on disk.
+///
+/// The alternative was the browser doing it: loading each title into a hidden
+/// video element and drawing a frame to a canvas. That works, but it means
+/// every client decodes every title in the library — on a 4K HEVC file that is
+/// real GPU load, repeated on every device and after every restart. Doing it
+/// once on the machine that holds the file costs a fraction as much and the
+/// result is shared.
+async fn serve_thumbnail(state: &AppState, slug: &str, rel: &str) -> Response {
+    let Some((root, _, running)) = state.with(|s| {
+        s.shares
+            .iter()
+            .find(|sh| sh.slug == slug)
+            .map(|sh| (PathBuf::from(&sh.path), sh.mode, sh.running))
+    }) else {
+        return not_found("No such share");
+    };
+    if !running {
+        return not_found("No such share");
+    }
+    let Some(target) = resolve(&root, rel) else {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    };
+
+    // Cached beside the app's data, keyed by path so two files with the same
+    // name in different folders do not collide.
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        target.to_string_lossy().hash(&mut h);
+        format!("{:016x}.jpg", h.finish())
+    };
+    let cache_dir = state.with(|s| s.thumb_dir.clone());
+    let cached = cache_dir.as_ref().map(|d| d.join(&key));
+
+    if let Some(path) = cached.as_ref() {
+        if let Ok(bytes) = tokio::fs::read(path).await {
+            return jpeg(bytes);
+        }
+    }
+
+    let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
+        return (StatusCode::NOT_IMPLEMENTED, "No thumbnailer on this device").into_response();
+    };
+
+    // A tenth of the way in, bounded: far enough past the idents to be the
+    // film, not so far that a short clip runs out.
+    let at = 120.0;
+    let args = crate::audiotrack::thumbnail_arguments(&target.to_string_lossy(), at);
+
+    let output = ffmpeg_command(ffmpeg)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+
+    match output {
+        Ok(out) if out.status.success() && !out.stdout.is_empty() => {
+            if let (Some(dir), Some(path)) = (cache_dir.as_ref(), cached.as_ref()) {
+                let _ = tokio::fs::create_dir_all(dir).await;
+                let _ = tokio::fs::write(path, &out.stdout).await;
+            }
+            jpeg(out.stdout)
+        }
+        _ => (StatusCode::NOT_FOUND, "Could not read a frame").into_response(),
+    }
+}
+
+fn jpeg(bytes: Vec<u8>) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("image/jpeg")),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*")),
+            // Generated from a file that rarely changes; a long cache keeps a
+            // scrolling library from asking again.
+            (header::CACHE_CONTROL, HeaderValue::from_static("max-age=86400")),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// Streams the file with one audio track selected.
+///
+/// The video is copied, so this costs about what serving the file costs; only
+/// the audio is re-encoded, and only when the browser could not decode it.
+/// The output is fragmented MP4 so playback starts immediately rather than
+/// after the whole film has been processed.
+///
+/// Range requests are deliberately not supported here: the output is generated
+/// on demand and has no length until it ends. Seeking is done by restarting
+/// the stream at an offset, which is what `?t=` is for.
+async fn serve_audio_selection(
+    state: &AppState,
+    slug: &str,
+    rel: &str,
+    index: u64,
+    codec: &str,
+    seek_sec: f64,
+) -> Response {
+    let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "Switching audio tracks needs ffmpeg on this device. LANTern works without it; \
+             only this one feature depends on it.",
+        )
+            .into_response();
+    };
+
+    let Some((root, _, running)) = state.with(|s| {
+        s.shares
+            .iter()
+            .find(|sh| sh.slug == slug)
+            .map(|sh| (PathBuf::from(&sh.path), sh.mode, sh.running))
+    }) else {
+        return not_found("No such share");
+    };
+    if !running {
+        return not_found("No such share");
+    }
+    let Some(target) = resolve(&root, rel) else {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    };
+
+    let args = crate::audiotrack::arguments(
+        &target.to_string_lossy(),
+        index,
+        codec,
+        seek_sec,
+    );
+
+    let mut child = match ffmpeg_command(ffmpeg)
+        .args(&args)
+        .stdout(std::process::Stdio::piped())
+        // ffmpeg writes its progress to stderr; nothing reads it, and leaving
+        // it inherited would spray the console during playback.
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("could not start ffmpeg: {e}"),
+            )
+                .into_response()
+        }
+    };
+
+    let Some(stdout) = child.stdout.take() else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "no output from ffmpeg").into_response();
+    };
+
+    // Hold the child alongside the stream: dropping the response kills the
+    // process, so closing the player or picking another track does not leave
+    // a transcode running against a 20 GB file.
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+
+    let stream = tokio_util::io::ReaderStream::with_capacity(stdout, 256 * 1024);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, HeaderValue::from_static("video/mp4"))
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
+        // Generated per request; caching it would serve one viewer's chosen
+        // language to the next.
+        .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
+        .body(Body::from_stream(stream))
+        .unwrap()
 }
 
 /// Extracts one subtitle track out of a Matroska file and returns it as VTT.
@@ -187,8 +399,14 @@ async fn serve_embedded_subtitle(
     };
 
     // Reading a multi-gigabyte container blocks; keep it off the async pool.
-    let extracted =
-        tokio::task::spawn_blocking(move || crate::ebml::extract_subtitles(&target, track)).await;
+    let extracted = tokio::task::spawn_blocking(move || {
+        if crate::ebml::is_matroska(&target) {
+            crate::ebml::extract_subtitles(&target, track)
+        } else {
+            crate::mp4::extract_subtitles(&target, track)
+        }
+    })
+    .await;
 
     match extracted {
         Ok(Ok(vtt)) => (
@@ -440,7 +658,7 @@ async fn media_manifest(state: &AppState, slug: &str, root: &Path) -> Response {
 
     (
         [
-            (header::CONTENT_TYPE, HeaderValue::from_static("application/json")),
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8")),
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*")),
         ],
         // A bare array. It was wrapped in {"items": [...]}, which the peer-side

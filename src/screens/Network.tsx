@@ -1046,6 +1046,14 @@ function AddPeerModal({ open, onClose }: { open: boolean; onClose: () => void })
       toast({ kind: 'success', title: 'Paired', body: peer.name });
       onClose();
       setPhrase('');
+    } catch (err) {
+      // A phrase carries the address itself, so one that will not decode is a
+      // mistyped or misheard word rather than a peer that is not answering.
+      toast({
+        kind: 'error',
+        title: 'That phrase did not work',
+        body: String(err ?? 'Check the words and try again.'),
+      });
     } finally {
       setBusy(false);
     }

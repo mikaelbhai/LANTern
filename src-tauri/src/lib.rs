@@ -4,6 +4,7 @@
 //! server, a STUN server for ICE, a static HTTP server for published folders,
 //! and SQLite for history. No component reaches the internet.
 
+mod audiotrack;
 mod commands;
 mod db;
 mod discovery;
@@ -13,7 +14,9 @@ mod library;
 mod identity;
 mod media;
 mod model;
+mod mp4;
 mod net;
+mod phrase;
 mod shares;
 mod sidecar;
 mod signaling;
@@ -114,6 +117,8 @@ pub fn run() {
             commands::autostart_set,
             commands::media_list,
             commands::media_scan,
+            commands::media_can_switch_audio,
+            commands::media_set_tracks,
             commands::media_set_progress,
             commands::game_start,
             commands::game_report,
@@ -154,4 +159,23 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running LANTern");
+}
+
+/* ------------------------------------------------------- container probing */
+
+// Re-exported so the `probe_file` example - and anything else that wants to
+// ask what is inside a file - can do it without going through the app.
+
+pub use ebml::{Probe, Track};
+
+pub fn is_matroska_path(path: &std::path::Path) -> bool {
+    ebml::is_matroska(path)
+}
+
+pub fn probe_matroska(path: &std::path::Path) -> std::io::Result<Probe> {
+    ebml::probe(path)
+}
+
+pub fn probe_mp4(path: &std::path::Path) -> std::io::Result<Probe> {
+    mp4::probe(path)
 }

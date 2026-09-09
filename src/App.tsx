@@ -24,6 +24,8 @@ import { prepareCallAlerts } from './lib/ringer';
 import { useIsMobile } from './lib/hooks';
 import { SCREEN_TITLES, type Screen } from './lib/nav';
 import { cn } from './lib/utils';
+import { useBackDismiss } from './lib/hooks';
+import { enableDpadNavigation, isTv } from './lib/tv';
 
 export default function App() {
   const onboarded = useStore((s) => s.onboarded);
@@ -33,6 +35,23 @@ export default function App() {
   const isMobile = useIsMobile();
 
   const [screen, setScreen] = React.useState<Screen>('home');
+
+  /**
+   * Television mode.
+   *
+   * Decided once at startup: a device does not stop being a TV, and
+   * re-evaluating it on a resize would swap the whole shell out when a video
+   * goes fullscreen.
+   */
+  const [tv] = React.useState(isTv);
+
+  React.useEffect(() => {
+    if (!tv) return;
+    // The arrows only become navigation on a device whose only input is a
+    // four-way pad; anywhere else they belong to the focused control.
+    document.documentElement.dataset.tv = 'true';
+    return enableDpadNavigation();
+  }, [tv]);
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
@@ -84,6 +103,12 @@ export default function App() {
 
   // Navigating during a call minimises it rather than blocking the app — the
   // session keeps running in the floating window.
+  // Back from any screen returns Home before it leaves the app, which is what
+  // the gesture means on Android. From Home itself there is nothing left to
+  // pop, so the press falls through and the app exits — correct behaviour.
+  useBackDismiss(screen !== 'home', () => setScreen('home'));
+  useBackDismiss(drawerOpen, () => setDrawerOpen(false));
+
   const go = React.useCallback(
     (s: Screen) => {
       setScreen(s);
@@ -108,6 +133,17 @@ export default function App() {
     network: <Network />,
     settings: <Settings />,
   };
+
+  if (tv) {
+    // Theatre only. Everything else on a TV wants a keyboard that a remote
+    // control is not, and a sidebar the D-pad has to cross to reach anything
+    // is a tax on every single press.
+    return (
+      <div className="h-full w-full bg-base text-txt overflow-hidden">
+        <Theatre />
+      </div>
+    );
+  }
 
   return (
     <div className="h-full w-full flex bg-base text-txt overflow-hidden">
@@ -212,7 +248,7 @@ function MobileDrawer({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[110] glass"
+          className="fixed inset-0 z-[110] scrim"
           onMouseDown={(e) => e.target === e.currentTarget && onClose()}
         >
           <motion.div

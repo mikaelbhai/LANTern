@@ -522,7 +522,7 @@ pub fn extract_subtitles(path: &Path, track_number: u64) -> std::io::Result<Stri
     }
 
     cues.sort_by_key(|c| c.start_ms);
-    Ok(to_vtt(&cues))
+    Ok(cues_to_vtt(&cues))
 }
 
 fn read_cluster<R: Read>(
@@ -711,7 +711,7 @@ fn stamp(ms: u64) -> String {
     format!("{h:02}:{m:02}:{s:02}.{milli:03}")
 }
 
-fn to_vtt(cues: &[Cue]) -> String {
+pub fn cues_to_vtt(cues: &[Cue]) -> String {
     let mut out = String::from("WEBVTT\n\n");
     for (i, cue) in cues.iter().enumerate() {
         // A cue that outlives its successor covers it up; clamp so overlapping
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn writes_webvtt_timestamps() {
         let cues = vec![Cue { start_ms: 3_661_500, end_ms: 3_663_000, text: "Late".into() }];
-        let vtt = to_vtt(&cues);
+        let vtt = cues_to_vtt(&cues);
         assert!(vtt.starts_with("WEBVTT\n\n"));
         assert!(vtt.contains("01:01:01.500 --> 01:01:03.000"), "got: {vtt}");
     }
@@ -812,7 +812,7 @@ mod tests {
             Cue { start_ms: 0, end_ms: 9_000, text: "first".into() },
             Cue { start_ms: 1_000, end_ms: 2_000, text: "second".into() },
         ];
-        let vtt = to_vtt(&cues);
+        let vtt = cues_to_vtt(&cues);
         assert!(
             vtt.contains("00:00:00.000 --> 00:00:01.000"),
             "the first cue should end where the second begins: {vtt}"

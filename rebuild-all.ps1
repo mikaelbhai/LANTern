@@ -54,19 +54,23 @@ if (-not $SkipDesktop) {
   # reopened in the meantime, which fails the whole build with
   # "Access is denied (os error 5)". Clear the lock and try once more rather
   # than throwing away two minutes of compilation.
-  $bundleArgs = if ($Installer) {
-    # NSIS only. The MSI target needs the WiX toolset, a second
-    # multi-hundred-megabyte download for an installer nobody asked for.
-    @('--bundles', 'nsis')
-  } else {
-    @('--no-bundle')
+  # Written out rather than splatted: PowerShell eats the "--" separator when
+  # an array follows it, and npm then sees a bare "-" as an argument.
+  # NSIS only for the installer - the MSI target needs the WiX toolset, a
+  # second multi-hundred-megabyte download for an installer nobody asked for.
+  function Invoke-DesktopBuild {
+    if ($Installer) {
+      npm run tauri build -- --bundles nsis
+    } else {
+      npm run tauri build -- --no-bundle
+    }
   }
 
-  npm run tauri build -- @bundleArgs
+  Invoke-DesktopBuild
   if ($LASTEXITCODE -ne 0) {
     Write-Host "  link failed - clearing the lock and retrying once" -ForegroundColor Yellow
     Stop-Lantern
-    npm run tauri build -- @bundleArgs
+    Invoke-DesktopBuild
   }
   if ($LASTEXITCODE -ne 0) { Write-Error "desktop build failed"; exit 1 }
 
@@ -89,6 +93,27 @@ if (-not $SkipAndroid) {
   Set-Location $root
   npm run build
   if ($LASTEXITCODE -ne 0) { Write-Error "frontend build failed"; exit 1 }
+
+  # The APK's version comes from app/tauri.properties, which only
+  # `tauri android build` regenerates - and this script deliberately does not
+  # use that task (see the note at the top). Left alone the file goes stale and
+  # every release ships an APK still claiming the previous version, which is
+  # exactly what happened going from 1.0.0 to 1.1.0. Writing it here keeps
+  # tauri.conf.json the single source of the version.
+  Write-Host "`n=== android: version ===" -ForegroundColor Cyan
+  $conf = Get-Content "$root\src-tauri\tauri.conf.json" -Raw | ConvertFrom-Json
+  $v = $conf.version
+  $parts = $v.Split('.')
+  # Monotonic and readable: 1.1.0 becomes 1001000, which sorts above 1000000.
+  $code = ([int]$parts[0] * 1000000) + ([int]$parts[1] * 1000) + [int]$parts[2]
+  $props = @(
+    "// Written by rebuild-all.ps1 from src-tauri/tauri.conf.json.",
+    "tauri.android.versionName=$v",
+    "tauri.android.versionCode=$code"
+  )
+  $propPath = "$root\src-tauri\gen\android\app\tauri.properties"
+  Set-Content -Path $propPath -Value $props -Encoding utf8
+  Write-Host "  $v (code $code)"
 
   Write-Host "`n=== android: rust core (aarch64, release) ===" -ForegroundColor Cyan
   Set-Location "$root\src-tauri"

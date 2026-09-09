@@ -118,102 +118,16 @@ export function Artwork({
 
 /** Compact tile art with the title burned in, for grid and row cards. */
 /**
- * A frame grabbed from the video itself, cached per title.
+ * The artwork for a title.
  *
- * Three sources, best first: artwork the owner keeps beside the file, a frame
- * pulled out of the video, and finally the generated art. The middle one is
- * what makes a library of untagged files look like a library rather than a
- * wall of coloured rectangles.
- *
- * Capture is deliberately lazy and one-at-a-time. Seeking a remote video costs
- * a range request over the LAN, and a screen of forty cards firing at once
- * would saturate the link the player also needs.
+ * Just a URL now. This used to load each title into a hidden video element and
+ * draw a frame to a canvas — which meant every client decoded every title in
+ * the library, on 4K HEVC, after every restart, and showed up as sustained GPU
+ * load with the fan on. The device holding the file generates the still once
+ * instead, and shares it.
  */
-const thumbCache = new Map<string, string>();
-let capturing: Promise<unknown> = Promise.resolve();
-
-function useThumbnail(key: string, streamUrl?: string, posterUrl?: string): string | null {
-  const [src, setSrc] = React.useState<string | null>(
-    () => posterUrl ?? thumbCache.get(key) ?? null,
-  );
-
-  React.useEffect(() => {
-    if (posterUrl) {
-      setSrc(posterUrl);
-      return;
-    }
-    const cached = thumbCache.get(key);
-    if (cached) {
-      setSrc(cached);
-      return;
-    }
-    if (!streamUrl) return;
-
-    let cancelled = false;
-    // Chain onto whatever is already grabbing, so captures queue rather than
-    // stampede.
-    capturing = capturing.then(
-      () =>
-        new Promise<void>((resolve) => {
-          if (cancelled) return resolve();
-
-          const video = document.createElement('video');
-          video.crossOrigin = 'anonymous';
-          video.muted = true;
-          video.preload = 'metadata';
-          video.src = streamUrl;
-
-          const done = () => {
-            video.removeAttribute('src');
-            video.load();
-            resolve();
-          };
-          const fail = () => done();
-
-          // Some files never produce a frame — a codec the webview cannot
-          // decode, or a peer that went away. Give up rather than hang the
-          // queue behind them.
-          const bail = window.setTimeout(fail, 6000);
-
-          video.onloadedmetadata = () => {
-            // A tenth of the way in: past the studio idents, before credits.
-            video.currentTime = Math.min(
-              Math.max(video.duration * 0.1, 5),
-              Number.isFinite(video.duration) ? video.duration - 1 : 30,
-            );
-          };
-          video.onseeked = () => {
-            window.clearTimeout(bail);
-            try {
-              const canvas = document.createElement('canvas');
-              canvas.width = 480;
-              canvas.height = Math.round(
-                480 * (video.videoHeight / Math.max(video.videoWidth, 1) || 0.5625),
-              );
-              const ctx = canvas.getContext('2d');
-              if (!ctx) return done();
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const url = canvas.toDataURL('image/jpeg', 0.72);
-              thumbCache.set(key, url);
-              if (!cancelled) setSrc(url);
-            } catch {
-              // A frame the canvas refuses to read (tainted, or no decoder).
-            }
-            done();
-          };
-          video.onerror = () => {
-            window.clearTimeout(bail);
-            fail();
-          };
-        }),
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [key, streamUrl, posterUrl]);
-
-  return src;
+function useThumbnail(_key: string, _streamUrl?: string, posterUrl?: string): string | null {
+  return posterUrl ?? null;
 }
 
 export function TitleCard({

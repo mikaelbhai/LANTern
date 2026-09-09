@@ -92,24 +92,50 @@ pub fn items_for_share(
         // Duration and subtitle tracks both come out of the container, so the
         // header is read once and used for both.
         let mut embedded: Vec<serde_json::Value> = Vec::new();
+        let mut audio_tracks: Vec<serde_json::Value> = Vec::new();
         let mut duration_sec = 0.0f64;
-        if crate::ebml::is_matroska(&video_path) {
-            if let Ok(probed) = crate::ebml::probe(&video_path) {
-                duration_sec = probed.duration_sec.unwrap_or(0.0);
-                for track in probed.tracks.iter().filter(|t| t.kind == "subtitle") {
-                    // Bitmap subtitles would need rendering rather than
-                    // converting; offering them would only fail later.
-                    if track.codec.contains("PGS") || track.codec.contains("VOBSUB") {
-                        continue;
+
+        // Both containers, not just Matroska. Half a typical library is MP4,
+        // and a web release routinely carries a dozen subtitle tracks and
+        // several audio ones — reading only MKV meant those files showed
+        // nothing at all.
+        let probed = if crate::ebml::is_matroska(&video_path) {
+            crate::ebml::probe(&video_path).ok()
+        } else if crate::mp4::is_mp4(&video_path) {
+            crate::mp4::probe(&video_path).ok()
+        } else {
+            None
+        };
+
+        if let Some(probed) = probed {
+            duration_sec = probed.duration_sec.unwrap_or(0.0);
+            for track in &probed.tracks {
+                match track.kind.as_str() {
+                    "subtitle" => {
+                        // Bitmap subtitles would need rendering rather than
+                        // converting; offering them would only fail later.
+                        if track.codec.contains("PGS")
+                            || track.codec.contains("VobSub")
+                            || track.codec.contains("CEA")
+                        {
+                            continue;
+                        }
+                        embedded.push(serde_json::json!({
+                            "label": track.label(),
+                            "lang": track.lang,
+                            "url": format!(
+                                "http://{ip}:{host_port}/{slug}/{url_path}?subtitle={}",
+                                track.number
+                            ),
+                        }));
                     }
-                    embedded.push(serde_json::json!({
+                    "audio" => audio_tracks.push(serde_json::json!({
                         "label": track.label(),
                         "lang": track.lang,
-                        "url": format!(
-                            "http://{ip}:{host_port}/{slug}/{url_path}?subtitle={}",
-                            track.number
-                        ),
-                    }));
+                        "codec": track.codec,
+                        "default": track.default,
+                    })),
+                    _ => {}
                 }
             }
         }
@@ -117,6 +143,16 @@ pub fn items_for_share(
         if let Some(obj) = item.as_object_mut() {
             if duration_sec > 0.0 {
                 obj.insert("durationSec".into(), (duration_sec.round() as u64).into());
+            }
+            // A generated still, unless the folder already has real artwork.
+            // Either way the client never decodes video to draw a card.
+            if art.is_none() {
+                obj.insert(
+                    "posterUrl".into(),
+                    serde_json::Value::String(format!(
+                        "http://{ip}:{host_port}/{slug}/{url_path}?thumb=1"
+                    )),
+                );
             }
             if let Some(art) = art {
                 obj.insert(
@@ -144,6 +180,15 @@ pub fn items_for_share(
             if !all.is_empty() {
                 obj.insert("subtitles".into(), serde_json::Value::Array(all));
             }
+
+            // Listed, not offered. A webview cannot switch between audio
+            // tracks muxed into a file — Chromium has never implemented
+            // HTMLMediaElement.audioTracks — so these are shown as
+            // information about the file rather than as a control that would
+            // do nothing.
+            if audio_tracks.len() > 1 {
+                obj.insert("audioTracks".into(), serde_json::Value::Array(audio_tracks));
+            }
         }
 
         if let (Some(series), Some(season), Some(episode)) =
@@ -162,8 +207,149 @@ pub fn items_for_share(
 }
 
 /// Replaces the library and reports whether anything changed.
+/// Where the viewer got to in one title, and how they were watching it.
+///
+/// Languages are stored rather than track numbers. A number means nothing once
+/// a file is replaced by a different release of the same film, and it cannot
+/// carry to the next episode; "jpn" survives both.
+#[derive(Clone, Debug, Default)]
+pub struct Resume {
+    pub progress_sec: f64,
+    pub audio_lang: Option<String>,
+    pub subtitle_lang: Option<String>,
+}
+
+/// Reads every stored playback position.
+///
+/// One query rather than one per title: a library of a few thousand entries
+/// would otherwise make a scan quadratic in database round trips.
+pub fn stored_progress(state: &AppState) -> std::collections::HashMap<String, Resume> {
+    state.with(|s| {
+        let mut out = std::collections::HashMap::new();
+        let Some(db) = s.db.as_ref() else { return out };
+        let Ok(mut stmt) =
+            db.prepare("SELECT id, progress_sec, audio_lang, subtitle_lang FROM progress")
+        else {
+            return out;
+        };
+        if let Ok(rows) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                Resume {
+                    progress_sec: r.get::<_, f64>(1)?,
+                    audio_lang: r.get::<_, Option<String>>(2).unwrap_or(None),
+                    subtitle_lang: r.get::<_, Option<String>>(3).unwrap_or(None),
+                },
+            ))
+        }) {
+            for (id, resume) in rows.flatten() {
+                out.insert(id, resume);
+            }
+        }
+        out
+    })
+}
+
+/// Records the languages chosen for one title.
+///
+/// Written separately from the position: the position changes every few
+/// seconds while a language changes when someone decides it does, and a
+/// language must not be lost if the app closes before the next progress tick.
+pub fn save_tracks(state: &AppState, id: &str, audio: Option<&str>, subtitle: Option<&str>) {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else { return };
+        // The row may not exist yet: a language can be chosen in the first
+        // seconds, before any progress has been written.
+        let _ = db.execute(
+            "INSERT INTO progress (id, progress_sec, duration_sec, updated_at, audio_lang, subtitle_lang)
+             VALUES (?1, 0, 0, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET audio_lang = ?3, subtitle_lang = ?4, updated_at = ?2",
+            rusqlite::params![id, crate::model::now_ms() as i64, audio, subtitle],
+        );
+
+        // The same choice becomes the default for anything not yet watched.
+        for (key, value) in [("audio_lang", audio), ("subtitle_lang", subtitle)] {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = ?2",
+                rusqlite::params![key, value.unwrap_or("")],
+            );
+        }
+    });
+}
+
+/// The languages to start a title in when it has never been opened.
+pub fn preferred_languages(state: &AppState) -> (Option<String>, Option<String>) {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return (None, None);
+        };
+        let read = |key: &str| -> Option<String> {
+            db.query_row(
+                "SELECT value FROM preferences WHERE key = ?1",
+                rusqlite::params![key],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .filter(|v| !v.is_empty())
+        };
+        (read("audio_lang"), read("subtitle_lang"))
+    })
+}
+
+/// Records where the viewer got to, so it survives a restart.
+pub fn save_progress(state: &AppState, id: &str, progress_sec: f64, duration_sec: f64) {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else { return };
+        let _ = db.execute(
+            "INSERT INTO progress (id, progress_sec, duration_sec, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                progress_sec = ?2, duration_sec = ?3, updated_at = ?4",
+            rusqlite::params![id, progress_sec, duration_sec, crate::model::now_ms() as i64],
+        );
+    });
+}
+
 pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
     let mut built = rebuild(state);
+
+    // Positions saved in an earlier session. Applied before the in-memory
+    // carry-over below, so a live value still wins for a title being watched
+    // right now.
+    let saved = stored_progress(state);
+    let (default_audio, default_subtitle) = preferred_languages(state);
+    for item in built.iter_mut() {
+        let Some(id) = item.get("id").and_then(|v| v.as_str()).map(str::to_string) else {
+            continue;
+        };
+        let resume = saved.get(&id);
+        let Some(obj) = item.as_object_mut() else { continue };
+
+        if let Some(resume) = resume {
+            obj.insert(
+                "progressSec".into(),
+                serde_json::Value::from(resume.progress_sec),
+            );
+        }
+
+        // This title's own choice if it has one, otherwise the last choice
+        // made anywhere — which is what makes the next episode open the way
+        // the previous one was watched.
+        let audio = resume
+            .and_then(|r| r.audio_lang.clone())
+            .or_else(|| default_audio.clone());
+        let subtitle = resume
+            .and_then(|r| r.subtitle_lang.clone())
+            .or_else(|| default_subtitle.clone());
+
+        if let Some(lang) = audio {
+            obj.insert("audioLang".into(), serde_json::Value::from(lang));
+        }
+        if let Some(lang) = subtitle {
+            obj.insert("subtitleLang".into(), serde_json::Value::from(lang));
+        }
+    }
 
     state.with(|s| {
         // Carry over playback positions so a rescan does not lose someone's place.
@@ -176,6 +362,11 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
             {
                 if let Some(progress) = previous.get("progressSec").cloned() {
                     item.as_object_mut().unwrap().insert("progressSec".into(), progress);
+                }
+                for key in ["audioLang", "subtitleLang"] {
+                    if let Some(lang) = previous.get(key).cloned() {
+                        item.as_object_mut().unwrap().insert(key.into(), lang);
+                    }
                 }
             }
         }

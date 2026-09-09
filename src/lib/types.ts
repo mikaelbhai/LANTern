@@ -340,6 +340,21 @@ export interface MediaItem {
   quality?: string;
   /** Subtitle files found beside the video. SubRip is converted on serve. */
   subtitles?: { label: string; lang: string; url: string }[];
+  /**
+   * The language this title was last watched in, or the viewer's usual choice
+   * when it has not been opened before. Empty means subtitles were off.
+   */
+  subtitleLang?: string;
+  /** As above, for audio. Empty means the file's own default track. */
+  audioLang?: string;
+  /**
+   * Audio tracks inside the file, when there is more than one.
+   *
+   * Selecting one re-serves the file with that track chosen: a webview cannot
+   * switch between muxed tracks itself, so the switch happens on the device
+   * holding the file.
+   */
+  audioTracks?: { label: string; lang: string; codec: string; default: boolean }[];
 }
 
 /**

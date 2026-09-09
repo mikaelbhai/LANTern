@@ -13,6 +13,7 @@ import {
   Search,
   Tv,
   Upload,
+  Users,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, IconButton, Input } from '../components/ui';
@@ -31,13 +32,24 @@ import {
 import { useLocalStorage } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { cn, formatBytes } from '../lib/utils';
-import type { MediaItem } from '../lib/types';
+import type { MediaItem, WatchParty } from '../lib/types';
 
 export function Theatre() {
   const peers = useStore((s) => s.peers);
   const profile = useStore((s) => s.profile);
 
   const [items, setItems] = React.useState<MediaItem[]>([]);
+
+  /**
+   * The watch party this device is in, if any.
+   *
+   * The backend owns it: starting one, or being invited into one, both arrive
+   * as `party:changed`. Holding it here rather than in the player means the
+   * invitation survives closing and reopening a title.
+   */
+  const [party, setParty] = React.useState<WatchParty | null>(null);
+
+  React.useEffect(() => on('party:changed', (p) => setParty(p as WatchParty | null)), []);
   const [loading, setLoading] = React.useState(true);
   const [playing, setPlaying] = React.useState<MediaItem | null>(null);
   const [detail, setDetail] = React.useState<MediaItem | null>(null);
@@ -99,6 +111,39 @@ export function Theatre() {
     setPlaying(item);
   };
 
+  /**
+   * Starts everyone on the same title at the same moment.
+   *
+   * Every peer that is online is invited: a watch party on a LAN is the people
+   * in the house, and asking which of four devices to include is a dialog that
+   * earns nothing.
+   */
+  const watchTogether = async (item: MediaItem) => {
+    const online = Object.values(peers)
+      .filter((p) => p.status !== 'offline')
+      .map((p) => p.id);
+    if (!online.length) return;
+    try {
+      setParty(await api.party.start(item.id, online));
+    } catch {
+      // Starting one is optional; playing the film alone is not.
+    }
+    play(item);
+  };
+
+  const onlinePeerCount = React.useMemo(
+    () => Object.values(peers).filter((p) => p.status !== 'offline').length,
+    [peers],
+  );
+
+  const partyMembers = React.useMemo(() => {
+    if (!party) return [];
+    return party.members
+      .map((id) => peers[id])
+      .filter((p): p is NonNullable<typeof p> => !!p)
+      .map((p) => ({ name: p.name, color: p.color, emoji: p.emoji }));
+  }, [party, peers]);
+
   if (playing) {
     const order = seriesOrder(items, playing);
     const at = order.findIndex((i) => i.id === playing.id);
@@ -108,7 +153,16 @@ export function Theatre() {
         upNext={at >= 0 ? (order[at + 1] ?? null) : null}
         previous={at > 0 ? (order[at - 1] ?? null) : null}
         ownerName={ownerName(playing)}
+        // A party only applies to the title it was started for; opening
+        // something else leaves the others watching what they chose.
+        party={party && party.itemId === playing.id ? party : null}
+        isHost={!!party && party.hostId === profile.id}
+        partyMembers={partyMembers}
         onClose={() => {
+          if (party) {
+            void api.party.leave(party.id).catch(() => {});
+            setParty(null);
+          }
           setPlaying(null);
           void load();
         }}
@@ -226,6 +280,8 @@ export function Theatre() {
       </div>
 
       <DetailSheet
+        onWatchTogether={(i) => void watchTogether(i)}
+        peerCount={onlinePeerCount}
         item={detail}
         owner={detail ? ownerName(detail) : ''}
         collections={grouping.collections}
@@ -623,11 +679,17 @@ function DetailSheet({
   onOverrides,
   onClose,
   onPlay,
+  onWatchTogether,
+  peerCount,
 }: {
   item: MediaItem | null;
   owner: string;
   collections: Collection[];
   overrides: Overrides;
+  /** Starts everyone online on this title at once. */
+  onWatchTogether?: (i: MediaItem) => void;
+  /** How many peers are online, which decides whether that is worth offering. */
+  peerCount: number;
   onOverrides: (o: Overrides) => void;
   onClose: () => void;
   onPlay: (i: MediaItem) => void;
@@ -716,7 +778,7 @@ function DetailSheet({
                 onOverrides={onOverrides}
               />
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={() => onPlay(item)}
                   className="h-9 px-5 rounded-input bg-white text-black font-semibold text-sm flex items-center gap-2 hover:bg-white/85"
@@ -724,6 +786,13 @@ function DetailSheet({
                   <Play size={15} fill="currentColor" />
                   {item.progressSec > 30 ? 'Resume' : 'Play'}
                 </button>
+                {/* Only offered when there is somebody to watch with; a button
+                    that starts a party of one is a button that does nothing. */}
+                {onWatchTogether && peerCount > 0 && (
+                  <Button icon={<Users size={13} />} onClick={() => onWatchTogether(item)}>
+                    Watch together
+                  </Button>
+                )}
                 <Button onClick={onClose}>Close</Button>
               </div>
             </div>

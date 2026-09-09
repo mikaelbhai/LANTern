@@ -95,6 +95,7 @@ pub fn boot(app: AppHandle, state: AppState) {
                 s.device_id = id;
                 s.instance = device_name.clone();
             });
+            state.with(|s| s.thumb_dir = Some(dir.join("thumbnails")));
             match crate::db::open(&dir) {
                 Ok(conn) => state.with(|s| s.db = Some(conn)),
                 Err(e) => eprintln!("history store unavailable: {e}"),
@@ -414,10 +415,21 @@ pub fn net_add_manual_peer(
     peer
 }
 
+/// Adds a peer from a six-word pairing phrase.
+///
+/// The phrase is not a token to be looked up anywhere — it encodes the address
+/// and port directly, so this decodes it and adds the peer exactly as typing
+/// the address by hand would. A phrase that does not decode adds nothing
+/// rather than dialling somewhere arbitrary, which is what it used to do.
 #[tauri::command]
-pub fn net_add_by_phrase(app: AppHandle, state: State<'_, AppState>, phrase: String) -> Peer {
-    let _ = phrase;
-    net_add_manual_peer(app, state, "0.0.0.0".into(), 7979)
+pub fn net_add_by_phrase(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    phrase: String,
+) -> Result<Peer, String> {
+    let (ip, port) = crate::phrase::decode(&phrase)
+        .ok_or_else(|| "That is not a valid pairing phrase.".to_string())?;
+    Ok(net_add_manual_peer(app, state, ip, port))
 }
 
 /// Re-announces this device and re-dials every peer we know of.
@@ -717,21 +729,89 @@ pub async fn net_diagnose(state: State<'_, AppState>, peer_id: String) -> Res<Ve
     Ok(steps)
 }
 
+/// Sweeps the network above this one for other LANTern devices.
+///
+/// mDNS does not cross a router, so a device one hop up is invisible to
+/// discovery however well it is working. This dials the app's port across the
+/// upstream subnet and reports which addresses answer.
+///
+/// The previous version set `hosts_scanned = 254` and `reachable = true`
+/// without contacting anything, so the screen described a sweep that had not
+/// happened. What it reports now is what it did.
 #[tauri::command]
-pub fn net_scan_upstream(app: AppHandle, state: State<'_, AppState>) -> Vec<Peer> {
-    // Reaching outward is always permitted; a real sweep dials each host in the
-    // upstream range. Reporting an empty result keeps the contract honest until
-    // the prober lands.
+pub async fn net_scan_upstream(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<Peer>> {
+    let Some((gateway, port)) = state.with(|s| {
+        s.net
+            .upstream
+            .as_ref()
+            .map(|up| (up.gateway.clone(), s.net.port))
+    }) else {
+        return Ok(Vec::new());
+    };
+
+    // The /24 the upstream gateway sits on. Anything wider would take minutes
+    // and anything narrower would miss most of it.
+    let Some(prefix) = gateway.rsplit_once('.').map(|(head, _)| head.to_string()) else {
+        return Ok(Vec::new());
+    };
+
+    // 254 dials at once would exhaust the socket table on Windows; in batches
+    // the whole sweep still finishes in a couple of seconds.
+    let timeout = std::time::Duration::from_millis(400);
+    let mut answered: Vec<String> = Vec::new();
+    let mut scanned = 0u32;
+
+    for chunk in (1..=254u8).collect::<Vec<_>>().chunks(32) {
+        let mut batch = tokio::task::JoinSet::new();
+        for host in chunk {
+            let address = format!("{prefix}.{host}");
+            batch.spawn(async move {
+                crate::net::probe_tcp(&address, port, timeout)
+                    .await
+                    .map(|_| address)
+            });
+        }
+        while let Some(joined) = batch.join_next().await {
+            scanned += 1;
+            if let Ok(Some(address)) = joined {
+                answered.push(address);
+            }
+        }
+    }
+
     let info = state.with(|s| {
         if let Some(up) = s.net.upstream.as_mut() {
-            up.reachable = true;
+            up.reachable = !answered.is_empty();
             up.last_scan_at = Some(now_ms());
-            up.hosts_scanned = 254;
+            up.hosts_scanned = scanned;
         }
         s.net.clone()
     });
     let _ = app.emit("net:changed", &info);
-    Vec::new()
+
+    // Addresses that answered on the right port are candidates, not peers.
+    // Dialling them starts the same handshake a discovered peer goes through,
+    // and they appear once they have introduced themselves — this sweep never
+    // invents a peer from an open socket.
+    let owned = state.inner().clone();
+    let links = owned.with(|s| s.links.clone());
+    for address in &answered {
+        let app = app.clone();
+        let state = owned.clone();
+        let links = links.clone();
+        let address = address.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = signaling::dial(app, state, links, address, port).await;
+        });
+    }
+
+    Ok(state.with(|s| {
+        s.peers
+            .values()
+            .filter(|p| answered.iter().any(|a| p.ip == *a || p.addresses.contains(a)))
+            .cloned()
+            .collect()
+    }))
 }
 
 /// Opens (or closes) a mapping on our own router so devices upstream can
@@ -845,7 +925,10 @@ pub fn net_publish_upstream_manual(
 pub fn net_invite(state: State<'_, AppState>) -> Invite {
     let (ip, port) = state.with(|s| (s.net.ip.clone(), s.net.port));
     Invite {
-        phrase: "amber lantern quiet river copper signal".into(),
+        // Derived from this device's own address. It used to be a constant,
+        // which meant every device in the world offered the same phrase and
+        // none of them could be reached by it.
+        phrase: crate::phrase::encode(&ip, port).unwrap_or_default(),
         payload: format!("lantern://connect?ip={ip}&port={port}"),
     }
 }
@@ -881,9 +964,55 @@ pub fn peers_list(state: State<'_, AppState>) -> Vec<Peer> {
     state.with(|s| s.peers.values().cloned().collect())
 }
 
+/// Times a real handshake to a peer.
+///
+/// This used to hand back the latency already on the record, which made the
+/// button a no-op dressed as a measurement: pressing it after a peer went away
+/// still showed the reading from when it was there. It now dials the peer's
+/// own port and reports what the connection actually cost, and writes the
+/// figure back so the rest of the UI agrees with it.
+///
+/// Every known address is tried, not just the current one: a device with both
+/// Wi-Fi and Ethernet answers on whichever is up, and the first that responds
+/// is the one worth reporting.
 #[tauri::command]
-pub fn peers_ping(state: State<'_, AppState>, peer_id: String) -> f64 {
-    state.with(|s| s.peers.get(&peer_id).map(|p| p.latency_ms).unwrap_or(999.0))
+pub async fn peers_ping(app: AppHandle, state: State<'_, AppState>, peer_id: String) -> Res<f64> {
+    let Some((addresses, port)) = state.with(|s| {
+        s.peers.get(&peer_id).map(|p| {
+            let mut addresses = p.addresses.clone();
+            if !p.ip.is_empty() && !addresses.contains(&p.ip) {
+                addresses.insert(0, p.ip.clone());
+            }
+            (addresses, p.port)
+        })
+    }) else {
+        return Ok(999.0);
+    };
+
+    let timeout = std::time::Duration::from_millis(1200);
+    let mut best: Option<f64> = None;
+    for address in addresses {
+        if let Some(ms) = crate::net::probe_tcp(&address, port, timeout).await {
+            best = Some(best.map_or(ms, |b: f64| b.min(ms)));
+        }
+    }
+
+    // A peer that does not answer is unreachable, and saying so is more use
+    // than a stale number that looks like a healthy link.
+    let latency = best.unwrap_or(999.0);
+    state.with(|s| {
+        if let Some(p) = s.peers.get_mut(&peer_id) {
+            p.latency_ms = latency;
+            if best.is_none() {
+                p.status = PeerStatus::Offline;
+            }
+        }
+    });
+
+    let peers: Vec<Peer> = state.with(|s| s.peers.values().cloned().collect());
+    let _ = app.emit("peers:changed", &peers);
+
+    Ok(latency)
 }
 
 #[tauri::command]
@@ -1081,6 +1210,45 @@ fn reveal(app: &AppHandle, path: &str) {
     let p = std::path::Path::new(path);
     let dir = p.parent().unwrap_or(p).to_string_lossy().to_string();
     let _ = app.opener().open_path(dir, None::<&str>);
+}
+
+/// Remembers which audio and subtitle language a title was being watched in.
+///
+/// An empty string means "off" for subtitles and "the file's default" for
+/// audio; both are real choices worth restoring, so they are stored rather
+/// than treated as absent.
+#[tauri::command]
+pub fn media_set_tracks(
+    state: State<'_, AppState>,
+    id: String,
+    audio_lang: String,
+    subtitle_lang: String,
+) {
+    state.with(|s| {
+        for item in s.media.iter_mut() {
+            if item.get("id").and_then(|v| v.as_str()) != Some(id.as_str()) {
+                continue;
+            }
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("audioLang".into(), serde_json::Value::from(audio_lang.clone()));
+                obj.insert(
+                    "subtitleLang".into(),
+                    serde_json::Value::from(subtitle_lang.clone()),
+                );
+            }
+        }
+    });
+
+    media::save_tracks(&state, &id, Some(&audio_lang), Some(&subtitle_lang));
+}
+
+/// Whether this device can switch audio tracks.
+///
+/// The UI asks before offering the control, so a device without ffmpeg
+/// explains why rather than presenting a menu that fails on selection.
+#[tauri::command]
+pub fn media_can_switch_audio() -> bool {
+    crate::audiotrack::ffmpeg_path().is_some()
 }
 
 /* -------------------------------------------------------------- profile */
@@ -1580,16 +1748,24 @@ pub async fn media_scan(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<s
 
 #[tauri::command]
 pub fn media_set_progress(state: State<'_, AppState>, id: String, progress_sec: f64) {
-    state.with(|s| {
+    let duration = state.with(|s| {
+        let mut duration = 0.0;
         for item in s.media.iter_mut() {
             if item.get("id").and_then(|v| v.as_str()) == Some(id.as_str()) {
+                duration = item
+                    .get("durationSec")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
                 if let Some(obj) = item.as_object_mut() {
-                    obj.insert(
-                        "progressSec".into(),
-                        serde_json::Value::from(progress_sec),
-                    );
+                    obj.insert("progressSec".into(), serde_json::Value::from(progress_sec));
                 }
             }
         }
+        duration
     });
+
+    // Written through to the database, not just held in memory. Losing your
+    // place on restart is the difference between "Continue watching" being a
+    // feature and being an empty row.
+    media::save_progress(&state, &id, progress_sec, duration);
 }

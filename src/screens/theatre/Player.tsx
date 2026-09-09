@@ -15,13 +15,40 @@ import {
   Volume2,
   VolumeX,
   WifiOff,
+  Languages,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
 import { api } from '../../lib/bridge';
 import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
+import { useBackDismiss } from '../../lib/hooks';
+import { trackNames } from './tracks';
+import {
+  SubtitleOverlay,
+  SUBTITLE_STYLES,
+  useSubtitleCues,
+  type SubtitleStyle,
+} from './Subtitles';
+import { useLocalStorage } from '../../lib/hooks';
 
 const HIDE_AFTER_MS = 2800;
+
+/**
+ * Finds the track carrying a language, or -1.
+ *
+ * Where a release has several tracks in one language — full subtitles, signs
+ * only, SDH — the first is taken. There is nothing in the file that says which
+ * is which, so any other choice would be a guess dressed up as a decision.
+ */
+function matchLanguage(
+  tracks: { lang?: string }[] | undefined,
+  lang: string | undefined,
+): number {
+  if (!tracks?.length || !lang) return -1;
+  const want = lang.trim().toLowerCase();
+  if (!want) return -1;
+  return tracks.findIndex((t) => (t.lang ?? '').trim().toLowerCase() === want);
+}
 
 export function Player({
   item,
@@ -59,25 +86,101 @@ export function Player({
   const [unreachable, setUnreachable] = React.useState(false);
   const [scrubbing, setScrubbing] = React.useState(false);
   // Index into item.subtitles, or -1 for off. Off by default: burning
-  // subtitles on unasked is worse than one extra click.
-  const [subtitle, setSubtitle] = React.useState(-1);
+  // subtitles on unasked is worse than one extra click — unless this title,
+  // or the last one watched, was being read with them on.
+  const [subtitle, setSubtitle] = React.useState(() =>
+    matchLanguage(item.subtitles, item.subtitleLang),
+  );
   const [tracksOpen, setTracksOpen] = React.useState(false);
+  const [audioOpen, setAudioOpen] = React.useState(false);
+  const [subStyle, setSubStyle] = useLocalStorage<SubtitleStyle>(
+    'lantern.subtitleStyle',
+    'classic',
+  );
 
   const subtitles = item.subtitles ?? [];
+  const audioTracks = item.audioTracks ?? [];
 
-  // `<track>` elements are declarative but their display is not: the browser
-  // decides which is showing, so the mode has to be set imperatively whenever
-  // the choice changes.
+  // Only the chosen subtitle is fetched — the others would each be a request
+  // to another machine for a file nobody asked to read.
+  // Readable, unambiguous names for both menus.
+  const subtitleNames = React.useMemo(() => trackNames(subtitles), [subtitles]);
+  const audioNames = React.useMemo(() => trackNames(audioTracks), [audioTracks]);
+
+  const cues = useSubtitleCues(subtitle >= 0 ? (subtitles[subtitle]?.url ?? null) : null);
+
+  // Which audio track is playing, and whether this device can change it.
+  const [audioTrack, setAudioTrack] = React.useState(() =>
+    matchLanguage(item.audioTracks, item.audioLang),
+  );
+  // A remuxed stream has no timeline of its own: it begins at the point it was
+  // asked for, so the player's clock is offset by that amount and seeking
+  // re-requests rather than scrubbing.
+  const [sourceOffset, setSourceOffset] = React.useState(0);
+  const [canSwitchAudio, setCanSwitchAudio] = React.useState(false);
+
   React.useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    const list = el.textTracks;
-    for (let i = 0; i < list.length; i++) {
-      list[i].mode = i === subtitle ? 'showing' : 'disabled';
+    if (audioTracks.length < 2) return;
+    void api.media.canSwitchAudio().then(setCanSwitchAudio).catch(() => setCanSwitchAudio(false));
+  }, [audioTracks.length]);
+
+  /**
+   * Remembers the pair whenever either changes.
+   *
+   * Stored as languages rather than positions in the list, so the choice
+   * survives the file being replaced by another release and carries to the
+   * next episode, which is where it matters most.
+   */
+  const savedChoice = React.useRef<string>('');
+  React.useEffect(() => {
+    const audioLang = audioTrack >= 0 ? (audioTracks[audioTrack]?.lang ?? '') : '';
+    const subtitleLang = subtitle >= 0 ? (subtitles[subtitle]?.lang ?? '') : '';
+
+    // The first run reports what was just restored; writing it back would be
+    // harmless but pointless, and would promote a default to a real choice.
+    const key = `${audioLang}|${subtitleLang}`;
+    if (savedChoice.current === '') {
+      savedChoice.current = key;
+      return;
     }
-  }, [subtitle, item.id]);
+    if (savedChoice.current === key) return;
+    savedChoice.current = key;
+
+    void api.media.setTracks(item.id, audioLang, subtitleLang).catch(() => {
+      /* a lost preference is not worth interrupting playback for */
+    });
+  }, [item.id, audioTrack, subtitle, audioTracks, subtitles]);
+
+  /**
+   * The URL to play.
+   *
+   * Choosing a track re-serves the file with that audio selected, resuming at
+   * the current position — the remuxed stream starts wherever it was asked to,
+   * so switching language mid-film does not start it over.
+   */
+  const source =
+    audioTrack >= 0
+      ? `${item.streamUrl}${item.streamUrl.includes('?') ? '&' : '?'}audio=${audioTrack}` +
+        `&codec=${encodeURIComponent(audioTracks[audioTrack]?.codec ?? '')}` +
+        `&t=${Math.floor(sourceOffset)}`
+      : item.streamUrl;
+
+
+  const chooseAudio = (index: number) => {
+    setSourceOffset(index >= 0 ? Math.max(0, Math.floor(time)) : 0);
+    setAudioTrack(index);
+    setTracksOpen(false);
+  };
+
+  // Track modes are managed by SubtitleOverlay, which sets the chosen one to
+  // "hidden" rather than "showing" so the browser parses the cues without
+  // painting them. Chromium ignores ::cue styling whenever the OS has a
+  // closed-caption preference set, which is how subtitles ended up invisible.
 
   const hideTimer = React.useRef<number>();
+
+  // Back closes the player. Without this it quit the app mid-film.
+  useBackDismiss(true, onClose);
 
   /* ------------------------------------------------------ chrome timing */
 
@@ -98,10 +201,19 @@ export function Player({
     (next: number) => {
       const clamped = Math.max(0, Math.min(duration, next));
       setTime(clamped);
+
+      // A remuxed stream has no timeline to seek within — it starts wherever
+      // it was asked to. Moving the scrubber means requesting it again from
+      // the new point, which the source URL carries.
+      if (audioTrack >= 0) {
+        setSourceOffset(clamped);
+        return;
+      }
+
       const el = videoRef.current;
       if (el && !unreachable && Number.isFinite(el.duration)) el.currentTime = clamped;
     },
-    [duration, unreachable],
+    [duration, unreachable, audioTrack],
   );
 
   // When the file cannot be fetched the transport still has to behave, so the
@@ -285,21 +397,31 @@ export function Player({
         ) : (
           <video
             ref={videoRef}
-            src={item.streamUrl}
+            src={source}
             className="h-full w-full object-contain bg-black"
             autoPlay
             playsInline
             onLoadedMetadata={(e) => {
               const el = e.currentTarget;
-              if (Number.isFinite(el.duration) && el.duration > 0) setDuration(el.duration);
-              if (item.progressSec > 0) el.currentTime = item.progressSec;
+              // A remuxed stream is fragmented MP4 with no index, so it
+              // reports a duration of a few seconds — the length of what has
+              // been generated so far, not the film. The library already
+              // knows the real runtime; keep it.
+              if (audioTrack < 0 && Number.isFinite(el.duration) && el.duration > 0) {
+                setDuration(el.duration);
+              }
+              // The stream already begins at the requested offset, so seeking
+              // again would jump a second time.
+              if (audioTrack < 0 && item.progressSec > 0) {
+                el.currentTime = item.progressSec;
+              }
             }}
             // Deliberately no crossOrigin: the player does not read pixels,
             // and requiring a CORS-checked fetch here turned a perfectly
             // reachable file into "Can't reach". The thumbnail grabber sets it
             // because a canvas read needs it; this does not.
             onTimeUpdate={(e) => {
-              if (!scrubbing) setTime(e.currentTarget.currentTime);
+              if (!scrubbing) setTime(sourceOffset + e.currentTarget.currentTime);
             }}
             onProgress={(e) => {
               const el = e.currentTarget;
@@ -313,16 +435,6 @@ export function Player({
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
           >
-            {subtitles.map((sub, i) => (
-              <track
-                key={sub.url}
-                kind="subtitles"
-                src={sub.url}
-                srcLang={sub.lang || undefined}
-                label={sub.label}
-                default={i === subtitle}
-              />
-            ))}
           </video>
         )}
       </div>
@@ -492,6 +604,66 @@ export function Player({
                 </span>
 
                 <div className="ml-auto flex items-center gap-3">
+                  {audioTracks.length > 1 && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setAudioOpen((o) => !o)}
+                        className={cn(
+                          'flex items-center gap-1.5 text-[11px] hover:text-white',
+                          audioTrack >= 0 ? 'text-gold' : 'text-white/80',
+                        )}
+                        aria-haspopup="menu"
+                        aria-expanded={audioOpen}
+                      >
+                        <Languages size={15} />
+                        {audioTrack >= 0 ? audioNames[audioTrack] : 'Audio'}
+                      </button>
+                      {audioOpen && (
+                        <>
+                          <button
+                            aria-label="Close audio menu"
+                            className="track-scrim fixed inset-0 z-20 cursor-default"
+                            onClick={() => setAudioOpen(false)}
+                          />
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-[210px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg flex flex-col max-h-[min(60vh,26rem)]">
+                          <div className="overflow-y-auto overscroll-contain min-h-0">
+                            <button
+                              onClick={() => chooseAudio(-1)}
+                              className={cn(
+                                'track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
+                                audioTrack < 0 && 'text-gold',
+                              )}
+                            >
+                              Default
+                            </button>
+                            {audioTracks.map((track, i) => (
+                              <button
+                                key={`${track.lang}-${i}`}
+                                onClick={() => canSwitchAudio && chooseAudio(i)}
+                                disabled={!canSwitchAudio}
+                                className={cn(
+                                  'track-row w-full text-left px-2 h-7 rounded-input text-2xs truncate',
+                                  canSwitchAudio
+                                    ? 'hover:bg-raised'
+                                    : 'opacity-40 cursor-not-allowed',
+                                  audioTrack === i && 'text-gold',
+                                )}
+                              >
+                                {audioNames[i]}
+                              </button>
+                            ))}
+                          </div>
+                          {!canSwitchAudio && (
+                            <p className="shrink-0 px-2 py-1.5 text-[10px] text-muted leading-relaxed">
+                              Switching needs ffmpeg on the device sharing this file. The
+                              browser cannot change audio tracks on its own.
+                            </p>
+                          )}
+                        </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                   {subtitles.length > 0 && (
                     <div className="relative">
                       <button
@@ -504,38 +676,67 @@ export function Player({
                         aria-expanded={tracksOpen}
                       >
                         <Subtitles size={15} />
-                        {subtitle >= 0 ? subtitles[subtitle].label : 'Subtitles'}
+                        {subtitle >= 0 ? subtitleNames[subtitle] : 'Subtitles'}
                       </button>
                       {tracksOpen && (
-                        <div className="absolute bottom-7 right-0 min-w-[150px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg">
+                        <>
                           <button
-                            onClick={() => {
-                              setSubtitle(-1);
-                              setTracksOpen(false);
-                            }}
-                            className={cn(
-                              'w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
-                              subtitle < 0 && 'text-gold',
-                            )}
-                          >
-                            Off
-                          </button>
-                          {subtitles.map((sub, i) => (
+                            aria-label="Close subtitle menu"
+                            className="track-scrim fixed inset-0 z-20 cursor-default"
+                            onClick={() => setTracksOpen(false)}
+                          />
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-[210px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg flex flex-col max-h-[min(60vh,26rem)]">
+                          <div className="overflow-y-auto overscroll-contain min-h-0">
                             <button
-                              key={sub.url}
                               onClick={() => {
-                                setSubtitle(i);
+                                setSubtitle(-1);
                                 setTracksOpen(false);
                               }}
                               className={cn(
-                                'w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
-                                subtitle === i && 'text-gold',
+                                'track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
+                                subtitle < 0 && 'text-gold',
                               )}
                             >
-                              {sub.label}
+                              Off
                             </button>
-                          ))}
+                            {subtitles.map((sub, i) => (
+                              <button
+                                key={sub.url}
+                                onClick={() => {
+                                  setSubtitle(i);
+                                  setTracksOpen(false);
+                                }}
+                                className={cn(
+                                  'track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised truncate',
+                                  subtitle === i && 'text-gold',
+                                )}
+                              >
+                                {subtitleNames[i]}
+                              </button>
+                            ))}
+                          </div>
+
+                          {subtitle >= 0 && (
+                            <div className="shrink-0">
+                              <div className="my-1 border-t border-edge" />
+                              <div className="px-2 pb-1 pt-0.5 label">Appearance</div>
+                              {SUBTITLE_STYLES.map((option) => (
+                                <button
+                                  key={option.id}
+                                  onClick={() => setSubStyle(option.id)}
+                                  title={option.hint}
+                                  className={cn(
+                                    'track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
+                                    subStyle === option.id && 'text-gold',
+                                  )}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
+                        </>
                       )}
                     </div>
                   )}
@@ -569,6 +770,8 @@ export function Player({
               </div>
             </div>
       </>
+
+      <SubtitleOverlay cues={cues} time={time} style={subStyle} chromeVisible={chrome} />
 
       {following && chrome && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 glass border border-edge rounded-pill px-3 h-7 flex items-center">

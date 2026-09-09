@@ -21,8 +21,10 @@ import {
   Segmented,
   Select,
   Toggle,
+  IconButton,
 } from '../components/ui';
 import { AVATAR_COLORS, defaultSettings, useStore } from '../lib/store';
+import { RELEASE_REPO, checkForUpdate, currentVersion, type UpdateStatus } from '../lib/update';
 import { useLocalStorage } from '../lib/hooks';
 import { api } from '../lib/bridge';
 import { cn } from '../lib/utils';
@@ -488,12 +490,25 @@ function FilesTab() {
   return (
     <Group title="Transfers">
       <Row label="Download folder">
-        <Input
-          value={s.downloadDir}
-          onChange={(e) => upd({ downloadDir: e.target.value })}
-          placeholder="Default: Downloads/LANTern"
-          className="w-52"
-        />
+        <div className="flex items-center gap-1.5">
+          <Input
+            value={s.downloadDir}
+            onChange={(e) => upd({ downloadDir: e.target.value })}
+            placeholder="Default: Downloads/LANTern"
+            className="w-44"
+          />
+          {/* Knowing the path and being able to look in it are different
+              things; typing it into a file manager by hand is the sort of
+              small friction that makes an app feel unfinished. */}
+          <IconButton
+            label="Open download folder"
+            size="sm"
+            onClick={() => void api.files.open(s.downloadDir)}
+            disabled={!s.downloadDir}
+          >
+            <FolderOpen size={13} />
+          </IconButton>
+        </div>
       </Row>
       <Row label="Auto-accept from trusted peers">
         <Toggle
@@ -808,14 +823,31 @@ function PrivacyTab() {
 
 function AboutTab() {
   const net = useStore((s) => s.net);
+
+  // The version the build actually produced, not a number typed into the UI
+  // and left behind by the next release.
+  const [version, setVersion] = React.useState('…');
+  const [update, setUpdate] = React.useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = React.useState(false);
+
+  React.useEffect(() => {
+    void currentVersion().then(setVersion).catch(() => setVersion('unknown'));
+  }, []);
+
+  const check = async () => {
+    setChecking(true);
+    try {
+      setUpdate(await checkForUpdate());
+    } finally {
+      setChecking(false);
+    }
+  };
+
   return (
     <>
       <Group title="LANTern">
         <Row label="Version">
-          <Badge tone="gold">1.0.0</Badge>
-        </Row>
-        <Row label="Build">
-          <span className="text-xs font-mono text-dim">lantern-1.0.0</span>
+          <Badge tone="gold">{version}</Badge>
         </Row>
         <Row label="Ports in use">
           <span className="text-xs font-mono text-dim">
@@ -824,12 +856,59 @@ function AboutTab() {
         </Row>
       </Group>
 
+      <Group title="Updates">
+        <Row label="Check GitHub">
+          <Button size="sm" variant="ghost" onClick={check} disabled={checking}>
+            {checking ? 'Checking…' : 'Check now'}
+          </Button>
+        </Row>
+
+        {update && (
+          <div className="px-3 pb-2 -mt-1">
+            {update.state === 'available' && (
+              <p className="text-xs leading-relaxed">
+                <span className="text-gold">Version {update.latest} is available.</span>{' '}
+                <span className="text-dim">
+                  Download it from the releases page and install it yourself — LANTern does
+                  not update itself.
+                </span>
+              </p>
+            )}
+            {update.state === 'current' && (
+              <p className="text-xs text-dim leading-relaxed">
+                {version} is the newest published release.
+              </p>
+            )}
+            {(update.state === 'offline' || update.state === 'unknown') && (
+              <p className="text-xs text-dim leading-relaxed">
+                {update.detail ?? 'The check could not reach GitHub.'}
+              </p>
+            )}
+            {update.url && (
+              <p className="text-2xs font-mono text-dim mt-1 selectable break-all">
+                {update.url}
+              </p>
+            )}
+          </div>
+        )}
+
+        <p className="px-3 pb-2 text-2xs text-muted leading-relaxed">
+          Nothing is downloaded or installed automatically. The check reads one page from
+          github.com/{RELEASE_REPO} and reports a version number.
+        </p>
+      </Group>
+
       <Group title="Privacy posture">
         <p className="text-xs text-dim leading-relaxed">
-          LANTern makes no outbound internet connections. Discovery is mDNS on the local
-          subnet; NAT traversal uses a STUN server and relay that both run inside this app on
-          your own network. You can verify this with Wireshark — there is no telemetry, no
-          account system and no cloud component.
+          Everything LANTern does — discovery, chat, calls, files, Theatre — stays on the
+          local network. Discovery is mDNS on the local subnet; NAT traversal uses a STUN
+          server and relay that both run inside this app on your own network. There is no
+          telemetry, no account system and no cloud component.
+        </p>
+        <p className="text-xs text-dim leading-relaxed mt-2">
+          The one exception is the update check above, and only while you are pressing it:
+          it contacts api.github.com and nothing else. You can verify all of this with
+          Wireshark.
         </p>
       </Group>
 

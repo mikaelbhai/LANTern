@@ -44,6 +44,8 @@ pub struct Inner {
     pub transfers: Vec<crate::model::Transfer>,
     /// This device's profile picture as PNG bytes, served to peers on request.
     pub avatar: Option<Vec<u8>>,
+    /// Where generated still frames are kept between runs.
+    pub thumb_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone)]
@@ -85,6 +87,7 @@ impl AppState {
             offers: crate::transfers::Offers::default(),
             transfers: Vec::new(),
             avatar: None,
+            thumb_dir: None,
         })))
     }
 

@@ -1,4 +1,5 @@
 import React from 'react';
+import { pushLayer } from './backstack';
 
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = React.useState(
@@ -140,4 +141,22 @@ export function useNativeFileDrop(
   }, [ref]);
 
   return over;
+}
+
+
+/**
+ * Ties an open layer to the Android back gesture.
+ *
+ * While `open` is true a history entry exists, so back closes this layer
+ * rather than the app. Closing by any other route removes the entry, so the
+ * next back press is not silently absorbed.
+ */
+export function useBackDismiss(open: boolean, onDismiss: () => void): void {
+  const handler = React.useRef(onDismiss);
+  handler.current = onDismiss;
+
+  React.useEffect(() => {
+    if (!open) return;
+    return pushLayer(() => handler.current());
+  }, [open]);
 }

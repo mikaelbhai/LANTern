@@ -208,6 +208,14 @@ export const api = {
     setProgress: (id: string, progressSec: number) =>
       call<void>('media_set_progress', { id, progressSec }),
     scan: () => call<MediaItem[]>('media_scan'),
+    /** Whether this device can re-serve a file with a chosen audio track. */
+    canSwitchAudio: () => call<boolean>('media_can_switch_audio'),
+    /**
+     * Remembers how a title is being watched. Empty strings are meaningful:
+     * subtitles deliberately off, audio left on the file's default.
+     */
+    setTracks: (id: string, audioLang: string, subtitleLang: string) =>
+      call<void>('media_set_tracks', { id, audioLang, subtitleLang }),
   },
   /** WebRTC negotiation. The media itself never comes through here. */
   call: {

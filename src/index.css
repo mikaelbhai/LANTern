@@ -93,10 +93,25 @@
     @apply bg-surface border border-edge rounded-card;
   }
 
+  /*
+   * Used on small floating surfaces - toasts, menus, pills - where the blur is
+   * cheap because the area is small.
+   */
   .glass {
     background: rgb(var(--c-base) / 0.88);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  /*
+   * Full-screen scrims use no blur at all.
+   *
+   * backdrop-filter over the whole viewport makes the compositor re-blur every
+   * pixel behind it on every frame - including a playing 4K video. An opaque
+   * wash reads almost identically and costs nothing.
+   */
+  .scrim {
+    background: rgb(var(--c-base) / 0.82);
   }
 
   .focus-gold {
@@ -209,4 +224,76 @@ html[data-font='small'] body {
 }
 html[data-font='large'] body {
   font-size: 15.5px;
+}
+
+/*
+ * Track menus on a touch screen.
+ *
+ * The audio and subtitle menus are popovers on a desktop, which is right for a
+ * mouse: they sit next to the control that opened them and cost no space. On a
+ * phone the same popover is wrong twice over — a 28px row is half Android's
+ * 48dp minimum target, and a release with 35 subtitle tracks turns a small
+ * floating panel into a list nobody can hit accurately.
+ *
+ * On a coarse pointer they become a bottom sheet instead: full width, thumb
+ * height rows, anchored where the hand already is.
+ *
+ * These rules sit outside `@layer` deliberately. Tailwind's utilities are
+ * layered, and unlayered declarations win over layered ones whatever their
+ * specificity, so the positioning utilities on the element do not have to be
+ * removed for the sheet to take over.
+ */
+@media (pointer: coarse) {
+  .track-menu {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: auto;
+    max-width: none;
+    max-height: 70vh;
+    border-radius: 1rem 1rem 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -12px 32px rgb(0 0 0 / 0.5);
+  }
+
+  .track-row {
+    height: 3rem;
+    font-size: 0.875rem;
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+    display: flex;
+    align-items: center;
+  }
+
+  /* A sheet with no way out but an exact tap on the button that opened it is a
+     trap; the scrim gives the whole screen back as a dismiss target. */
+  .track-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.55);
+  }
+}
+
+/*
+ * Focus, made visible.
+ *
+ * With a mouse or a touchscreen you point at the thing you want, so a focus
+ * ring is at most a nicety. With a four-way pad it is the cursor: without it
+ * there is no way to tell what pressing select would do. The app had no focus
+ * styling at all, which made it unusable from a remote control.
+ *
+ * Applied only in TV mode so a desktop keeps the quieter default, and via
+ * :focus-visible so a mouse click never draws one.
+ */
+html[data-tv='true'] :focus-visible {
+  outline: 2px solid rgb(var(--c-gold));
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* A TV is watched from across a room, and every panel edge is overscan risk. */
+html[data-tv='true'] {
+  font-size: 18px;
 }
