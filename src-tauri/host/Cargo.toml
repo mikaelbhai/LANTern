@@ -1,0 +1,25 @@
+# The detached host lives in its own package, not as a second binary in the
+# app's.
+#
+# With two binaries in one package Tauri could not tell which was the
+# application: it renamed the 2 MB host over the 7.9 MB app and shipped that in
+# the installer. `mainBinaryName` did not settle it. One binary per package
+# removes the ambiguity rather than trying to steer it.
+[package]
+name = "lantern-host"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Serves LANTern's published folders while the app is closed."
+
+[[bin]]
+name = "lantern-host"
+path = "src/main.rs"
+
+[dependencies]
+# The app's library, for the same server, database and share definitions.
+# The alternative was a second copy of all of it, which would drift. The
+# package is `lantern`; its library target is `lantern_lib`, which is the
+# name the code imports.
+lantern = { path = ".." }
+tokio = { version = "1", features = ["rt", "macros", "time", "net"] }

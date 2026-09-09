@@ -1,3 +1,8 @@
+# `host` is the detached file server; see host/Cargo.toml for why it is a
+# separate package rather than a second binary here.
+[workspace]
+members = ["host"]
+
 [package]
 name = "lantern"
 version = "1.0.0"

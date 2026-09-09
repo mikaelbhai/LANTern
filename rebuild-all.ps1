@@ -84,7 +84,7 @@ if (-not $SkipDesktop) {
 
   # cargo needs the crate directory; the app build runs npm from the root.
   Push-Location "$root\src-tauri"
-  cargo build --release --bin lantern-host
+  cargo build --release -p lantern-host
   $hostExit = $LASTEXITCODE
   Pop-Location
   if ($hostExit -ne 0) { Write-Error "lantern-host build failed"; exit 1 }
