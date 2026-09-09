@@ -217,6 +217,23 @@ export const api = {
     setTracks: (id: string, audioLang: string, subtitleLang: string) =>
       call<void>('media_set_tracks', { id, audioLang, subtitleLang }),
   },
+  /**
+   * Installing a newer version.
+   *
+   * The bytes are fetched and checked in `lib/update.ts` — this only stores
+   * them and hands the file to the system installer.
+   */
+  update: {
+    /** Names the file that the next `stage` call will write. */
+    begin: (name: string) => call<void>('update_begin', { name }),
+    /** Writes the installer to disk and returns where it landed. */
+    stage: async (bytes: ArrayBuffer): Promise<string> => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return invoke<string>('update_stage', bytes);
+    },
+    /** Opens it with the system installer. */
+    launch: (path: string) => call<void>('update_launch', { path }),
+  },
   /** WebRTC negotiation. The media itself never comes through here. */
   call: {
     /** Returns false when there is no live link to that peer. */

@@ -1242,6 +1242,102 @@ pub fn media_set_tracks(
     media::save_tracks(&state, &id, Some(&audio_lang), Some(&subtitle_lang));
 }
 
+/* --------------------------------------------------------------- updates */
+
+/// Where a downloaded installer is kept until it is run.
+///
+/// Under the app's own data directory rather than Downloads: this is a file
+/// the app fetched and is about to execute, and it should not be sitting in a
+/// shared folder where something else could swap it first.
+fn update_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("no cache directory: {e}"))?
+        .join("updates");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {dir:?}: {e}"))?;
+    Ok(dir)
+}
+
+/// Names the file the next `update_stage` call will write.
+///
+/// Split from the transfer itself because the bytes arrive as a raw body with
+/// no room for arguments alongside them — sending a 17 MB installer as a JSON
+/// array of numbers would cost several times its own size in the process.
+#[tauri::command]
+pub fn update_begin(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    // A name from a release asset should be a plain filename; anything with a
+    // separator in it is refused rather than sanitised, because there is no
+    // legitimate reason for one to be there.
+    if name.is_empty()
+        || name.contains(['/', '\\', '\0'])
+        || name.contains("..")
+        || name.len() > 128
+    {
+        return Err("refusing an update file with a suspicious name".into());
+    }
+    state.with(|s| s.pending_update = Some(name));
+    Ok(())
+}
+
+/// Writes the downloaded installer to disk.
+///
+/// The bytes were fetched, and their SHA-256 checked against the digest GitHub
+/// published, by the webview — the only part of this application with a TLS
+/// stack, deliberately. This end only stores what it is given.
+#[tauri::command]
+pub fn update_stage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<String, String> {
+    let name = state
+        .with(|s| s.pending_update.clone())
+        .ok_or_else(|| "no update was announced".to_string())?;
+
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the installer as a raw body".into());
+    };
+    if bytes.is_empty() {
+        return Err("the download was empty".into());
+    }
+
+    let path = update_dir(&app)?.join(&name);
+    std::fs::write(&path, bytes).map_err(|e| format!("could not write {path:?}: {e}"))?;
+
+    state.with(|s| s.pending_update = None);
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Hands the installer to the operating system.
+///
+/// LANTern does not install anything itself. On Windows this launches the
+/// setup program, which asks its own questions; on Android it opens the
+/// package installer, which asks for permission and shows what is being
+/// replaced. The running app then quits out of the way where it needs to.
+#[tauri::command]
+pub fn update_launch(app: AppHandle, path: String) -> Result<(), String> {
+    // Only a file this app staged is eligible. A path from anywhere else is a
+    // request to run an arbitrary program, which this command is not for.
+    let staged = update_dir(&app)?;
+    let target = std::path::PathBuf::from(&path);
+    let ok = target
+        .canonicalize()
+        .ok()
+        .zip(staged.canonicalize().ok())
+        .map(|(t, dir)| t.starts_with(dir))
+        .unwrap_or(false);
+    if !ok {
+        return Err("that file was not staged by the updater".into());
+    }
+
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(target.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| format!("could not start the installer: {e}"))
+}
+
 /// Whether this device can switch audio tracks.
 ///
 /// The UI asks before offering the control, so a device without ffmpeg

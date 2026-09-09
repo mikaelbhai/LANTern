@@ -24,6 +24,15 @@ import { isTauri } from './bridge';
  */
 export const RELEASE_REPO = 'mikaelbhai/LANTern';
 
+/** One downloadable file attached to a release. */
+export interface ReleaseAsset {
+  name: string;
+  url: string;
+  size: number;
+  /** `sha256:...` as GitHub reports it, or undefined on an older release. */
+  digest?: string;
+}
+
 export interface UpdateStatus {
   state: 'current' | 'available' | 'offline' | 'unknown';
   /** The version running right now. */
@@ -32,6 +41,8 @@ export interface UpdateStatus {
   latest?: string;
   /** Release page for a human to read before deciding. */
   url?: string;
+  /** The file for this platform, when the release carries one. */
+  asset?: ReleaseAsset;
   notes?: string;
   /** Why the check could not answer, when it could not. */
   detail?: string;
@@ -117,6 +128,7 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
       body?: string;
       draft?: boolean;
       prerelease?: boolean;
+      assets?: { name: string; browser_download_url: string; size: number; digest?: string }[];
     };
 
     const latest = (release.tag_name ?? '').replace(/^v/i, '');
@@ -130,6 +142,7 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
       latest,
       url: release.html_url,
       notes: release.body?.slice(0, 600),
+      asset: pickAsset(release.assets ?? []),
     };
   } catch (err) {
     // Offline, blocked, or timed out. For this app that is unremarkable.
@@ -142,4 +155,100 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
           : 'Could not reach GitHub. LANTern works without it.',
     };
   }
+}
+
+/**
+ * Chooses the file this device can actually install.
+ *
+ * A release carries an installer for each platform, and offering the wrong one
+ * is worse than offering none: an APK on Windows is an unopenable file, and a
+ * setup.exe on a phone is the same. Anything unrecognised returns nothing and
+ * the UI falls back to a link.
+ */
+export function pickAsset(
+  assets: { name: string; browser_download_url: string; size: number; digest?: string }[],
+): ReleaseAsset | undefined {
+  const android = /Android/i.test(navigator.userAgent);
+  const wanted = android ? /\.apk$/i : /setup\.exe$/i;
+
+  // On a television, the TV build. It is the same application, but installing
+  // the phone package there would leave it under the wrong name.
+  const tv = android && /\bTV\b|GoogleTV|AndroidTV|BRAVIA|AFT[A-Z]/i.test(navigator.userAgent);
+
+  const matches = assets.filter((a) => wanted.test(a.name));
+  const chosen =
+    (tv ? matches.find((a) => /lantv/i.test(a.name)) : matches.find((a) => !/lantv/i.test(a.name))) ??
+    matches[0];
+  if (!chosen) return undefined;
+
+  return {
+    name: chosen.name,
+    url: chosen.browser_download_url,
+    size: chosen.size,
+    digest: chosen.digest,
+  };
+}
+
+/** Bytes as a SHA-256 hex string, using the webview's own crypto. */
+async function sha256(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Downloads an update and checks it is what GitHub said it would be.
+ *
+ * This is the one place LANTern fetches something it will then execute, so the
+ * bytes are hashed and compared against the digest published alongside the
+ * release before they are written anywhere. A mismatch throws; it is never
+ * merely reported and carried on from.
+ *
+ * Nothing is installed here either. The file is handed to the operating
+ * system's own installer, which asks its own questions.
+ */
+export async function downloadUpdate(
+  asset: ReleaseAsset,
+  onProgress?: (received: number, total: number) => void,
+): Promise<ArrayBuffer> {
+  const response = await fetch(asset.url);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+
+  const total = asset.size;
+  const reader = response.body?.getReader();
+  let bytes: Uint8Array;
+
+  if (reader) {
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onProgress?.(received, total);
+    }
+    bytes = new Uint8Array(received);
+    let at = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, at);
+      at += chunk.length;
+    }
+  } else {
+    bytes = new Uint8Array(await response.arrayBuffer());
+    onProgress?.(bytes.length, total);
+  }
+
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+
+  const expected = asset.digest?.replace(/^sha256:/i, '').toLowerCase();
+  if (expected) {
+    const actual = await sha256(buffer);
+    if (actual !== expected) {
+      throw new Error('The download does not match the published checksum. It was not saved.');
+    }
+  }
+
+  return buffer;
 }

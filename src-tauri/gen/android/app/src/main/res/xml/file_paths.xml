@@ -2,4 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
   <external-path name="my_images" path="." />
   <cache-path name="my_cache_images" path="." />
+  <!-- Staged updates. The package installer is a separate process, so it
+       can only read the APK through a content URI this grants. -->
+  <cache-path name="updates" path="updates/" />
 </paths>

@@ -46,6 +46,8 @@ pub struct Inner {
     pub avatar: Option<Vec<u8>>,
     /// Where generated still frames are kept between runs.
     pub thumb_dir: Option<std::path::PathBuf>,
+    /// Filename announced by `update_begin`, awaiting its bytes.
+    pub pending_update: Option<String>,
 }
 
 #[derive(Clone)]
@@ -88,6 +90,7 @@ impl AppState {
             transfers: Vec::new(),
             avatar: None,
             thumb_dir: None,
+            pending_update: None,
         })))
     }
 

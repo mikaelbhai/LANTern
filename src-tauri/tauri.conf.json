@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LANTern",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "identifier": "app.lantern.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: http: ; media-src 'self' data: blob: mediastream: http: ; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: https://api.github.com http://ipc.localhost http: ws:"
+      "csp": "default-src 'self'; img-src 'self' data: blob: http: ; media-src 'self' data: blob: mediastream: http: ; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: https://api.github.com https://github.com https://objects.githubusercontent.com https://release-assets.githubusercontent.com http://ipc.localhost http: ws:"
     }
   },
   "bundle": {
@@ -35,7 +35,7 @@
     "targets": "all",
     "category": "SocialNetworking",
     "shortDescription": "Offline LAN chat, calls, files and games",
-    "longDescription": "LANTern is a fully offline communication suite for devices on the same local network. Chat, voice and video calls, file transfer, folder hosting and games — with no accounts, no cloud and no outbound internet connections.",
+    "longDescription": "LANTern is a fully offline communication suite for devices on the same local network. Chat, voice and video calls, file transfer, folder hosting and games \u2014 with no accounts, no cloud and no outbound internet connections.",
     "copyright": "LANTern",
     "icon": [
       "icons/32x32.png",

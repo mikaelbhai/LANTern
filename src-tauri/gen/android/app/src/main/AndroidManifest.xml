@@ -21,6 +21,10 @@
          behalf", which is exactly what staying reachable to peers is. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Handing a downloaded APK to the system package installer. Android
+         still asks the user to approve both the permission and the install;
+         this only allows the app to make the request. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -31,14 +35,15 @@
 
     <application
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appLabel}"
         android:theme="@style/Theme.lantern"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
-            android:label="@string/main_activity_title"
+            android:label="${appLabel}"
             android:name=".MainActivity"
+            android:banner="@drawable/tv_banner"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

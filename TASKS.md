@@ -5,6 +5,12 @@ explicit instruction: everything else works first.
 
 ## Done
 
+- [x] v1.1.1 published with three artifacts: Windows setup, phone APK, LANTV
+- [x] LANTV is its own APK — `app.lantern.tv`, its own name, icon and TV banner
+      (built by `rebuild-all.ps1 -Tv`, one gradle property rather than a second
+      flavour dimension, which would rename every variant path)
+- [x] In-app updates: check, download, verify against GitHub's published
+      SHA-256, then hand to the system installer. Nothing self-installs.
 - [x] v1.1.0 published: github.com/mikaelbhai/LANTern/releases/tag/v1.1.0
 - [x] APK version derived from tauri.conf.json by the build script
 - [x] Screen share carries system audio, mixed with the microphone
@@ -72,13 +78,12 @@ explicit instruction: everything else works first.
       What is *not* verified is play by hand — the rules of each solitaire as
       experienced, rather than the deck and engine underneath them.
 
-## Open question
+## Notes
 
-LANTV ships as **TV mode inside the one APK**, not a separately branded
-LANTV build: on a television it detects leanback and runs Theatre alone. A
-separate APK would mean a Gradle product flavour with its own applicationId,
-which is packaging rather than function. Say the word if the separate name
-matters.
+LANTV is now a real separate APK (`app.lantern.tv`, label LANTV, its own TV
+banner) built from the same sources — it installs alongside the phone build
+rather than replacing it. The behaviour still comes from runtime detection:
+on a television it shows Theatre alone.
 
 ## Notes that cost time to learn
 

@@ -12,7 +12,10 @@ param(
   [switch]$Install,
   # Produce a Windows setup .exe as well as the bare binary. Slower, because
   # Tauri fetches the NSIS toolchain on first use.
-  [switch]$Installer
+  [switch]$Installer,
+  # Also build LANTV: the same application under its own name and package, so
+  # it can sit on a television beside the phone build rather than replacing it.
+  [switch]$Tv
 )
 
 # Deliberately NOT "Stop": Windows PowerShell turns any native command's
@@ -157,6 +160,28 @@ if (-not $SkipAndroid) {
   if ($LASTEXITCODE -ne 0) { Write-Error "gradle build failed"; exit 1 }
 
   Write-Host "  APK  $([math]::Round((Get-Item $apk).Length / 1MB, 1)) MB  $apk"
+
+  if ($Tv) {
+    # Built from the same sources and the same native library, with only the
+    # applicationId and the label changed (see app/build.gradle.kts). Gradle
+    # writes to the same path, so the phone APK is copied aside first or the
+    # second build would overwrite it.
+    Write-Host "`n=== android: LANTV ===" -ForegroundColor Cyan
+    $phoneApk = "$root\src-tauri\gen\android\LANTern-phone.apk"
+    Copy-Item $apk $phoneApk -Force
+
+    Remove-Item $apk -ErrorAction SilentlyContinue
+    .\gradlew.bat assembleArm64Debug -PlanternTv=true -x rustBuildArm64Debug --no-daemon -q
+    if ($LASTEXITCODE -ne 0) { Write-Error "LANTV build failed"; exit 1 }
+
+    $tvApk = "$root\src-tauri\gen\android\LANTV.apk"
+    Copy-Item $apk $tvApk -Force
+    Write-Host "  LANTV  $([math]::Round((Get-Item $tvApk).Length / 1MB, 1)) MB  $tvApk"
+
+    # Leave the phone APK where the rest of the script expects to find it.
+    Copy-Item $phoneApk $apk -Force
+    Remove-Item $phoneApk -Force
+  }
 
   if ($Install) {
     Write-Host "`n=== installing to device ===" -ForegroundColor Cyan

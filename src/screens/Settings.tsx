@@ -22,12 +22,19 @@ import {
   Select,
   Toggle,
   IconButton,
+  ProgressBar,
 } from '../components/ui';
 import { AVATAR_COLORS, defaultSettings, useStore } from '../lib/store';
-import { RELEASE_REPO, checkForUpdate, currentVersion, type UpdateStatus } from '../lib/update';
+import {
+  RELEASE_REPO,
+  checkForUpdate,
+  currentVersion,
+  downloadUpdate,
+  type UpdateStatus,
+} from '../lib/update';
 import { useLocalStorage } from '../lib/hooks';
 import { api } from '../lib/bridge';
-import { cn } from '../lib/utils';
+import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
 
 type Tab =
@@ -829,6 +836,9 @@ function AboutTab() {
   const [version, setVersion] = React.useState('…');
   const [update, setUpdate] = React.useState<UpdateStatus | null>(null);
   const [checking, setChecking] = React.useState(false);
+  const [installing, setInstalling] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
+  const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     void currentVersion().then(setVersion).catch(() => setVersion('unknown'));
@@ -836,10 +846,38 @@ function AboutTab() {
 
   const check = async () => {
     setChecking(true);
+    setError(null);
     try {
       setUpdate(await checkForUpdate());
     } finally {
       setChecking(false);
+    }
+  };
+
+  /**
+   * Fetches the installer, checks it, and hands it to the system.
+   *
+   * Deliberately three visible steps rather than one silent one. This is the
+   * only moment LANTern downloads something it will then run, and the checksum
+   * is verified against what GitHub published before the file is written at
+   * all — so a failure here stops with nothing on disk.
+   */
+  const install = async () => {
+    if (!update?.asset) return;
+    setError(null);
+    setProgress(0);
+    setInstalling(true);
+    try {
+      const bytes = await downloadUpdate(update.asset, (received, total) =>
+        setProgress(total ? received / total : 0),
+      );
+      await api.update.begin(update.asset.name);
+      const path = await api.update.stage(bytes);
+      await api.update.launch(path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInstalling(false);
     }
   };
 
@@ -866,13 +904,35 @@ function AboutTab() {
         {update && (
           <div className="px-3 pb-2 -mt-1">
             {update.state === 'available' && (
-              <p className="text-xs leading-relaxed">
-                <span className="text-gold">Version {update.latest} is available.</span>{' '}
-                <span className="text-dim">
-                  Download it from the releases page and install it yourself — LANTern does
-                  not update itself.
-                </span>
-              </p>
+              <>
+                <p className="text-xs leading-relaxed">
+                  <span className="text-gold">Version {update.latest} is available.</span>{' '}
+                  {update.asset ? (
+                    <span className="text-dim">
+                      {update.asset.name} · {formatBytes(update.asset.size)}
+                    </span>
+                  ) : (
+                    <span className="text-dim">
+                      No installer for this platform in that release — open the page below.
+                    </span>
+                  )}
+                </p>
+
+                {update.asset && (
+                  <div className="mt-2">
+                    <Button size="sm" onClick={() => void install()} disabled={installing}>
+                      {installing
+                        ? `Downloading ${Math.round(progress * 100)}%`
+                        : 'Download and install'}
+                    </Button>
+                    {installing && (
+                      <div className="mt-2">
+                        <ProgressBar value={progress * 100} />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
             {update.state === 'current' && (
               <p className="text-xs text-dim leading-relaxed">
@@ -884,6 +944,11 @@ function AboutTab() {
                 {update.detail ?? 'The check could not reach GitHub.'}
               </p>
             )}
+            {error && (
+              <p className="text-xs text-red-400 leading-relaxed mt-2">
+                {error}
+              </p>
+            )}
             {update.url && (
               <p className="text-2xs font-mono text-dim mt-1 selectable break-all">
                 {update.url}
@@ -893,8 +958,10 @@ function AboutTab() {
         )}
 
         <p className="px-3 pb-2 text-2xs text-muted leading-relaxed">
-          Nothing is downloaded or installed automatically. The check reads one page from
-          github.com/{RELEASE_REPO} and reports a version number.
+          Nothing happens automatically — the check runs when you press it, and the download
+          when you ask for it. The file's checksum is verified against the one published with
+          the release before it is saved, and your system's own installer does the installing.
+          Everything comes from github.com/{RELEASE_REPO}.
         </p>
       </Group>
 

@@ -13,12 +13,28 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// LANTV is the same application wearing a different name.
+//
+// It is built by passing -PlanternTv=true rather than by adding a product
+// flavour: the `rust` plugin already owns a flavour dimension for the ABI, and
+// a second dimension would rename every variant and every output path that the
+// build script and the release process depend on. A property changes the two
+// things that actually differ - the identifier and the label - and leaves the
+// build graph alone.
+//
+// The behaviour is not switched here. The app detects a television at runtime
+// (leanback, no pointer) and shows Theatre alone, so the TV build is branding:
+// its own icon in the TV launcher, and its own package so it can sit alongside
+// the phone build rather than replacing it.
+val isTvBuild = project.hasProperty("lanternTv")
+
 android {
     compileSdk = 36
     namespace = "app.lantern.desktop"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "true"
-        applicationId = "app.lantern.desktop"
+        manifestPlaceholders["appLabel"] = if (isTvBuild) "LANTV" else "LANTern"
+        applicationId = if (isTvBuild) "app.lantern.tv" else "app.lantern.desktop"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
@@ -27,6 +43,9 @@ android {
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"
+            // A build type's placeholders replace the defaults wholesale, so
+            // the label has to be repeated here or the TV build loses its name.
+            manifestPlaceholders["appLabel"] = if (isTvBuild) "LANTV" else "LANTern"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
