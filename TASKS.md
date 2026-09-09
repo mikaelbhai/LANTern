@@ -5,16 +5,15 @@ by a test or by looking at it; where neither was possible, that is said.
 
 ## Now
 
-- [ ] **macOS build** — cannot be produced on this machine. Tauri links against
-      the macOS SDK, so it needs a Mac or a CI runner. Plan: a GitHub Actions
-      workflow building a `.dmg` on `macos-latest` and attaching it to the
-      release, so one tag produces all four artifacts.
-- [ ] **Receiving files** — the receiving device should be asked before a file
-      lands, and should choose where it goes: a default folder in Settings, and
-      a "save as" for the transfer in front of you.
-- [ ] **Detached hosting service** — a small always-on process that keeps
-      serving files and holding peer links while the app is restarted or
-      rebuilt. The app attaches on start and leaves it running on exit.
+- [ ] **The TV's split video** — cannot be reproduced without the television.
+      "Cut in half and stitched together" is the signature of a stride or
+      offset mismatch in the decoder, not a layout fault, so guessing at a fix
+      would be dishonest. What would settle it: the file's resolution and
+      codec, and whether a 1080p file does the same. If it is only 4K HEVC it
+      is the TV's decoder, and the answer is transcoding on the host.
+- [ ] **In-app updates, end to end** — the check is verified against the live
+      release; the download path is not, because verifying it needs a release
+      newer than the running build. Next release proves it.
 
 ## Next
 
@@ -26,6 +25,20 @@ by a test or by looking at it; where neither was possible, that is said.
       there is still no browser inside the app.
 
 ## Done this session
+
+- [x] **macOS build on CI** — a tagged release builds a universal `.dmg` on a
+      real Mac, which this machine cannot do at all.
+- [x] **Detached hosting service** — `lantern-host`, its own package and its
+      own process, serving the published folders after the app closes.
+      Verified against the real database before being wired up.
+- [x] **Receiving files** — an offer asks first, and takes Accept or Save to…
+      The download folder in Settings was previously never read by the backend.
+- [x] **Browsing other devices' folders** — they had nowhere to appear before.
+- [x] **Updates download natively** — GitHub serves release assets with no
+      CORS header, so a webview fetch could never have worked. Scoped to four
+      GitHub hosts rather than opening a general HTTP client.
+- [x] **`0.0 ms` was not a measurement** — an untimed peer shows a dash, and a
+      new link is timed as soon as it exists.
 
 - [x] **TV selection logic** — cards were `div`s with an `onClick`: not
       focusable, so a D-pad could never land on a film. They take focus now and
@@ -89,3 +102,11 @@ by a test or by looking at it; where neither was possible, that is said.
   outbound alone: discovery, messages and calls all work, file serving does
   not, and nothing anywhere says so.
 - A Tooltip whose root is `inline-flex` turns a block column into a row.
+- GitHub serves release assets with no `Access-Control-Allow-Origin` on either
+  hop of the 302, so a webview `fetch` for one can never work, whatever the
+  CSP says. The download has to be native.
+- Two binaries in one package make Tauri's main-binary detection ambiguous: it
+  wrote the 1.9 MB host over the 7.9 MB app and packaged that. One binary per
+  package; `mainBinaryName` does not settle it.
+- `tauri-plugin-http` costs about 6.4 MB per APK — rustls, hyper and reqwest —
+  which is the price of being able to download an update at all.
