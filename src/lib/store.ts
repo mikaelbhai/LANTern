@@ -175,6 +175,18 @@ interface State {
    */
   gameSession: GameSession | null;
   setGameSession: (s: GameSession | null) => void;
+  /**
+   * A game you walked out of, kept for a minute in case you meant to come
+   * back.
+   *
+   * Leaving is usually an accident — a stray back press, a tab closed, a call
+   * that had to be answered — and the others are still sitting there. The seat
+   * is held rather than collapsed the instant somebody steps away.
+   */
+  heldGame: { session: GameSession; until: number } | null;
+  holdGame: (session: GameSession) => void;
+  rejoinGame: () => void;
+  dropHeldGame: () => void;
 
   // actions
   init: () => Promise<void>;
@@ -252,7 +264,10 @@ function persist(s: State) {
       for (const [rid, list] of Object.entries(s.messages)) {
         messages[rid] = list.slice(-500).map((m) => ({
           ...m,
-          attachments: m.attachments.map(({ dataUrl, ...a }) => a),
+          // A message without attachments has none rather than an empty list,
+          // depending on where it came from, and this ran on every save — so a
+          // single such message threw on a timer, forever.
+          attachments: (m.attachments ?? []).map(({ dataUrl, ...a }) => a),
         }));
       }
       localStorage.setItem(
@@ -327,6 +342,20 @@ export const useStore = create<State>((set, get) => {
     activeGame: null,
     gameSession: null,
     setGameSession: (session) => set({ gameSession: session }),
+
+    heldGame: null,
+    /** A minute is long enough to answer a door and short enough not to strand anyone. */
+    holdGame: (session) =>
+      set({ gameSession: null, activeGame: null, heldGame: { session, until: Date.now() + 60_000 } }),
+    rejoinGame: () => {
+      const held = get().heldGame;
+      if (!held || Date.now() > held.until) {
+        set({ heldGame: null });
+        return;
+      }
+      set({ heldGame: null, gameSession: held.session, activeGame: { kind: held.session.game } });
+    },
+    dropHeldGame: () => set({ heldGame: null }),
     pendingOffer: null,
     clearPendingOffer: () => set({ pendingOffer: null }),
 
@@ -586,11 +615,15 @@ export const useStore = create<State>((set, get) => {
       // to. The store then sat empty for the whole session — showing
       // "0 peers online" for devices it could nonetheless call, because the
       // Rust side had them all along.
-      const known = await api.peers.list().catch(() => [] as Peer[]);
+      // `?? []` as well as `.catch`: a call can *resolve* with null rather than
+      // reject, and then the catch never runs. That threw here on every start
+      // in the browser, inside init and before `ready` was ever set — so the
+      // app came up half-initialised with no error anyone would see.
+      const known = (await api.peers.list().catch(() => [] as Peer[])) ?? [];
       const seeded = Object.fromEntries(known.map((p) => [p.id, p]));
 
       // Transfers survive a reload the same way, for the same reason.
-      const transfers = await api.files.list().catch(() => [] as Transfer[]);
+      const transfers = (await api.files.list().catch(() => [] as Transfer[])) ?? [];
 
       set({
         net,

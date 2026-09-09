@@ -1,12 +1,13 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Circle, Crown, Eye, Gamepad2, Grid3x3, Spade, Users } from 'lucide-react';
+import { Circle, Crown, Eye, Footprints, Gamepad2, Grid3x3, Spade, Users } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, Modal, SectionTitle } from '../components/ui';
 import { Chess } from './games/Chess';
 import { ConnectFour } from './games/ConnectFour';
 import { Dots } from './games/Dots';
 import { Sequence } from './games/Sequence';
+import { Crossy } from './games/Crossy';
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
@@ -59,6 +60,15 @@ const GAMES: {
     accent: '#7BD88F',
   },
   {
+    id: 'crossy',
+    name: 'Crossy Road',
+    blurb:
+      'Hop across the traffic and ride the logs. Everyone races the same road at the same time.',
+    icon: Footprints,
+    seats: 'party',
+    accent: '#F7E14A',
+  },
+  {
     id: 'dots',
     name: 'Dots & Boxes',
     blurb: 'Draw a line, close a box, go again. Better with four people than with two.',
@@ -81,6 +91,8 @@ export function Games() {
         return <ConnectFour onExit={exit} />;
       case 'sequence':
         return <Sequence onExit={exit} />;
+      case 'crossy':
+        return <Crossy onExit={exit} />;
       case 'dots':
         return <Dots onExit={exit} />;
       default:

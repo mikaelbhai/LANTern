@@ -27,6 +27,7 @@ import { cn } from './lib/utils';
 import { useBackDismiss } from './lib/hooks';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
+import { RejoinBanner } from './screens/games/LeaveGuard';
 
 export default function App() {
   const onboarded = useStore((s) => s.onboarded);
@@ -178,6 +179,7 @@ export default function App() {
           </button>
         </div>
         <div className="flex-1 min-h-0">{screen === 'games' ? <Games /> : <Theatre />}</div>
+        <RejoinBanner />
       </div>
     );
   }
@@ -214,6 +216,7 @@ export default function App() {
 
       {/* Follows you across screens: a file offer should not wait behind one. */}
       <IncomingFile />
+      <RejoinBanner />
       </div>
 
       {isMobile && (

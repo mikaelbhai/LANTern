@@ -30,6 +30,7 @@ import { useStore } from '../../lib/store';
 import { cn } from '../../lib/utils';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
+import { useLeaveGuard } from './LeaveGuard';
 import { useHostedGame } from './hosted';
 import { usePlayerNames } from './turns';
 
@@ -153,6 +154,9 @@ export function Sequence({ onExit }: { onExit: () => void }) {
   const names = usePlayerNames(players);
   const [picked, setPicked] = React.useState<Card | null>(null);
 
+  // Leaving a live game asks first, and holds the seat for a minute.
+  const leave = useLeaveGuard(onExit, players.length);
+
   const board = view?.board;
   const mySeat = players.indexOf(me);
   const myTurn = !!board && board.winner === null && (solo || board.turn === mySeat);
@@ -175,10 +179,11 @@ export function Sequence({ onExit }: { onExit: () => void }) {
 
   if (!view || !board) {
     return (
-      <GameShell title="Sequence" themeKey="lantern.sequence.theme" onExit={onExit} moves={0} running>
+      <GameShell title="Sequence" themeKey="lantern.sequence.theme" onExit={leave.requestExit} moves={0} running>
         {() => (
           <div className="h-full grid place-items-center">
             <p className="text-xs text-muted">Waiting for the deal…</p>
+            {leave.dialog}
           </div>
         )}
       </GameShell>
@@ -204,10 +209,11 @@ export function Sequence({ onExit }: { onExit: () => void }) {
         : `${names[players[board.turn]] ?? 'Waiting'}…`;
 
   return (
+    <>
     <GameShell
       title="Sequence"
       themeKey="lantern.sequence.theme"
-      onExit={onExit}
+      onExit={leave.requestExit}
       onRestart={isHost ? restart : undefined}
       moves={board.chips.filter((c) => c !== -1).length}
       running={board.winner === null}
@@ -357,5 +363,7 @@ export function Sequence({ onExit }: { onExit: () => void }) {
         </div>
       )}
     </GameShell>
+      {leave.dialog}
+    </>
   );
 }

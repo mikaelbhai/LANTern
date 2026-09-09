@@ -28,6 +28,7 @@ import { useStore } from '../../lib/store';
 import { cn } from '../../lib/utils';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
+import { useLeaveGuard } from './LeaveGuard';
 import { useTurnGame, usePlayerNames } from './turns';
 
 const SEAT_COLOURS = ['#F5A623', '#39D9C8', '#9B8CFF', '#7BD88F'];
@@ -56,6 +57,9 @@ export function Dots({ onExit }: { onExit: () => void }) {
   const { state, players, me, turn, myTurn, play, reset } = game;
   const names = usePlayerNames(players);
   const mySeat = players.indexOf(me);
+  // Leaving a live game asks first, and holds the seat for a minute.
+  const leave = useLeaveGuard(onExit, players.length);
+
   const over = isOver(state);
 
   const announced = React.useRef(false);
@@ -92,10 +96,11 @@ export function Dots({ onExit }: { onExit: () => void }) {
   const gap = 'var(--dots-gap)';
 
   return (
+    <>
     <GameShell
       title="Dots & Boxes"
       themeKey="lantern.dots.theme"
-      onExit={onExit}
+      onExit={leave.requestExit}
       onRestart={reset}
       moves={state.lines.filter((l) => l !== -1).length}
       running={!over}
@@ -207,6 +212,8 @@ export function Dots({ onExit }: { onExit: () => void }) {
         </div>
       )}
     </GameShell>
+      {leave.dialog}
+    </>
   );
 }
 

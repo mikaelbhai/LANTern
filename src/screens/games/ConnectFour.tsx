@@ -21,6 +21,7 @@ import { useStore } from '../../lib/store';
 import { cn } from '../../lib/utils';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
+import { useLeaveGuard } from './LeaveGuard';
 import { useTurnGame, usePlayerNames } from './turns';
 
 /** One colour per seat, in seat order. */
@@ -47,6 +48,9 @@ export function ConnectFour({ onExit }: { onExit: () => void }) {
   const { state, players, me, turn, myTurn, play, reset } = game;
   const names = usePlayerNames(players);
   const mySeat = players.indexOf(me);
+
+  // Leaving a live game asks first, and holds the seat for a minute.
+  const leave = useLeaveGuard(onExit, players.length);
 
   const finished = state.winner !== null || isDraw(state);
 
@@ -79,10 +83,11 @@ export function ConnectFour({ onExit }: { onExit: () => void }) {
         : `${names[turn] ?? 'Waiting'}…`;
 
   return (
+    <>
     <GameShell
       title="Connect Four"
       themeKey="lantern.connect4.theme"
-      onExit={onExit}
+      onExit={leave.requestExit}
       onRestart={reset}
       moves={state.played}
       running={!finished}
@@ -187,5 +192,7 @@ export function ConnectFour({ onExit }: { onExit: () => void }) {
         </div>
       )}
     </GameShell>
+      {leave.dialog}
+    </>
   );
 }

@@ -395,6 +395,7 @@ export type GameKind =
   | 'chess'
   | 'connect4'
   | 'sequence'
+  | 'crossy'
   | 'dots'
   | 'klondike'
   | 'freecell'
