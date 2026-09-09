@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Archivo:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0;background:#f3f2f2;font-family:Archivo,system-ui,sans-serif;color:#201e1d}
+a{color:#ec3013;text-decoration:none}
+a:hover{color:#c2260f}
+.dv-turn{padding:40px 44px 32px;border-bottom:2px solid color-mix(in srgb,#201e1d 40%,transparent);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:800 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#201e1d;color:#fff;border-radius:0;text-decoration:none}
+.dv-tname{font:800 13px/1.2 Archivo,sans-serif;color:#201e1d;letter-spacing:.02em}
+.dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:#eae9e9;color:#201e1d;border-radius:0;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 60%,transparent)}
+.dv-card{max-width:100%;background:#eae9e9;border:2px solid color-mix(in srgb,#201e1d 40%,transparent);overflow:hidden}
+.dv-opt:target .dv-oid{background:#ec3013;color:#fff}
+.dv-next{margin:24px 0 0;font:12px/1.6 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 55%,transparent)}
+</style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-msg" viewBox="0 0 24 24"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.61l-1.54 5A2 2 0 0 1 18.5 19H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></symbol>
+<symbol id="i-film" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M17 3v18M3 12h18M3 7.5h4M3 16.5h4M17 16.5h4M17 7.5h4"/></symbol>
+<symbol id="i-pad" viewBox="0 0 24 24"><path d="M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/></symbol>
+<symbol id="i-flash" viewBox="0 0 24 24"><path d="M18 6c0 2-2 2-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10c0-2-2-2-2-4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2zM6 6h12M12 12h.01"/></symbol>
+<symbol id="i-cog" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-wifi" viewBox="0 0 24 24"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0M8.5 16.429a5 5 0 0 1 7 0"/></symbol>
+<symbol id="i-net" viewBox="0 0 24 24"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3M12 12V8"/></symbol>
+<symbol id="i-router" viewBox="0 0 24 24"><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6.01 18H6M10.01 18H10M15 10v4M17.84 7.17a4 4 0 0 0-5.66 0M20.66 4.34a8 8 0 0 0-11.31 0"/></symbol>
+<symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v1a4 4 0 0 1-4 4H3"/></symbol>
+<symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></symbol>
+<symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="M21.854 2.147l-10.94 10.939"/></symbol>
+<symbol id="i-crown" viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></symbol>
+<symbol id="i-radio" viewBox="0 0 24 24"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5M19.1 4.9C23 8.8 23 15.1 19.1 19"/></symbol>
+<symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+<symbol id="i-door" viewBox="0 0 24 24"><path d="M13 4h3a2 2 0 0 1 2 2v14M2 20h3M13 20h9M10 12v.01M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561z"/></symbol>
+<symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></symbol>
+<symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+<symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 19v3M19 10v2a7 7 0 0 1-14 0v-2M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/></symbol>
+<symbol id="i-micoff" viewBox="0 0 24 24"><path d="M12 19v3M15 9.34V5a3 3 0 0 0-5.68-1.33M16.95 16.95A7 7 0 0 1 5 12v-2M18.89 13.23A7 7 0 0 0 19 12v-2M2 2l20 20M9 9v3a3 3 0 0 0 5.12 2.12"/></symbol>
+<symbol id="i-monitorup" viewBox="0 0 24 24"><path d="M9 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-5M8 21h8M12 17v4M9.5 10.5 12 8l2.5 2.5"/></symbol>
+<symbol id="i-phoneoff" viewBox="0 0 24 24"><path d="M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2 18 18 0 0 1-12.728-5.272M22 2 2 22M5.643 5.629A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351"/></symbol>
+<symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></symbol>
+<symbol id="i-min" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4m0 6 7-7M3 21l7-7"/></symbol>
+<symbol id="i-signal" viewBox="0 0 24 24"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></symbol>
+<symbol id="i-chevl" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="i-chevr" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+<symbol id="i-layers" viewBox="0 0 24 24"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83zM6.08 10.37 2.6 11.96a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59M6.08 15.37 2.6 16.96a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/></symbol>
+<symbol id="i-spade" viewBox="0 0 24 24"><path d="M5 9c-1.5 1.5-3 3.2-3 5.5A5.5 5.5 0 0 0 7.5 20c1.8 0 3-.5 4.5-2 1.5 1.5 2.7 2 4.5 2a5.5 5.5 0 0 0 5.5-5.5c0-2.3-1.5-4-3-5.5l-7-7zM12 18v4"/></symbol>
+<symbol id="i-swords" viewBox="0 0 24 24"><path d="M14.5 17.5 3 6V3h3l11.5 11.5M13 19l6-6M16 16l4 4M19 21l2-2M21 3v3L9.5 17.5M5 13l6 6M2 21l4-4M3 19l2 2"/></symbol>
+<symbol id="i-tri" viewBox="0 0 24 24"><path d="M13.73 4a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 17V3M6 11l6 6 6-6M19 21H5"/></symbol>
+<symbol id="i-ul" viewBox="0 0 24 24"><path d="m18 9-6-6-6 6M12 3v14M5 21h14"/></symbol>
+<symbol id="i-clip" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM14 2v4a2 2 0 0 0 2 2h4"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></symbol>
+<symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 9l12-2"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></symbol>
+<symbol id="i-tv" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="15" rx="2"/><path d="m17 2-5 5-5-5"/></symbol>
+<symbol id="i-panelclose" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18m7-12-3 3 3 3"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+<symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+</defs></svg>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Redesign — the path becomes the subject</span></div>
+
+<div style="max-width:900px;margin:0 0 34px;border-top:2px solid color-mix(in srgb,#201e1d 40%,transparent);padding-top:16px">
+<p style="font:800 10px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#ec3013;margin:0 0 14px">The move</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));border-left:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<div style="padding:0 20px;border-right:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">Peer card → peer row</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">One peer per full-width row, 72px tall. The eight facts are sorted into three columns — who, how they connect, how well — so nothing is truncated and the five actions get real 36px targets instead of a crowded footer.</p>
+</div>
+<div style="padding:0 20px;border-right:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">The badge becomes a drawing</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">Instead of the word "Relayed", each row draws its actual path: you → hop → them. A direct peer has one line. A relayed peer shows the hub sitting in the middle in gold, which is the whole explanation.</p>
+</div>
+<div style="padding:0 20px">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">Reach panel replaces header chips</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">"Double NAT" and "1 via hub" moved out of the 18px header chips into a panel that says what is wrong, what it costs in milliseconds, and the one action that fixes it.</p>
+</div>
+</div>
+</div>
+
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Home — desktop, app's own language · populated</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--glow:#FFD17A;--cyan:#39D9C8;--danger:#E05C5C;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:720px;display:flex;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;font-size:14px;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+
+  <aside style="width:208px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--edge)">
+    <div style="height:56px;flex-shrink:0;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--edge);gap:8px">
+      <svg width="22" height="22" viewBox="0 0 512 512" fill="none" style="flex-shrink:0"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/><g stroke="#0C0F14" stroke-width="9"><circle cx="256" cy="222" r="18" fill="#FFD17A"/><circle cx="210" cy="306" r="15" fill="#F5A623"/><circle cx="302" cy="306" r="15" fill="#F5A623"/></g></g></svg>
+      <span style="font-size:16px;line-height:1;letter-spacing:-.02em"><span style="font-weight:700;color:var(--gold)">LAN</span><span style="font-weight:400">tern</span></span>
+    </div>
+    <div style="height:56px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--edge)">
+      <span style="position:relative;display:inline-flex;width:30px;height:30px;flex-shrink:0">
+        <span style="display:grid;place-items:center;width:30px;height:30px;border-radius:9999px;font-size:13px;background:linear-gradient(145deg,#F5A62333,#F5A62318);border:1px solid #F5A62366">🏮</span>
+        <span style="position:absolute;bottom:-2px;right:-2px;width:9px;height:9px;border-radius:9999px;background:var(--cyan);border:2px solid var(--surface)"></span>
+      </span>
+      <span style="min-width:0;flex:1;display:block">
+        <span style="display:block;font-size:12px;font-weight:500;line-height:17px">Priya</span>
+        <span style="display:block;font-size:11px;line-height:15px;color:var(--muted)">This device · hub</span>
+      </span>
+    </div>
+    <nav style="flex:1;display:flex;flex-direction:column;gap:2px;padding:8px">
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.3);box-shadow:0 0 12px rgba(245,166,35,.25);color:var(--gold)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg><span style="font-size:12px;font-weight:500">Home</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg><span style="font-size:12px;font-weight:500">Chats</span><span style="margin-left:auto;min-width:17px;height:17px;padding:0 4px;display:grid;place-items:center;border-radius:9999px;background:var(--gold);color:#1a1206;font-size:10px;font-weight:700">3</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg><span style="font-size:12px;font-weight:500">Calls</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg><span style="font-size:12px;font-weight:500">Files</span><span style="margin-left:auto;font-size:10px;font-family:'Geist Mono',monospace;color:var(--cyan)">2↑</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg><span style="font-size:12px;font-weight:500">Theatre</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg><span style="font-size:12px;font-weight:500">Games</span><span style="margin-left:auto;width:6px;height:6px;border-radius:9999px;background:#9B8CFF"></span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-flash"></use></svg><span style="font-size:12px;font-weight:500">Network</span></div>
+    </nav>
+    <div style="padding:8px;border-top:1px solid var(--edge);flex-shrink:0">
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cog"></use></svg><span style="font-size:12px;font-weight:500">Settings</span></div>
+    </div>
+  </aside>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:56px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:14px;padding:0 20px">
+      <div style="display:flex;align-items:baseline;gap:8px;min-width:0">
+        <span style="font-size:15px;font-weight:600;letter-spacing:-.01em">Priya's hub</span>
+        <span style="font-size:12px;font-family:'Geist Mono',monospace;color:var(--muted)">192.168.1.17 · port 7979</span>
+      </div>
+      <span style="width:1px;height:22px;background:var(--edge)"></span>
+      <div style="display:flex;align-items:center;gap:7px">
+        <span style="width:7px;height:7px;border-radius:9999px;background:var(--gold);box-shadow:0 0 8px rgba(245,166,35,.6)"></span>
+        <span style="font-size:12px;color:var(--dim)">Reachable by <span style="color:var(--txt);font-weight:500">4 of 5</span> peers directly</span>
+      </div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:12px;font-weight:500"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"></use></svg>Retest paths</span>
+        <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12px;font-weight:600;box-shadow:0 0 12px rgba(245,166,35,.25)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-plus"></use></svg>Add peer</span>
+      </div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:flex">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="height:32px;flex-shrink:0;display:flex;align-items:center;gap:0;padding:0 20px;border-bottom:1px solid var(--edge);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">
+          <span style="flex:1;min-width:0">Peer</span>
+          <span style="width:212px;flex-shrink:0">Path</span>
+          <span style="width:106px;flex-shrink:0;text-align:right;padding-right:14px">Round trip</span>
+          <span style="width:120px;flex-shrink:0;text-align:right">Actions</span>
+        </div>
+
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+          <sc-for list="{{ peersV2 }}" as="p" hint-placeholder-count="5">
+            <div style="height:72px;flex-shrink:0;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid rgba(37,46,63,.6);background:{{ p.rowBg }}">
+              <div style="flex:1;min-width:0;display:flex;align-items:center;gap:12px">
+                <span style="position:relative;display:inline-flex;width:40px;height:40px;flex-shrink:0">
+                  <span style="display:grid;place-items:center;width:40px;height:40px;border-radius:9999px;font-size:18px;background:{{ p.bgGrad }};border:1px solid {{ p.bd }}">{{ p.emoji }}</span>
+                  <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:9999px;background:{{ p.statusColor }};border:2px solid var(--base)"></span>
+                </span>
+                <span style="min-width:0;display:block">
+                  <span style="display:flex;align-items:center;gap:7px">
+                    <span style="font-size:14px;font-weight:600;letter-spacing:-.01em">{{ p.name }}</span>
+                    <span style="font-size:11px;line-height:1;opacity:.8">{{ p.glyph }}</span>
+                    <span style="font-size:11px;color:var(--muted)">{{ p.statusLabel }}</span>
+                  </span>
+                  <span style="display:block;font-size:11.5px;font-family:'Geist Mono',monospace;color:var(--muted);margin-top:3px">{{ p.addr }}</span>
+                </span>
+              </div>
+
+              <div style="width:212px;flex-shrink:0;display:flex;align-items:center;gap:0;padding-right:12px">
+                <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:44px;flex-shrink:0">
+                  <span style="width:9px;height:9px;border-radius:9999px;background:var(--dim)"></span>
+                  <span style="font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)">You</span>
+                </span>
+                <span style="flex:1;height:1px;background:{{ p.lineColor }};margin-bottom:16px"></span>
+                <sc-if value="{{ p.hasHop }}" hint-placeholder-val="{{ true }}">
+                  <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:66px;flex-shrink:0">
+                    <span style="display:grid;place-items:center;width:22px;height:22px;border-radius:6px;border:1px solid {{ p.hopBd }};background:{{ p.hopBg }};color:{{ p.hopFg }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ p.hopIcon }}"></use></svg></span>
+                    <span style="font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:{{ p.hopFg }}">{{ p.hopLabel }}</span>
+                  </span>
+                  <span style="flex:1;height:1px;background:{{ p.lineColor }};margin-bottom:16px"></span>
+                </sc-if>
+                <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:58px;flex-shrink:0">
+                  <span style="width:9px;height:9px;border-radius:9999px;background:{{ p.lineColor }}"></span>
+                  <span style="font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:{{ p.lineColor }}">{{ p.pathLabel }}</span>
+                </span>
+              </div>
+
+              <div style="width:106px;flex-shrink:0;text-align:right;padding-right:14px">
+                <span style="display:block;font-size:15px;font-weight:600;font-family:'Geist Mono',monospace;color:{{ p.latColor }};letter-spacing:-.02em">{{ p.lat }}<span style="font-size:11px;font-weight:400;color:var(--muted);margin-left:2px">ms</span></span>
+                <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px">{{ p.loss }} loss</span>
+              </div>
+
+              <div style="width:120px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end;gap:4px">
+                <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+                <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+                <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-send"></use></svg></span>
+              </div>
+            </div>
+          </sc-for>
+
+          <div style="flex:1;min-height:0;display:flex;align-items:center;gap:10px;padding:0 20px;color:var(--muted)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-radio"></use></svg>
+            <span style="font-size:12px">Still listening on mDNS. Devices on other subnets need to be added by address.</span>
+          </div>
+        </div>
+      </div>
+
+      <aside style="width:300px;flex-shrink:0;border-left:1px solid var(--edge);background:var(--surface);display:flex;flex-direction:column">
+        <div style="padding:18px 20px;border-bottom:1px solid var(--edge)">
+          <div style="display:flex;align-items:baseline;justify-content:space-between">
+            <span style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Reach</span>
+            <span style="font-size:11px;color:var(--muted);font-family:'Geist Mono',monospace">tested 40s ago</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
+            <span style="display:grid;place-items:center;width:26px;height:26px;border-radius:6px;background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.4);color:var(--gold)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-repeat"></use></svg></span>
+            <span style="font-size:17px;font-weight:600;letter-spacing:-.02em">Partial — 1 peer relayed</span>
+          </div>
+          <p style="margin:8px 0 0;font-size:12.5px;line-height:1.55;color:var(--dim);text-wrap:pretty">Tomas's router refuses inbound UDP, so their traffic hops through this hub. That is what the extra <span style="color:var(--gold);font-family:'Geist Mono',monospace">+30 ms</span> on their row is.</p>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12px;font-weight:600">Send fix instructions</span>
+            <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:12px;font-weight:500">Keep relaying</span>
+          </div>
+        </div>
+
+        <div style="padding:14px 20px;border-bottom:1px solid var(--edge);display:flex;flex-direction:column;gap:0">
+          <sc-for list="{{ reachRows }}" as="r" hint-placeholder-count="4">
+            <span style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(37,46,63,.5)">
+              <span style="color:{{ r.fg }};margin-top:1px;flex-shrink:0;display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ r.icon }}"></use></svg></span>
+              <span style="min-width:0;flex:1;display:block">
+                <span style="display:block;font-size:12px;font-weight:500">{{ r.label }}</span>
+                <span style="display:block;font-size:11.5px;line-height:1.45;color:var(--muted);margin-top:2px">{{ r.detail }}</span>
+              </span>
+              <span style="font-size:11px;font-weight:500;color:{{ r.fg }};flex-shrink:0;font-family:'Geist Mono',monospace">{{ r.value }}</span>
+            </span>
+          </sc-for>
+        </div>
+
+        <div style="flex:1;min-height:0;padding:14px 20px">
+          <span style="font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Activity</span>
+          <div style="display:flex;flex-direction:column;gap:2px;margin-top:10px">
+            <sc-for list="{{ activityShort }}" as="a" hint-placeholder-count="4">
+              <span style="display:flex;gap:10px;padding:7px 0">
+                <span style="color:var(--muted);margin-top:2px;flex-shrink:0;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ a.icon }}"></use></svg></span>
+                <span style="min-width:0;flex:1;font-size:12px;line-height:1.45;color:var(--dim)">{{ a.text }}</span>
+                <span style="font-size:11px;color:var(--muted);flex-shrink:0;font-family:'Geist Mono',monospace">{{ a.ago }}</span>
+              </span>
+            </sc-for>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2b">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Home — desktop, Modernist · same structure, paper palette</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--pap:#f3f2f2;--surf:#eae9e9;--ink:#201e1d;--red:#ec3013;--red6:#dd2b0f;--line:color-mix(in srgb,#201e1d 40%,transparent);--dim:color-mix(in srgb,#201e1d 60%,transparent);width:1180px;height:720px;display:flex;background:var(--pap);color:var(--ink);font-family:Archivo,system-ui,sans-serif;border:2px solid var(--line);overflow:hidden">
+
+  <aside style="width:208px;flex-shrink:0;display:flex;flex-direction:column;border-right:2px solid var(--line)">
+    <div style="height:64px;flex-shrink:0;display:flex;align-items:center;padding:0 18px;border-bottom:2px solid var(--line);gap:9px">
+      <svg width="20" height="20" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#201e1d" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z" stroke-width="8" fill="#ec3013"/></g></svg>
+      <span style="font-size:16px;line-height:1;letter-spacing:-.02em;font-weight:800">LANtern</span>
+    </div>
+    <nav style="flex:1;display:flex;flex-direction:column;padding:0">
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;background:var(--ink);color:var(--pap);font-size:13px;font-weight:600"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg>Home</span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg>Chats<span style="margin-left:auto;min-width:18px;height:18px;padding:0 5px;display:grid;place-items:center;background:var(--red);color:var(--pap);font:800 10px/1 Archivo,sans-serif">3</span></span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg>Calls</span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg>Files</span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg>Theatre</span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg>Games</span>
+      <span style="height:44px;display:flex;align-items:center;gap:11px;padding:0 18px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-flash"></use></svg>Network</span>
+    </nav>
+    <div style="padding:18px;border-top:2px solid var(--line);background:var(--surf)">
+      <span style="display:block;font:800 9.5px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)">This device</span>
+      <span style="display:block;font-size:13px;font-weight:600;margin-top:7px">Priya's hub</span>
+      <span style="display:block;font:11.5px ui-monospace,monospace;color:var(--dim);margin-top:2px">192.168.1.17:7979</span>
+    </div>
+  </aside>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:64px;flex-shrink:0;border-bottom:2px solid var(--line);display:flex;align-items:center;gap:16px;padding:0 24px">
+      <span style="font-size:22px;font-weight:800;letter-spacing:-.02em">Peers</span>
+      <span style="font:800 10px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding-top:3px">5 online · 4 direct</span>
+      <span style="margin-left:auto;display:flex;gap:0;border:1px solid var(--line)">
+        <span style="height:34px;padding:0 14px;display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;font:800 12px/1.2 Archivo,sans-serif;border-right:1px solid var(--line)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"></use></svg>Retest paths</span>
+        <span style="height:34px;padding:0 14px;display:inline-flex;align-items:center;justify-content:flex-start;gap:7px;background:var(--red);color:var(--pap);font:800 12px/1.2 Archivo,sans-serif;min-width:104px">Add peer</span>
+      </span>
+    </div>
+
+    <div style="flex:1;min-height:0;display:flex">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="height:30px;flex-shrink:0;display:flex;align-items:center;padding:0 24px;border-bottom:2px solid var(--line);font:800 9.5px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)">
+          <span style="flex:1;min-width:0">Peer</span><span style="width:206px;flex-shrink:0">Path</span><span style="width:98px;flex-shrink:0;text-align:right;padding-right:14px">RTT</span><span style="width:110px;flex-shrink:0;text-align:right">Actions</span>
+        </div>
+        <sc-for list="{{ peersV2 }}" as="p" hint-placeholder-count="5">
+          <div style="height:76px;flex-shrink:0;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid var(--line);background:{{ p.rowBgM }}">
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:13px">
+              <span style="display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--line);font-size:18px;flex-shrink:0">{{ p.emoji }}</span>
+              <span style="min-width:0;display:block">
+                <span style="display:flex;align-items:center;gap:8px"><span style="font-size:14.5px;font-weight:600">{{ p.name }}</span><span style="font:800 9.5px/1 Archivo,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">{{ p.statusLabel }}</span></span>
+                <span style="display:block;font:11.5px ui-monospace,monospace;color:var(--dim);margin-top:3px">{{ p.addr }}</span>
+              </span>
+            </div>
+            <div style="width:206px;flex-shrink:0;display:flex;align-items:center;padding-right:12px">
+              <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:42px;flex-shrink:0"><span style="width:8px;height:8px;background:var(--ink)"></span><span style="font:600 9px/1 Archivo,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)">You</span></span>
+              <span style="flex:1;height:1px;background:{{ p.lineColorM }};margin-bottom:14px"></span>
+              <sc-if value="{{ p.hasHop }}" hint-placeholder-val="{{ true }}">
+                <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:64px;flex-shrink:0"><span style="display:grid;place-items:center;width:22px;height:22px;border:1px solid {{ p.lineColorM }};color:{{ p.lineColorM }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ p.hopIcon }}"></use></svg></span><span style="font:600 9px/1 Archivo,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:{{ p.lineColorM }}">{{ p.hopLabel }}</span></span>
+                <span style="flex:1;height:1px;background:{{ p.lineColorM }};margin-bottom:14px"></span>
+              </sc-if>
+              <span style="display:flex;flex-direction:column;align-items:center;gap:5px;width:56px;flex-shrink:0"><span style="width:8px;height:8px;background:{{ p.lineColorM }}"></span><span style="font:600 9px/1 Archivo,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:{{ p.lineColorM }}">{{ p.pathLabel }}</span></span>
+            </div>
+            <div style="width:98px;flex-shrink:0;text-align:right;padding-right:14px">
+              <span style="display:block;font:600 16px/1 ui-monospace,monospace;letter-spacing:-.02em;color:{{ p.latColorM }}">{{ p.lat }}</span>
+              <span style="display:block;font-size:11px;color:var(--dim);margin-top:4px">ms · {{ p.loss }} loss</span>
+            </div>
+            <div style="width:110px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-end;gap:0">
+              <span style="width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-right:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+              <span style="width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line);border-right:none"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+              <span style="width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--line)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-send"></use></svg></span>
+            </div>
+          </div>
+        </sc-for>
+        <div style="flex:1;min-height:0;display:flex;align-items:center;gap:9px;padding:0 24px;color:var(--dim)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-radio"></use></svg>
+          <span style="font-size:12px">Listening on mDNS.</span>
+        </div>
+      </div>
+
+      <aside style="width:300px;flex-shrink:0;border-left:2px solid var(--line);background:var(--surf);display:flex;flex-direction:column">
+        <div style="padding:20px 22px;border-bottom:2px solid var(--line);background:var(--ink);color:var(--pap)">
+          <span style="display:block;font:800 9.5px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:rgba(240,238,233,.6)">Reach</span>
+          <span style="display:block;font-size:20px;font-weight:800;letter-spacing:-.02em;margin-top:9px">Partial<br>1 peer relayed</span>
+          <p style="margin:10px 0 0;font-size:12.5px;line-height:1.55;color:rgba(240,238,233,.8);text-wrap:pretty">Tomas's router refuses inbound UDP, so their traffic hops through this hub — that is the <span style="color:#ff9783;font-family:ui-monospace,monospace">+30 ms</span> on their row.</p>
+          <span style="display:inline-flex;height:34px;padding:0 14px;align-items:center;justify-content:flex-start;background:var(--red);color:var(--pap);font:800 12px/1.2 Archivo,sans-serif;margin-top:14px;width:100%;box-sizing:border-box">Send fix instructions</span>
+        </div>
+        <div style="padding:6px 22px;border-bottom:2px solid var(--line)">
+          <sc-for list="{{ reachRows }}" as="r" hint-placeholder-count="4">
+            <span style="display:flex;align-items:flex-start;gap:11px;padding:11px 0;border-bottom:1px solid var(--line)">
+              <span style="color:{{ r.fgM }};margin-top:1px;flex-shrink:0;display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ r.icon }}"></use></svg></span>
+              <span style="min-width:0;flex:1;display:block">
+                <span style="display:block;font-size:12.5px;font-weight:600">{{ r.label }}</span>
+                <span style="display:block;font-size:11.5px;line-height:1.45;color:var(--dim);margin-top:2px">{{ r.detail }}</span>
+              </span>
+              <span style="font:600 11px ui-monospace,monospace;color:{{ r.fgM }};flex-shrink:0">{{ r.value }}</span>
+            </span>
+          </sc-for>
+        </div>
+        <div style="flex:1;min-height:0;padding:16px 22px">
+          <span style="display:block;font:800 9.5px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)">Activity</span>
+          <sc-for list="{{ activityShort }}" as="a" hint-placeholder-count="4">
+            <span style="display:flex;gap:10px;padding:8px 0">
+              <span style="color:var(--dim);margin-top:2px;flex-shrink:0;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ a.icon }}"></use></svg></span>
+              <span style="min-width:0;flex:1;font-size:12px;line-height:1.45">{{ a.text }}</span>
+              <span style="font:11px ui-monospace,monospace;color:var(--dim);flex-shrink:0">{{ a.ago }}</span>
+            </span>
+          </sc-for>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2c">
+<div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Home — mobile · populated and first run</div>
+<div class="dv-card" style="border:none;background:transparent;display:flex;gap:24px">
+
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:390px;height:800px;display:flex;flex-direction:column;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden;flex-shrink:0">
+  <div style="flex-shrink:0;padding:22px 18px 0;display:flex;align-items:center;gap:10px">
+    <svg width="20" height="20" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/><g stroke="#0C0F14" stroke-width="9"><circle cx="256" cy="222" r="18" fill="#FFD17A"/></g></g></svg>
+    <span style="font-size:15px;font-weight:600;flex:1">Peers</span>
+    <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"></use></svg></span>
+  </div>
+
+  <div style="flex-shrink:0;margin:16px 18px 0;padding:14px 16px;border-radius:10px;background:var(--surface);border:1px solid rgba(245,166,35,.3)">
+    <div style="display:flex;align-items:center;gap:9px">
+      <span style="display:grid;place-items:center;width:24px;height:24px;border-radius:6px;background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.4);color:var(--gold)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-repeat"></use></svg></span>
+      <span style="font-size:14px;font-weight:600">Reach: partial</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);font-family:'Geist Mono',monospace">4/5 direct</span>
+    </div>
+    <p style="margin:8px 0 0;font-size:12.5px;line-height:1.5;color:var(--dim);text-wrap:pretty">Tomas relays through this hub because their router blocks inbound UDP. Costs about <span style="color:var(--gold);font-family:'Geist Mono',monospace">30 ms</span>.</p>
+    <span style="display:inline-flex;height:36px;padding:0 14px;align-items:center;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12.5px;font-weight:600;margin-top:12px">Send fix instructions</span>
+  </div>
+
+  <div style="flex:1;min-height:0;padding:16px 18px 0;display:flex;flex-direction:column;gap:10px">
+    <sc-for list="{{ peersV2 }}" as="p" hint-placeholder-count="5">
+      <div style="flex-shrink:0;background:var(--surface);border:1px solid var(--edge);border-radius:10px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="position:relative;display:inline-flex;width:40px;height:40px;flex-shrink:0">
+            <span style="display:grid;place-items:center;width:40px;height:40px;border-radius:9999px;font-size:18px;background:{{ p.bgGrad }};border:1px solid {{ p.bd }}">{{ p.emoji }}</span>
+            <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:9999px;background:{{ p.statusColor }};border:2px solid var(--surface)"></span>
+          </span>
+          <span style="min-width:0;flex:1;display:block">
+            <span style="display:flex;align-items:center;gap:7px"><span style="font-size:14.5px;font-weight:600">{{ p.name }}</span><span style="font-size:11px;opacity:.8">{{ p.glyph }}</span></span>
+            <span style="display:flex;align-items:center;gap:7px;margin-top:3px">
+              <span style="font-size:11.5px;color:{{ p.lineColor }}">{{ p.pathSentence }}</span>
+              <span style="font-size:11.5px;font-family:'Geist Mono',monospace;color:{{ p.latColor }}">{{ p.lat }} ms</span>
+            </span>
+          </span>
+          <span style="display:flex;gap:6px;flex-shrink:0">
+            <span style="width:44px;height:44px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+            <span style="width:44px;height:44px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+          </span>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+
+  <nav style="flex-shrink:0;height:64px;background:var(--surface);border-top:1px solid var(--edge);display:flex;align-items:stretch;padding-bottom:10px;margin-top:14px">
+    <div style="flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--gold)"><span style="position:absolute;top:0;height:2px;width:32px;background:var(--gold);border-radius:9999px"></span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg><span style="font-size:10px;font-weight:500">Home</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><span style="position:relative;display:inline-flex"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg><span style="position:absolute;top:-4px;right:-6px;min-width:15px;height:15px;padding:0 4px;display:grid;place-items:center;border-radius:9999px;background:var(--gold);color:#1a1206;font-size:9px;font-weight:700">3</span></span><span style="font-size:10px;font-weight:500">Chats</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg><span style="font-size:10px;font-weight:500">Files</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg><span style="font-size:10px;font-weight:500">Theatre</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg><span style="font-size:10px;font-weight:500">Games</span></div>
+  </nav>
+</div>
+
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:390px;height:800px;display:flex;flex-direction:column;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden;flex-shrink:0">
+  <div style="flex-shrink:0;padding:22px 18px 0;display:flex;align-items:center;gap:10px">
+    <svg width="20" height="20" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/></g></svg>
+    <span style="font-size:15px;font-weight:600;flex:1">Peers</span>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:0 32px;text-align:center">
+    <span style="position:relative;display:grid;place-items:center;width:96px;height:96px">
+      <span style="position:absolute;inset:0;border-radius:9999px;border:1px solid rgba(245,166,35,.28)"></span>
+      <span style="position:absolute;inset:16px;border-radius:9999px;border:1px solid rgba(245,166,35,.18)"></span>
+      <span style="color:var(--gold);display:inline-flex"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#i-radio"></use></svg></span>
+    </span>
+    <span style="display:block">
+      <span style="display:block;font-size:17px;font-weight:600;letter-spacing:-.01em">Looking for the hub</span>
+      <span style="display:block;font-size:13px;line-height:1.6;color:var(--dim);margin-top:8px;text-wrap:pretty">You're on <span style="font-family:'Geist Mono',monospace;color:var(--txt)">Cabin-WiFi</span> and broadcasting. Nothing has answered in 12 seconds — the hub may be on a different network.</span>
+    </span>
+    <span style="display:flex;flex-direction:column;gap:9px;width:100%;margin-top:4px">
+      <span style="height:48px;display:grid;place-items:center;border-radius:8px;background:var(--gold);color:#1a1206;font-size:14px;font-weight:600">Enter hub address</span>
+      <span style="height:48px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:14px;font-weight:500">Scan hub QR code</span>
+    </span>
+    <span style="display:flex;align-items:center;gap:8px;margin-top:6px;color:var(--muted)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-info"></use></svg><span style="font-size:11.5px">No internet needed. Ever.</span></span>
+  </div>
+  <nav style="flex-shrink:0;height:64px;background:var(--surface);border-top:1px solid var(--edge);display:flex;align-items:stretch;padding-bottom:10px">
+    <div style="flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--gold)"><span style="position:absolute;top:0;height:2px;width:32px;background:var(--gold);border-radius:9999px"></span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg><span style="font-size:10px;font-weight:500">Home</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg><span style="font-size:10px;font-weight:500">Chats</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg><span style="font-size:10px;font-weight:500">Files</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg><span style="font-size:10px;font-weight:500">Theatre</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg><span style="font-size:10px;font-weight:500">Games</span></div>
+  </nav>
+</div>
+
+</div>
+</div>
+
+<div class="dv-opt" id="2d">
+<div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a>Files — desktop · transfers carry the same path column</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--danger:#E05C5C;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:640px;display:flex;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <aside style="width:60px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;background:var(--surface);border-right:1px solid var(--edge)">
+    <div style="height:56px;display:grid;place-items:center;width:100%;border-bottom:1px solid var(--edge)"><svg width="22" height="22" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/><g stroke="#0C0F14" stroke-width="9"><circle cx="256" cy="222" r="18" fill="#FFD17A"/></g></g></svg></div>
+    <div style="padding:8px;display:flex;flex-direction:column;gap:2px;align-items:center;width:100%">
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.3);color:var(--gold)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg></span>
+    </div>
+  </aside>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:56px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:14px;padding:0 20px">
+      <span style="font-size:15px;font-weight:600;letter-spacing:-.01em">Files</span>
+      <span style="width:1px;height:22px;background:var(--edge)"></span>
+      <span style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--dim)">
+        <span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--cyan);display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-ul"></use></svg></span>2 sending · <span style="font-family:'Geist Mono',monospace;color:var(--txt)">18.4 MB/s</span></span>
+        <span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--gold);display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-dl"></use></svg></span>1 receiving · <span style="font-family:'Geist Mono',monospace;color:var(--txt)">2.1 MB/s</span></span>
+      </span>
+      <span style="margin-left:auto;display:flex;gap:8px">
+        <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:12px;font-weight:500"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-clip"></use></svg>Shared folders</span>
+        <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-upload"></use></svg>Send files</span>
+      </span>
+    </div>
+
+    <div style="flex:1;min-height:0;display:flex">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="height:32px;flex-shrink:0;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid var(--edge);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">
+          <span style="flex:1;min-width:0">Transfer</span><span style="width:190px;flex-shrink:0">Path</span><span style="width:150px;flex-shrink:0">Progress</span><span style="width:110px;flex-shrink:0;text-align:right">Rate</span><span style="width:84px;flex-shrink:0;text-align:right"></span>
+        </div>
+        <sc-for list="{{ transfers }}" as="t" hint-placeholder-count="5">
+          <div style="height:68px;flex-shrink:0;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid rgba(37,46,63,.6)">
+            <div style="flex:1;min-width:0;display:flex;align-items:center;gap:12px">
+              <span style="display:grid;place-items:center;width:34px;height:34px;border-radius:6px;background:var(--raised);border:1px solid var(--edge);color:{{ t.dirColor }};flex-shrink:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ t.kindIcon }}"></use></svg></span>
+              <span style="min-width:0;display:block">
+                <span style="display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ t.file }}</span>
+                <span style="display:block;font-size:11.5px;color:var(--muted);margin-top:3px">{{ t.dirWord }} {{ t.peer }} · {{ t.size }}</span>
+              </span>
+            </div>
+            <div style="width:190px;flex-shrink:0;display:flex;align-items:center;gap:7px;padding-right:16px">
+              <span style="color:{{ t.pathColor }};display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ t.pathIcon }}"></use></svg></span>
+              <span style="font-size:11.5px;color:{{ t.pathColor }}">{{ t.pathWord }}</span>
+            </div>
+            <div style="width:150px;flex-shrink:0;padding-right:16px">
+              <span style="display:block;height:4px;border-radius:9999px;background:var(--raised);overflow:hidden"><span style="display:block;height:4px;border-radius:9999px;background:{{ t.barColor }};width:{{ t.pct }}"></span></span>
+              <span style="display:block;font-size:11px;color:var(--muted);margin-top:6px;font-family:'Geist Mono',monospace">{{ t.pct }} · {{ t.eta }}</span>
+            </div>
+            <div style="width:110px;flex-shrink:0;text-align:right;font-size:13px;font-weight:500;font-family:'Geist Mono',monospace;color:{{ t.rateColor }}">{{ t.rate }}</div>
+            <div style="width:84px;flex-shrink:0;display:flex;justify-content:flex-end;gap:4px">
+              <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ t.actionIcon }}"></use></svg></span>
+              <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--muted)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"></use></svg></span>
+            </div>
+          </div>
+        </sc-for>
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;margin:16px 20px;border:1px dashed var(--edge);border-radius:10px;color:var(--muted)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#i-upload"></use></svg>
+          <span style="font-size:12.5px">Drop files here to send to a peer</span>
+        </div>
+      </div>
+
+      <aside style="width:300px;flex-shrink:0;border-left:1px solid var(--edge);background:var(--surface);display:flex;flex-direction:column">
+        <div style="padding:16px 20px;border-bottom:1px solid var(--edge)">
+          <span style="display:block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Relay budget</span>
+          <p style="margin:9px 0 0;font-size:12.5px;line-height:1.55;color:var(--dim);text-wrap:pretty">Tomas's download runs through this hub, so it uses your uplink twice. Capped at <span style="font-family:'Geist Mono',monospace;color:var(--gold)">4 MB/s</span> so direct transfers stay fast.</p>
+          <span style="display:flex;align-items:center;gap:10px;margin-top:12px">
+            <span style="flex:1;height:4px;border-radius:9999px;background:var(--raised);overflow:hidden;display:block"><span style="display:block;height:4px;background:var(--gold);width:52%"></span></span>
+            <span style="font-size:11px;font-family:'Geist Mono',monospace;color:var(--muted)">2.1 / 4</span>
+          </span>
+        </div>
+        <div style="padding:16px 20px">
+          <span style="display:block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Shared by peers</span>
+          <div style="display:flex;flex-direction:column;gap:0;margin-top:8px">
+            <sc-for list="{{ shares }}" as="s" hint-placeholder-count="4">
+              <span style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(37,46,63,.5)">
+                <span style="display:grid;place-items:center;width:28px;height:28px;border-radius:9999px;font-size:13px;background:{{ s.bgGrad }};border:1px solid {{ s.bd }};flex-shrink:0">{{ s.emoji }}</span>
+                <span style="min-width:0;flex:1;display:block">
+                  <span style="display:block;font-size:12.5px;font-weight:500">{{ s.folder }}</span>
+                  <span style="display:block;font-size:11px;color:var(--muted);margin-top:1px">{{ s.owner }} · {{ s.count }}</span>
+                </span>
+                <span style="color:var(--muted);display:inline-flex"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-chevr"></use></svg></span>
+              </span>
+            </sc-for>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2e">
+<div class="dv-olabel"><a class="dv-oid" href="#2e">2e</a>Theatre — desktop · watching together, drift made visible</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:680px;display:flex;flex-direction:column;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <div style="height:56px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:14px;padding:0 20px">
+    <svg width="20" height="20" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/></g></svg>
+    <span style="font-size:15px;font-weight:600;letter-spacing:-.01em">Theatre</span>
+    <span style="width:1px;height:22px;background:var(--edge)"></span>
+    <span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--dim)"><span style="width:7px;height:7px;border-radius:9999px;background:var(--cyan);box-shadow:0 0 8px rgba(57,217,200,.6)"></span>Synced room · 3 watching</span>
+    <span style="margin-left:auto;height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:12px;font-weight:500"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-search"></use></svg>Library</span>
+  </div>
+
+  <div style="flex:1;min-height:0;display:flex">
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding:20px;gap:16px">
+      <div style="flex:1;min-height:0;border-radius:10px;border:1px solid var(--edge);background:linear-gradient(160deg,#1a2434,#0e1219);position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:24px">
+        <span style="position:absolute;top:16px;left:20px;display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border-radius:6px;background:rgba(12,15,20,.7);border:1px solid var(--edge);font-size:11px;color:var(--dim)"><span style="width:6px;height:6px;border-radius:9999px;background:var(--cyan)"></span>Streaming from Studio-PC · 1080p · direct</span>
+        <span style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:grid;place-items:center;width:64px;height:64px;border-radius:9999px;background:rgba(245,166,35,.14);border:1px solid rgba(245,166,35,.4);color:var(--gold)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pause"></use></svg></span>
+        <span style="position:relative;display:block">
+          <span style="display:block;font-size:22px;font-weight:600;letter-spacing:-.02em">Harbour Lights</span>
+          <span style="display:block;font-size:12.5px;color:var(--dim);margin-top:4px">Episode 3 · The Long Way Round · 48 min</span>
+        </span>
+      </div>
+
+      <div style="flex-shrink:0;border-radius:10px;border:1px solid var(--edge);background:var(--surface);padding:16px 18px">
+        <div style="display:flex;align-items:center;gap:14px">
+          <span style="display:grid;place-items:center;width:40px;height:40px;border-radius:9999px;background:var(--gold);color:#1a1206;flex-shrink:0"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-play"></use></svg></span>
+          <span style="min-width:0;flex:1;display:block">
+            <span style="position:relative;display:block;height:6px;border-radius:9999px;background:var(--raised)">
+              <span style="position:absolute;left:0;top:0;height:6px;border-radius:9999px;background:var(--gold);width:38%"></span>
+              <span style="position:absolute;left:38%;top:-4px;width:14px;height:14px;border-radius:9999px;background:var(--gold);border:2px solid var(--surface)"></span>
+              <span style="position:absolute;left:35.4%;top:-3px;width:12px;height:12px;border-radius:9999px;background:#39D9C8;border:2px solid var(--surface);opacity:.9"></span>
+              <span style="position:absolute;left:33%;top:-3px;width:12px;height:12px;border-radius:9999px;background:#E05C5C;border:2px solid var(--surface);opacity:.9"></span>
+            </span>
+            <span style="display:flex;align-items:center;justify-content:space-between;margin-top:9px">
+              <span style="font-size:11.5px;font-family:'Geist Mono',monospace;color:var(--muted)">18:24 / 48:10</span>
+              <span style="font-size:11.5px;color:var(--dim)">Tomas is <span style="color:#E05C5C;font-family:'Geist Mono',monospace">2.4 s</span> behind — relayed link</span>
+            </span>
+          </span>
+          <span style="display:flex gap:6px;gap:6px;flex-shrink:0">
+            <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"></use></svg></span>
+            <span style="height:36px;padding:0 12px;display:inline-flex;align-items:center;border-radius:6px;border:1px solid rgba(245,166,35,.4);background:rgba(245,166,35,.12);color:var(--gold);font-size:12px;font-weight:600">Wait for everyone</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <aside style="width:300px;flex-shrink:0;border-left:1px solid var(--edge);background:var(--surface);display:flex;flex-direction:column">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--edge)">
+        <span style="display:block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">In the room</span>
+        <div style="display:flex;flex-direction:column;margin-top:8px">
+          <sc-for list="{{ room }}" as="w" hint-placeholder-count="3">
+            <span style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(37,46,63,.5)">
+              <span style="display:grid;place-items:center;width:30px;height:30px;border-radius:9999px;font-size:14px;background:{{ w.bgGrad }};border:1px solid {{ w.bd }};flex-shrink:0">{{ w.emoji }}</span>
+              <span style="min-width:0;flex:1;display:block">
+                <span style="display:block;font-size:12.5px;font-weight:500">{{ w.name }}</span>
+                <span style="display:block;font-size:11px;color:{{ w.driftColor }};margin-top:1px">{{ w.drift }}</span>
+              </span>
+              <span style="color:{{ w.driftColor }};display:inline-flex"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ w.icon }}"></use></svg></span>
+            </span>
+          </sc-for>
+        </div>
+      </div>
+      <div style="flex:1;min-height:0;padding:16px 20px">
+        <span style="display:block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Up next on the LAN</span>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+          <sc-for list="{{ upNext }}" as="n" hint-placeholder-count="3">
+            <span style="display:flex;align-items:center;gap:11px;padding:8px;border-radius:6px;border:1px solid var(--edge);background:var(--raised)">
+              <span style="width:34px;height:46px;border-radius:4px;background:{{ n.art }};flex-shrink:0;display:block"></span>
+              <span style="min-width:0;flex:1;display:block">
+                <span style="display:block;font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.title }}</span>
+                <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px">{{ n.meta }}</span>
+              </span>
+            </span>
+          </sc-for>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2f">
+<div class="dv-olabel"><a class="dv-oid" href="#2f">2f</a>Call overlay and Games lobby — quality per tile, path per player</div>
+<div class="dv-card" style="border:none;background:transparent;display:flex;flex-direction:column;gap:24px">
+
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--danger:#E05C5C;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:660px;display:flex;flex-direction:column;background:#07090d;color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <div style="height:52px;flex-shrink:0;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid rgba(37,46,63,.7)">
+    <span style="display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600">Workshop call</span>
+    <span style="font-size:12px;font-family:'Geist Mono',monospace;color:var(--muted)">12:04</span>
+    <span style="display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border-radius:6px;border:1px solid rgba(245,166,35,.4);background:rgba(245,166,35,.12);color:var(--gold);font-size:11px;font-weight:500"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-repeat"></use></svg>1 of 4 relayed</span>
+    <span style="margin-left:auto;display:flex;gap:6px">
+      <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-grid"></use></svg></span>
+      <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-min"></use></svg></span>
+    </span>
+  </div>
+
+  <div style="flex:1;min-height:0;padding:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:12px">
+    <sc-for list="{{ callTiles }}" as="c" hint-placeholder-count="4">
+      <div style="position:relative;border-radius:10px;border:1px solid {{ c.tileBd }};background:{{ c.tileBg }};overflow:hidden;display:flex;align-items:center;justify-content:center">
+        <span style="display:flex;flex-direction:column;align-items:center;gap:10px">
+          <span style="display:grid;place-items:center;width:64px;height:64px;border-radius:9999px;font-size:28px;background:{{ c.bgGrad }};border:1px solid {{ c.bd }}">{{ c.emoji }}</span>
+          <span style="font-size:14px;font-weight:600">{{ c.name }}</span>
+        </span>
+        <span style="position:absolute;bottom:12px;left:12px;display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border-radius:6px;background:rgba(7,9,13,.72);border:1px solid {{ c.chipBd }};color:{{ c.chipFg }};font-size:11px;font-weight:500">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="{{ c.pathIcon }}"></use></svg>{{ c.pathWord }} · {{ c.lat }} ms
+        </span>
+        <span style="position:absolute;bottom:12px;right:12px;display:inline-flex;gap:6px">
+          <span style="display:grid;place-items:center;width:26px;height:26px;border-radius:6px;background:rgba(7,9,13,.72);border:1px solid var(--edge);color:{{ c.micColor }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ c.micIcon }}"></use></svg></span>
+        </span>
+        <sc-if value="{{ c.warn }}" hint-placeholder-val="{{ true }}">
+          <span style="position:absolute;top:12px;left:12px;display:inline-flex;align-items:center;gap:7px;height:24px;padding:0 9px;border-radius:6px;background:rgba(245,166,35,.14);border:1px solid rgba(245,166,35,.4);color:var(--gold);font-size:11px;font-weight:500">Video reduced to hold audio</span>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="height:80px;flex-shrink:0;border-top:1px solid rgba(37,46,63,.7);display:flex;align-items:center;justify-content:center;gap:10px">
+    <span style="width:52px;height:52px;display:grid;place-items:center;border-radius:9999px;border:1px solid var(--edge);background:var(--raised);color:var(--txt)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-mic"></use></svg></span>
+    <span style="width:52px;height:52px;display:grid;place-items:center;border-radius:9999px;border:1px solid var(--edge);background:var(--raised);color:var(--txt)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-video"></use></svg></span>
+    <span style="width:52px;height:52px;display:grid;place-items:center;border-radius:9999px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-monitorup"></use></svg></span>
+    <span style="width:52px;height:52px;display:grid;place-items:center;border-radius:9999px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-hand"></use></svg></span>
+    <span style="width:52px;height:52px;display:grid;place-items:center;border-radius:9999px;border:1px solid var(--edge);background:var(--raised);color:var(--dim)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-smile"></use></svg></span>
+    <span style="width:1px;height:32px;background:var(--edge);margin:0 6px"></span>
+    <span style="height:52px;padding:0 22px;display:inline-flex;align-items:center;gap:9px;border-radius:9999px;background:var(--danger);color:#fff;font-size:13.5px;font-weight:600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phoneoff"></use></svg>Leave</span>
+  </div>
+</div>
+
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:420px;display:flex;flex-direction:column;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <div style="height:56px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:14px;padding:0 20px">
+    <span style="font-size:15px;font-weight:600;letter-spacing:-.01em">Games</span>
+    <span style="width:1px;height:22px;background:var(--edge)"></span>
+    <span style="font-size:12px;color:var(--dim)">2 tables running · everything runs on the hub, no server</span>
+    <span style="margin-left:auto;height:32px;padding:0 12px;display:inline-flex;align-items:center;gap:7px;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12px;font-weight:600"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-plus"></use></svg>Open a table</span>
+  </div>
+  <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+    <sc-for list="{{ lobbies }}" as="g" hint-placeholder-count="3">
+      <div style="flex:1;min-height:0;display:flex;align-items:center;gap:16px;padding:0 20px;border-bottom:1px solid rgba(37,46,63,.6)">
+        <span style="display:grid;place-items:center;width:44px;height:44px;border-radius:8px;background:{{ g.tint }};border:1px solid {{ g.tintBd }};color:{{ g.fg }};flex-shrink:0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ g.icon }}"></use></svg></span>
+        <span style="min-width:0;flex:1;display:block">
+          <span style="display:flex;align-items:center;gap:9px"><span style="font-size:14.5px;font-weight:600">{{ g.name }}</span><span style="font-size:11.5px;color:var(--muted)">{{ g.state }}</span></span>
+          <span style="display:block;font-size:12px;color:var(--dim);margin-top:3px">{{ g.players }}</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:6px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:11px;font-weight:500"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><use href="#i-signal"></use></svg>{{ g.lat }}</span>
+          <span style="height:36px;padding:0 14px;display:inline-flex;align-items:center;border-radius:6px;border:1px solid {{ g.ctaBd }};background:{{ g.ctaBg }};color:{{ g.ctaFg }};font-size:12.5px;font-weight:600">{{ g.cta }}</span>
+        </span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+
+</div>
+</div>
+
+</div>
+
+<p class="dv-next">Files, Theatre, Games and the call overlay come next in this same turn, carrying the row-and-path pattern across. Tell me which of <a href="#2a">2a</a> or <a href="#2b">2b</a> to carry forward and I'll drop the other.</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Baseline — the app as it is built today</span></div>
+
+<div style="max-width:940px;margin:0 0 34px;border-top:2px solid color-mix(in srgb,#201e1d 40%,transparent);padding-top:16px">
+<p style="font:800 10px/1 Archivo,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:#ec3013;margin:0 0 14px">Where I started, and what I am assuming</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0;border-left:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<div style="padding:0 20px;border-right:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">Read from the code</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">Everything below is rebuilt from <code style="font:11.5px ui-monospace,monospace;background:#eae9e9;padding:1px 4px">src/index.css</code>, <code style="font:11.5px ui-monospace,monospace;background:#eae9e9;padding:1px 4px">tailwind.config.js</code> and the screen files — the real tokens (base <code style="font:11.5px ui-monospace,monospace">#0C0F14</code>, gold <code style="font:11.5px ui-monospace,monospace">#F5A623</code>, cyan <code style="font:11.5px ui-monospace,monospace">#39D9C8</code>), the real radii (6/10/16), Geist, 44px header rows, 208px sidebar, and the sample peers from <code style="font:11.5px ui-monospace,monospace;background:#eae9e9;padding:1px 4px">sim.ts</code>. No invented values.</p>
+</div>
+<div style="padding:0 20px;border-right:2px solid color-mix(in srgb,#201e1d 40%,transparent)">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">The problem I am designing against</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">The peer card carries eight facts in 248px — name, OS, layer, scope, latency, loss, address, port — plus five actions on a 32px row. Nothing has room, and the one thing that actually explains a bad connection (the <em>path</em> the traffic takes, and why) is compressed into a 9px badge.</p>
+</div>
+<div style="padding:0 20px">
+<h3 style="font:800 13px/1.3 Archivo,sans-serif;margin:0 0 8px">What comes next</h3>
+<p style="font:400 12.5px/1.65 Archivo,sans-serif;color:color-mix(in srgb,#201e1d 70%,transparent);margin:0;text-wrap:pretty">Turn 1 is the faithful baseline so we are arguing about the same thing. Turn 2 (coming next) takes the peer card and the relay/NAT story apart in three directions, then carries the winner across Files, Theatre, Games and the call — desktop and mobile, in the app's own language and in Modernist.</p>
+</div>
+</div>
+</div>
+
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Home — desktop, as built · populated</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--edgeS:#2E3B52;--gold:#F5A623;--glow:#FFD17A;--cyan:#39D9C8;--danger:#E05C5C;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:700px;display:flex;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;font-size:14px;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+
+  <aside style="width:208px;flex-shrink:0;display:flex;flex-direction:column;background:var(--surface);border-right:1px solid var(--edge)">
+    <div style="height:56px;flex-shrink:0;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid var(--edge);gap:8px">
+      <svg width="22" height="22" viewBox="0 0 512 512" fill="none" style="flex-shrink:0"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/><g stroke="#0C0F14" stroke-width="9"><circle cx="256" cy="222" r="18" fill="#FFD17A"/><circle cx="210" cy="306" r="15" fill="#F5A623"/><circle cx="302" cy="306" r="15" fill="#F5A623"/></g></g></svg>
+      <span style="font-size:16px;line-height:1;letter-spacing:-.02em"><span style="font-weight:700;color:var(--gold)">LAN</span><span style="font-weight:400">tern</span></span>
+    </div>
+
+    <div style="height:56px;flex-shrink:0;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--edge)">
+      <span style="position:relative;display:inline-flex;width:30px;height:30px;flex-shrink:0">
+        <span style="display:grid;place-items:center;width:30px;height:30px;border-radius:9999px;font-size:13px;background:linear-gradient(145deg,#F5A62333,#F5A62318);border:1px solid #F5A62366">🏮</span>
+        <span style="position:absolute;bottom:-2px;right:-2px;width:9px;height:9px;border-radius:9999px;background:var(--cyan);border:2px solid var(--surface)"></span>
+      </span>
+      <span style="min-width:0;flex:1;display:block">
+        <span style="display:block;font-size:12px;font-weight:500;line-height:17px">Priya</span>
+        <span style="display:block;font-size:11px;line-height:15px;color:var(--muted)">5 peers online</span>
+      </span>
+    </div>
+
+    <nav style="flex:1;display:flex;flex-direction:column;gap:2px;padding:8px">
+      <div style="position:relative;height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.3);box-shadow:0 0 12px rgba(245,166,35,.25);color:var(--gold)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg><span style="font-size:12px;font-weight:500">Home</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg><span style="font-size:12px;font-weight:500">Chats</span><span style="margin-left:auto;min-width:17px;height:17px;padding:0 4px;display:grid;place-items:center;border-radius:9999px;background:var(--gold);color:#1a1206;font-size:10px;font-weight:700">3</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg><span style="font-size:12px;font-weight:500">Calls</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg><span style="font-size:12px;font-weight:500">Files</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg><span style="font-size:12px;font-weight:500">Theatre</span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg><span style="font-size:12px;font-weight:500">Games</span><span style="margin-left:auto;width:6px;height:6px;border-radius:9999px;background:#9B8CFF"></span></div>
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-flash"></use></svg><span style="font-size:12px;font-weight:500">Network</span></div>
+    </nav>
+
+    <div style="padding:8px;border-top:1px solid var(--edge);display:flex;flex-direction:column;gap:2px;flex-shrink:0">
+      <div style="height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-cog"></use></svg><span style="font-size:12px;font-weight:500">Settings</span></div>
+      <div style="height:32px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:6px;color:var(--muted)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-panelclose"></use></svg><span style="font-size:11px">Collapse</span></div>
+    </div>
+  </aside>
+
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:44px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:16px;padding:0 16px">
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wifi"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">IP</span><span style="font-size:12px;font-family:'Geist Mono',monospace">192.168.1.17</span></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-net"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Subnet</span><span style="font-size:12px;font-family:'Geist Mono',monospace">255.255.255.0</span></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-router"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Gateway</span><span style="font-size:12px;font-family:'Geist Mono',monospace">192.168.1.1</span></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">NAT</span><span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid rgba(245,166,35,.4);background:rgba(245,166,35,.12);color:var(--gold);font-size:11px;font-weight:500">Double NAT</span></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Relay</span><span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid var(--edge);color:var(--muted);font-size:11px;font-weight:500"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-repeat"></use></svg>1 via hub</span></div>
+      <div style="margin-left:auto;height:24px;padding:0 8px;display:inline-flex;align-items:center;border-radius:6px;color:var(--dim);font-size:11px">Diagnostics</div>
+    </div>
+
+    <div style="flex:1;min-height:0;display:flex">
+      <div style="flex:1;min-width:0;padding:16px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <h3 style="margin:0;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Peers on the network</h3>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid rgba(57,217,200,.4);background:rgba(57,217,200,.12);color:var(--cyan);font-size:11px;font-weight:500"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-users"></use></svg>5 online</span>
+            <span style="width:24px;height:24px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-refresh"></use></svg></span>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <sc-for list="{{ peers }}" as="p" hint-placeholder-count="4">
+            <div style="background:var(--surface);border:1px solid var(--edge);border-radius:10px;padding:12px">
+              <div style="display:flex;align-items:flex-start;gap:10px">
+                <span style="position:relative;display:inline-flex;width:38px;height:38px;flex-shrink:0">
+                  <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:9999px;font-size:17px;background:{{ p.bgGrad }};border:1px solid {{ p.bd }}">{{ p.emoji }}</span>
+                  <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:9999px;background:{{ p.statusColor }};border:2px solid var(--surface)"></span>
+                </span>
+                <div style="min-width:0;flex:1">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.name }}</span>
+                    <span style="font-size:12px;line-height:1">{{ p.glyph }}</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
+                    <span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid {{ p.layerBd }};background:{{ p.layerBg }};color:{{ p.layerFg }};font-size:11px;font-weight:500"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="{{ p.layerIcon }}"></use></svg>{{ p.layerLabel }}</span>
+                    <sc-if value="{{ p.scopeLabel }}" hint-placeholder-val="{{ true }}"><span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid var(--edge);background:var(--raised);color:var(--dim);font-size:11px;font-weight:500"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="{{ p.scopeIcon }}"></use></svg>{{ p.scopeLabel }}</span></sc-if>
+                    <span style="font-size:11px;font-family:'Geist Mono',monospace;color:{{ p.latColor }}">{{ p.lat }} ms</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--muted);font-family:'Geist Mono',monospace;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.addr }}</div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:4px;margin-top:12px;padding-top:10px;border-top:1px solid var(--edge)">
+                <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+                <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+                <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-video"></use></svg></span>
+                <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-send"></use></svg></span>
+                <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim);margin-left:auto"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-crown"></use></svg></span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <aside style="width:264px;flex-shrink:0;border-left:1px solid var(--edge);background:rgba(20,25,33,.5);display:flex;flex-direction:column">
+        <div style="height:44px;padding:0 16px;display:flex;align-items:center;border-bottom:1px solid var(--edge);flex-shrink:0"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Activity</span></div>
+        <div style="flex:1;padding:8px;display:flex;flex-direction:column;gap:4px">
+          <sc-for list="{{ activity }}" as="a" hint-placeholder-count="6">
+            <div style="display:flex;gap:10px;padding:8px;border-radius:6px">
+              <span style="color:var(--muted);margin-top:3px;flex-shrink:0;display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="{{ a.icon }}"></use></svg></span>
+              <span style="min-width:0;flex:1">
+                <span style="display:block;font-size:12px;line-height:1.4">{{ a.text }}</span>
+                <span style="display:block;font-size:11px;color:var(--muted);margin-top:2px">{{ a.meta }}</span>
+              </span>
+            </div>
+          </sc-for>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Home — mobile, as built</div>
+<div class="dv-card" style="width:390px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:390px;height:760px;display:flex;flex-direction:column;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <header style="flex-shrink:0;background:var(--surface);border-bottom:1px solid var(--edge);padding-top:20px">
+    <div style="height:56px;display:flex;align-items:center;padding:0 12px;gap:8px">
+      <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-menu"></use></svg></span>
+      <span style="font-size:14px;font-weight:600;flex:1">Home</span>
+      <span style="position:relative;display:inline-flex;width:28px;height:28px"><span style="display:grid;place-items:center;width:28px;height:28px;border-radius:9999px;font-size:13px;background:linear-gradient(145deg,#F5A62333,#F5A62318);border:1px solid #F5A62366">🏮</span></span>
+    </div>
+  </header>
+
+  <div style="height:44px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:16px;padding:0 16px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wifi"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">IP</span><span style="font-size:12px;font-family:'Geist Mono',monospace">192.168.1.17</span></div>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-net"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Subnet</span><span style="font-size:12px;font-family:'Geist Mono',monospace">255.25</span></div>
+  </div>
+
+  <div style="flex:1;min-height:0;padding:16px;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Peers on the network</h3>
+      <span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid rgba(57,217,200,.4);background:rgba(57,217,200,.12);color:var(--cyan);font-size:11px;font-weight:500">5 online</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <sc-for list="{{ peersMobile }}" as="p" hint-placeholder-count="3">
+        <div style="background:var(--surface);border:1px solid var(--edge);border-radius:10px;padding:12px">
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <span style="position:relative;display:inline-flex;width:38px;height:38px;flex-shrink:0">
+              <span style="display:grid;place-items:center;width:38px;height:38px;border-radius:9999px;font-size:17px;background:{{ p.bgGrad }};border:1px solid {{ p.bd }}">{{ p.emoji }}</span>
+              <span style="position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:9999px;background:{{ p.statusColor }};border:2px solid var(--surface)"></span>
+            </span>
+            <div style="min-width:0;flex:1">
+              <div style="display:flex;align-items:center;gap:6px"><span style="font-size:14px;font-weight:500">{{ p.name }}</span><span style="font-size:12px;line-height:1">{{ p.glyph }}</span></div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">
+                <span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid {{ p.layerBd }};background:{{ p.layerBg }};color:{{ p.layerFg }};font-size:11px;font-weight:500">{{ p.layerLabel }}</span>
+                <span style="font-size:11px;font-family:'Geist Mono',monospace;color:{{ p.latColor }}">{{ p.lat }} ms</span>
+              </div>
+              <div style="font-size:11px;color:var(--muted);font-family:'Geist Mono',monospace;margin-top:4px">{{ p.addr }}</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:12px;padding-top:10px;border-top:1px solid var(--edge)">
+            <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+            <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+            <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-video"></use></svg></span>
+            <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-send"></use></svg></span>
+            <span style="width:32px;height:32px;display:grid;place-items:center;border-radius:6px;color:var(--dim);margin-left:auto"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-crown"></use></svg></span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <nav style="flex-shrink:0;height:56px;background:var(--surface);border-top:1px solid var(--edge);display:flex;align-items:stretch;padding-bottom:8px">
+    <div style="flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--gold)"><span style="position:absolute;top:0;height:2px;width:32px;background:var(--gold);border-radius:9999px;box-shadow:0 0 12px rgba(245,166,35,.25)"></span><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg><span style="font-size:10px;font-weight:500">Home</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)"><span style="position:relative;display:inline-flex"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg><span style="position:absolute;top:-4px;right:-6px;min-width:15px;height:15px;padding:0 4px;display:grid;place-items:center;border-radius:9999px;background:var(--gold);color:#1a1206;font-size:9px;font-weight:700">3</span></span><span style="font-size:10px;font-weight:500">Chats</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg><span style="font-size:10px;font-weight:500">Calls</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg><span style="font-size:10px;font-weight:500">Files</span></div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted)"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg><span style="font-size:10px;font-weight:500">Theatre</span></div>
+  </nav>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Home — desktop, first run · nothing found yet</div>
+<div class="dv-card" style="width:1180px;border:none;background:transparent">
+<div style="--base:#0C0F14;--surface:#141921;--raised:#1C2330;--edge:#252E3F;--gold:#F5A623;--cyan:#39D9C8;--txt:#E6EAF3;--dim:#8C97AE;--muted:#4B566A;width:1180px;height:420px;display:flex;background:var(--base);color:var(--txt);font-family:Geist,system-ui,sans-serif;border:1px solid var(--edge);border-radius:10px;overflow:hidden">
+  <aside style="width:60px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;background:var(--surface);border-right:1px solid var(--edge);padding:0">
+    <div style="height:56px;display:grid;place-items:center;width:100%;border-bottom:1px solid var(--edge)">
+      <svg width="22" height="22" viewBox="0 0 512 512" fill="none"><g transform="translate(0 4)" fill="none" stroke="#F5A623" stroke-linecap="round" stroke-linejoin="round"><path d="M192 152 L160 204 L160 340 L192 392 L320 392 L352 340 L352 204 L320 152 A72 72 0 0 0 192 152 Z" stroke-width="30"/><path d="M256 222 L210 306 L302 306 Z M256 222 L302 306" stroke-width="8"/><g stroke="#0C0F14" stroke-width="9"><circle cx="256" cy="222" r="18" fill="#FFD17A"/><circle cx="210" cy="306" r="15" fill="#F5A623"/><circle cx="302" cy="306" r="15" fill="#F5A623"/></g></g></svg>
+    </div>
+    <div style="height:56px;width:100%;display:grid;place-items:center;border-bottom:1px solid var(--edge)"><span style="display:grid;place-items:center;width:26px;height:26px;border-radius:9999px;font-size:12px;background:linear-gradient(145deg,#F5A62333,#F5A62318);border:1px solid #F5A62366">🏮</span></div>
+    <div style="padding:8px;display:flex;flex-direction:column;gap:2px;align-items:center;width:100%">
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.3);color:var(--gold)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-home"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-msg"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-phone"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-folder"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-film"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-pad"></use></svg></span>
+      <span style="width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--dim)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-flash"></use></svg></span>
+    </div>
+  </aside>
+  <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+    <div style="height:44px;flex-shrink:0;border-bottom:1px solid var(--edge);background:var(--surface);display:flex;align-items:center;gap:16px;padding:0 16px">
+      <div style="display:flex;align-items:center;gap:6px"><span style="color:var(--muted);display:inline-flex"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-wifi"></use></svg></span><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">IP</span><span style="font-size:12px;font-family:'Geist Mono',monospace">192.168.1.17</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">NAT</span><span style="display:inline-flex;align-items:center;padding:0 6px;height:18px;border-radius:4px;border:1px solid var(--edge);color:var(--muted);font-size:11px;font-weight:500">Unknown</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Relay</span><span style="display:inline-flex;align-items:center;padding:0 6px;height:18px;border-radius:4px;border:1px solid var(--edge);color:var(--muted);font-size:11px;font-weight:500">Off</span></div>
+      <div style="margin-left:auto;font-size:11px;color:var(--dim)">Diagnostics</div>
+    </div>
+    <div style="flex:1;min-height:0;display:flex">
+      <div style="flex:1;min-width:0;padding:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <h3 style="margin:0;font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Peers on the network</h3>
+          <span style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:4px;border:1px solid var(--edge);color:var(--muted);font-size:11px;font-weight:500"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-users"></use></svg>0 online</span>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--edge);border-radius:10px;height:252px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:32px">
+          <div style="width:48px;height:48px;border-radius:10px;background:var(--raised);border:1px solid var(--edge);display:grid;place-items:center;color:var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-net"></use></svg></div>
+          <div>
+            <div style="font-size:14px;font-weight:500;color:var(--dim)">Listening for peers…</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px;max-width:320px;line-height:17px">LANTern is broadcasting over mDNS. If a device is on another subnet, add it from the Network panel.</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;border-radius:6px;background:var(--gold);color:#1a1206;font-size:12px;font-weight:600;box-shadow:0 0 12px rgba(245,166,35,.25)">Look again</span>
+            <span style="height:32px;padding:0 12px;display:inline-flex;align-items:center;border-radius:6px;color:var(--dim);font-size:12px">Open Network panel</span>
+          </div>
+        </div>
+      </div>
+      <aside style="width:264px;flex-shrink:0;border-left:1px solid var(--edge);background:rgba(20,25,33,.5);display:flex;flex-direction:column">
+        <div style="height:44px;padding:0 16px;display:flex;align-items:center;border-bottom:1px solid var(--edge)"><span style="font-size:11px;font-weight:500;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)">Activity</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:32px">
+          <div style="width:48px;height:48px;border-radius:10px;background:var(--raised);border:1px solid var(--edge);display:grid;place-items:center;color:var(--muted)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-activity"></use></svg></div>
+          <div><div style="font-size:14px;font-weight:500;color:var(--dim)">Nothing yet</div><div style="font-size:12px;color:var(--muted);margin-top:4px;line-height:17px">Transfers, calls and peers joining show up here.</div></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+</div>
+
+<p class="dv-next">Next from me: Files, Theatre, Games and the call overlay as built, then turn 2 — the peer card and the relay/NAT path taken apart. Say the word if you'd rather I jump straight to the new directions.</p>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const LAYER = {
+  direct: {label:'Direct', icon:'#i-radio', bg:'rgba(57,217,200,.12)', bd:'rgba(57,217,200,.4)', fg:'#39D9C8'},
+  routed: {label:'Routed', icon:'#i-route', bg:'rgba(57,217,200,.12)', bd:'rgba(57,217,200,.4)', fg:'#39D9C8'},
+  upnp:   {label:'UPnP',   icon:'#i-door',  bg:'rgba(245,166,35,.12)', bd:'rgba(245,166,35,.4)', fg:'#F5A623'},
+  relayed:{label:'Relayed',icon:'#i-repeat',bg:'rgba(245,166,35,.12)', bd:'rgba(245,166,35,.4)', fg:'#F5A623'},
+  manual: {label:'Manual', icon:'#i-hand',  bg:'#1C2330',              bd:'#252E3F',             fg:'#8C97AE'},
+};
+const GLYPH = {windows:'🪟', linux:'🐧', macos:'🍎', android:'🤖'};
+const STATUS = {available:'#39D9C8', busy:'#F5A623', 'in-game':'#9B8CFF', dnd:'#4B566A', offline:'#4B566A'};
+
+const RAW = [
+  {name:'Nadia', os:'macos', color:'#39D9C8', emoji:'🦊', layer:'direct', ip:'192.168.1.24', lat:'1.8', status:'available', scope:'local'},
+  {name:'Ravi', os:'windows', color:'#F5A623', emoji:'🎧', layer:'direct', ip:'192.168.1.31', lat:'2.4', status:'busy', scope:'local'},
+  {name:'Studio-PC', os:'linux', color:'#9B8CFF', emoji:'🖥', layer:'upnp', ip:'10.0.4.12', lat:'8.6', status:'available', scope:'downstream'},
+  {name:'Tomas', os:'android', color:'#E05C5C', emoji:'🚀', layer:'relayed', ip:'10.0.4.88', lat:'34.2', status:'in-game', scope:'upstream'},
+  {name:'Workshop', os:'linux', color:'#7BD88F', emoji:'🔧', layer:'routed', ip:'192.168.5.9', lat:'11.3', status:'available', scope:'local'},
+];
+
+function latColor(ms) { return ms < 5 ? '#39D9C8' : ms < 25 ? '#F5A623' : '#E05C5C'; }
+
+function shape(p) {
+  const L = LAYER[p.layer];
+  const scope = p.scope === 'upstream'
+    ? {scopeLabel:'Upstream', scopeIcon:'#i-up'}
+    : p.scope === 'downstream'
+      ? {scopeLabel:'Downstream', scopeIcon:'#i-down'}
+      : {scopeLabel:'', scopeIcon:'#i-up'};
+  return {
+    ...p, ...scope,
+    bgGrad: `linear-gradient(145deg, ${p.color}33, ${p.color}18)`,
+    bd: `${p.color}66`,
+    statusColor: STATUS[p.status],
+    glyph: GLYPH[p.os] || '💻',
+    layerLabel: L.label, layerIcon: L.icon, layerBg: L.bg, layerBd: L.bd, layerFg: L.fg,
+    latColor: latColor(parseFloat(p.lat)),
+    addr: `${p.ip}:7979`,
+  };
+}
+
+const ACTIVITY = [
+  {icon:'#i-send', text:'Sent harbour-cut-v4.mov to Nadia', meta:'2m ago · Nadia'},
+  {icon:'#i-users', text:'Workshop joined the network', meta:'6m ago · Workshop'},
+  {icon:'#i-crown', text:'Tomas started a game of chess', meta:'11m ago · Tomas'},
+  {icon:'#i-phone', text:'Voice call with Ravi ended · 14:02', meta:'24m ago · Ravi'},
+  {icon:'#i-msg', text:'Ravi: "grabbing the raws now"', meta:'31m ago · Ravi'},
+  {icon:'#i-send', text:'Received Q3-site-backup.zip from Office-NAS', meta:'52m ago'},
+  {icon:'#i-repeat', text:'Tomas fell back to the relay hub', meta:'1h ago · Tomas'},
+];
+
+const HOP = {
+  direct: {has:false, icon:'#i-radio', label:'', sentence:'Direct on this subnet'},
+  routed: {has:true, icon:'#i-router', label:'Router', sentence:'Via router'},
+  upnp:   {has:true, icon:'#i-door', label:'UPnP map', sentence:'Via UPnP port map'},
+  relayed:{has:true, icon:'#i-repeat', label:'This hub', sentence:'Relayed through hub'},
+  manual: {has:true, icon:'#i-hand', label:'Manual', sentence:'Manually added'},
+};
+const STATUS_LABEL = {available:'available', busy:'busy', 'in-game':'in a game', dnd:'do not disturb', offline:'offline'};
+const LOSS = {Nadia:'0%', Ravi:'0%', 'Studio-PC':'0.1%', Tomas:'1.4%', Workshop:'0%'};
+
+function shapeV2(p) {
+  const h = HOP[p.layer];
+  const ms = parseFloat(p.lat);
+  const warn = p.layer === 'relayed';
+  const goldish = p.layer === 'relayed' || p.layer === 'upnp';
+  return {
+    name: p.name, emoji: p.emoji, addr: `${p.ip}:7979`, lat: p.lat, loss: LOSS[p.name] || '0%',
+    glyph: GLYPH[p.os] || '💻',
+    bgGrad: `linear-gradient(145deg, ${p.color}33, ${p.color}18)`,
+    bd: `${p.color}66`,
+    statusColor: STATUS[p.status], statusLabel: STATUS_LABEL[p.status],
+    hasHop: h.has, hopIcon: h.icon, hopLabel: h.label, pathSentence: h.sentence,
+    pathLabel: p.name.split(/[-\s]/)[0],
+    hopBg: goldish ? 'rgba(245,166,35,.12)' : '#1C2330',
+    hopBd: goldish ? 'rgba(245,166,35,.4)' : '#252E3F',
+    hopFg: goldish ? '#F5A623' : '#8C97AE',
+    lineColor: warn ? '#F5A623' : '#39D9C8',
+    lineColorM: warn ? '#ec3013' : '#201e1d',
+    latColor: latColor(ms), latColorM: ms > 25 ? '#ec3013' : '#201e1d',
+    rowBg: warn ? 'rgba(245,166,35,.04)' : 'transparent',
+    rowBgM: warn ? 'rgba(236,48,19,.05)' : 'transparent',
+  };
+}
+
+const REACH_ROWS = [
+  {icon:'#i-globe', label:'NAT type', detail:'Carrier NAT behind your own router', value:'Double', fg:'#F5A623', fgM:'#ec3013'},
+  {icon:'#i-door', label:'Port 7979', detail:'Mapped automatically by UPnP', value:'Open', fg:'#39D9C8', fgM:'#201e1d'},
+  {icon:'#i-repeat', label:'Relaying for', detail:'Tomas · 2.1 MB/s through this hub', value:'1 peer', fg:'#F5A623', fgM:'#ec3013'},
+  {icon:'#i-lock', label:'Encryption', detail:'Per-peer keys, no traffic leaves the LAN', value:'On', fg:'#39D9C8', fgM:'#201e1d'},
+];
+
+const ACTIVITY_SHORT = [
+  {icon:'#i-send', text:'Sent harbour-cut-v4.mov to Nadia', ago:'2m'},
+  {icon:'#i-users', text:'Workshop joined the network', ago:'6m'},
+  {icon:'#i-crown', text:'Tomas started a game of chess', ago:'11m'},
+  {icon:'#i-repeat', text:'Tomas fell back to the relay hub', ago:'1h'},
+];
+
+const TRANSFERS = [
+  {file:'harbour-cut-v4.mov', peer:'Nadia', dir:'up', size:'4.2 GB', pct:'62%', eta:'3m 10s', rate:'14.8 MB/s', kindIcon:'#i-film', path:'direct'},
+  {file:'raws-2024-06-14.zip', peer:'Ravi', dir:'up', size:'880 MB', pct:'91%', eta:'22s', rate:'3.6 MB/s', kindIcon:'#i-file', path:'direct'},
+  {file:'session-notes.pdf', peer:'Tomas', dir:'down', size:'2.4 MB', pct:'34%', eta:'1m 04s', rate:'2.1 MB/s', kindIcon:'#i-file', path:'relayed'},
+  {file:'kit-photos (214 files)', peer:'Workshop', dir:'down', size:'1.1 GB', pct:'100%', eta:'done', rate:'—', kindIcon:'#i-image', path:'routed'},
+  {file:'soundtrack-stems.wav', peer:'Studio-PC', dir:'up', size:'620 MB', pct:'0%', eta:'queued', rate:'—', kindIcon:'#i-music', path:'upnp'},
+];
+const PATH_WORD = {direct:'Direct', routed:'Via router', relayed:'Relayed via hub', upnp:'UPnP map'};
+const PATH_ICON = {direct:'#i-radio', routed:'#i-router', relayed:'#i-repeat', upnp:'#i-door'};
+
+const SHARES = [
+  {folder:'Harbour edit', owner:'Nadia', count:'38 files', emoji:'🦊', color:'#39D9C8'},
+  {folder:'Board game rules', owner:'Ravi', count:'12 files', emoji:'🎧', color:'#F5A623'},
+  {folder:'Media library', owner:'Studio-PC', count:'214 files', emoji:'🖥', color:'#9B8CFF'},
+  {folder:'Workshop scans', owner:'Workshop', count:'61 files', emoji:'🔧', color:'#7BD88F'},
+];
+
+const ROOM = [
+  {name:'Priya (you)', emoji:'🏮', color:'#F5A623', drift:'In sync · host', driftColor:'#8C97AE', icon:'#i-crown'},
+  {name:'Nadia', emoji:'🦊', color:'#39D9C8', drift:'In sync · 0.1 s', driftColor:'#39D9C8', icon:'#i-radio'},
+  {name:'Tomas', emoji:'🚀', color:'#E05C5C', drift:'2.4 s behind · relayed', driftColor:'#E05C5C', icon:'#i-repeat'},
+];
+
+const UP_NEXT = [
+  {title:'Harbour Lights · Ep 4', meta:'Studio-PC · 1080p · 2.1 GB', art:'linear-gradient(150deg,#2b3a52,#16202f)'},
+  {title:'The Cartographer', meta:'Office-NAS · 4K · 8.4 GB', art:'linear-gradient(150deg,#4a3550,#221a2c)'},
+  {title:'Field Recordings 1972', meta:'Nadia · 720p · 640 MB', art:'linear-gradient(150deg,#3d4a2e,#1d2418)'},
+];
+
+const CALL = [
+  {name:'Priya (you)', emoji:'🏮', color:'#F5A623', path:'direct', lat:'—', mic:true, warn:false},
+  {name:'Nadia', emoji:'🦊', color:'#39D9C8', path:'direct', lat:'1.8', mic:true, warn:false},
+  {name:'Ravi', emoji:'🎧', color:'#F5A623', path:'direct', lat:'2.4', mic:false, warn:false},
+  {name:'Tomas', emoji:'🚀', color:'#E05C5C', path:'relayed', lat:'34', mic:true, warn:true},
+];
+
+const LOBBIES = [
+  {name:'Chess', state:'in progress · move 18', players:'Tomas vs Nadia · Ravi watching', lat:'34 ms', icon:'#i-crown', tint:'rgba(155,140,255,.12)', tintBd:'rgba(155,140,255,.4)', fg:'#9B8CFF', cta:'Watch', ctaBg:'#1C2330', ctaBd:'#252E3F', ctaFg:'#8C97AE'},
+  {name:'Codenames', state:'waiting for 2 more', players:'Priya, Workshop · 2 of 4 seats', lat:'2 ms', icon:'#i-layers', tint:'rgba(57,217,200,.12)', tintBd:'rgba(57,217,200,.4)', fg:'#39D9C8', cta:'Take a seat', ctaBg:'#F5A623', ctaBd:'#F5A623', ctaFg:'#1a1206'},
+  {name:'Cards on the table', state:'idle · no table open', players:'Any four peers on the hub', lat:'—', icon:'#i-spade', tint:'#1C2330', tintBd:'#252E3F', fg:'#8C97AE', cta:'Open', ctaBg:'transparent', ctaBd:'#252E3F', ctaFg:'#8C97AE'},
+];
+
+class Component extends DCLogic {
+  renderVals() {
+    const transfers = TRANSFERS.map(t => ({
+      ...t,
+      dirWord: t.dir === 'up' ? 'to' : 'from',
+      dirColor: t.dir === 'up' ? '#39D9C8' : '#F5A623',
+      pathWord: PATH_WORD[t.path], pathIcon: PATH_ICON[t.path],
+      pathColor: t.path === 'relayed' ? '#F5A623' : '#8C97AE',
+      barColor: t.pct === '100%' ? '#39D9C8' : t.path === 'relayed' ? '#F5A623' : '#39D9C8',
+      rateColor: t.rate === '—' ? '#4B566A' : '#E6EAF3',
+      actionIcon: t.eta === 'done' ? '#i-folder' : '#i-pause',
+    }));
+    const withAvatar = a => ({...a, bgGrad:`linear-gradient(145deg, ${a.color}33, ${a.color}18)`, bd:`${a.color}66`});
+    const callTiles = CALL.map(c => ({
+      ...withAvatar(c),
+      pathWord: c.path === 'relayed' ? 'Relayed' : 'Direct',
+      pathIcon: PATH_ICON[c.path],
+      chipFg: c.path === 'relayed' ? '#F5A623' : '#39D9C8',
+      chipBd: c.path === 'relayed' ? 'rgba(245,166,35,.4)' : 'rgba(57,217,200,.35)',
+      tileBg: c.path === 'relayed' ? 'linear-gradient(160deg,#241d10,#12100b)' : 'linear-gradient(160deg,#141921,#0d1117)',
+      tileBd: c.path === 'relayed' ? 'rgba(245,166,35,.35)' : '#252E3F',
+      micIcon: c.mic ? '#i-mic' : '#i-micoff',
+      micColor: c.mic ? '#39D9C8' : '#4B566A',
+    }));
+    return {
+      transfers, shares: SHARES.map(withAvatar), room: ROOM.map(withAvatar),
+      upNext: UP_NEXT, callTiles, lobbies: LOBBIES,
+      peers: RAW.map(shape), peersMobile: RAW.slice(0, 3).map(shape), activity: ACTIVITY,
+      peersV2: RAW.map(shapeV2), reachRows: REACH_ROWS, activityShort: ACTIVITY_SHORT,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

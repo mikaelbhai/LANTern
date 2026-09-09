@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --c-base: 12 15 20;
+    --c-surface: 20 25 33;
+    --c-raised: 28 35 48;
+    --c-edge: 37 46 63;
+    --c-edge-strong: 46 59 82;
+    --c-gold: 245 166 35;
+    --c-glow: 255 209 122;
+    --c-cyan: 57 217 200;
+    --c-danger: 224 92 92;
+    --c-txt: 230 234 243;
+    --c-dim: 140 151 174;
+    --c-muted: 75 86 106;
+    --density: 1;
+  }
+
+  html.light {
+    --c-base: 247 248 251;
+    --c-surface: 255 255 255;
+    --c-raised: 241 244 249;
+    --c-edge: 223 228 238;
+    --c-edge-strong: 199 208 224;
+    --c-gold: 199 124 8;
+    --c-glow: 232 160 40;
+    --c-cyan: 13 148 136;
+    --c-danger: 197 51 51;
+    --c-txt: 22 28 39;
+    --c-dim: 88 100 122;
+    --c-muted: 138 149 168;
+  }
+
+  * {
+    @apply border-edge;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-base text-txt font-sans antialiased;
+    font-size: 14px;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgb(var(--c-edge));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--c-muted));
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--c-dim));
+  }
+
+  ::selection {
+    background: rgb(var(--c-gold) / 0.3);
+    color: rgb(var(--c-txt));
+  }
+
+  input,
+  textarea {
+    @apply bg-transparent outline-none;
+  }
+
+  [contenteditable]:empty:before {
+    content: attr(data-placeholder);
+    @apply text-muted;
+    pointer-events: none;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-surface border border-edge rounded-card;
+  }
+
+  .glass {
+    background: rgb(var(--c-base) / 0.88);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .focus-gold {
+    @apply outline-none ring-1 ring-gold/60 shadow-glow;
+  }
+
+  .label {
+    @apply text-2xs font-medium uppercase text-dim;
+    letter-spacing: 0.06em;
+  }
+
+  .hairline {
+    @apply border-b border-edge;
+  }
+
+  .scroll-y {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+@layer components {
+  .lantern-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgb(var(--c-gold));
+    border: 2px solid rgb(var(--c-base));
+    box-shadow: 0 0 8px rgb(var(--c-gold) / 0.5);
+    cursor: pointer;
+  }
+  .lantern-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgb(var(--c-gold));
+    border: 2px solid rgb(var(--c-base));
+    cursor: pointer;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .safe-b {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /*
+   * Text is not selectable by default.
+   *
+   * A desktop app does not let you drag-select its own chrome, and on a phone
+   * a long press on a label bringing up a selection handle is the clearest
+   * sign something is a web page wearing an app's clothes. Selection is turned
+   * back on where it is the point: message bodies, code, and anything typed
+   * into.
+   */
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    /* Stops the blue flash on tap in the Android WebView. */
+    -webkit-tap-highlight-color: transparent;
+    /* A pull-down on a full-height app should not bounce the whole page. */
+    overscroll-behavior: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'],
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .safe-t {
+    /* Android draws the webview under the status bar (edge-to-edge), and the
+       constant is what the runtime fills in when it knows the inset. The
+       fallback is not 0: a phone that reports nothing still has a status bar
+       over the top of the header, and 0 puts the title underneath it. */
+    padding-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
+  }
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+html[data-density='compact'] {
+  --density: 0.72;
+}
+html[data-density='spacious'] {
+  --density: 1.4;
+}
+
+html[data-font='small'] body {
+  font-size: 13px;
+}
+html[data-font='large'] body {
+  font-size: 15.5px;
+}
