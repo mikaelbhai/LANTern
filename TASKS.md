@@ -58,7 +58,19 @@ explicit instruction: everything else works first.
 
 ## Later
 
-- [ ] **Games** — last, once everything above is working
+- [x] **Games** — all five were already built (chess, klondike, freecell,
+      spider, pyramid) and are now verified rather than assumed:
+      - Chess passes perft to depth 4 (20 / 400 / 8,902 / 197,281 leaves,
+        matching the published values), which exercises castling, en passant,
+        promotion and pinned pieces together. Fool's mate is scored as mate
+        with zero legal replies.
+      - Every deal is a complete deck: 52 distinct cards for Klondike,
+        FreeCell and Pyramid; 104 with unique ids for all three Spider
+        difficulties. Numbered deals reproduce exactly, and the daily deal is
+        stable through the day and changes at midnight.
+
+      What is *not* verified is play by hand — the rules of each solitaire as
+      experienced, rather than the deck and engine underneath them.
 
 ## Open question
 
