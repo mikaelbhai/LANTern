@@ -111,8 +111,22 @@ export interface InlineOpts {
   highlight?: string;
 }
 
+/**
+ * Everything that is not plain text, in one pass.
+ *
+ * Single-marker emphasis has to know what came before it — `a*b*c` is not
+ * italic — and the obvious way to write that is a lookbehind. It cannot be:
+ * WebKit only learned lookbehind in Safari 16.4, and on anything older the
+ * expression is a *syntax* error, which means the module never parses, which
+ * means the whole application is a black window while everything behind it
+ * carries on running. That is exactly how it presented.
+ *
+ * So the character before is consumed as part of the match instead, and
+ * handed back by `renderInline`. Groups: 1 is everything unambiguous, 2 and 3
+ * are the lead and the token for `*this*`, 4 and 5 the same for `_this_`.
+ */
 const INLINE_RE =
-  /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|(?<![*\w])\*(?!\s)[^*]+\*|(?<![_\w])_(?!\s)[^_]+_|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|(?:https?|file|lantern):\/\/[^\s<>()]+|@[A-Za-z0-9_\-.]+)/g;
+  /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)\s]+\)|(?:https?|file|lantern):\/\/[^\s<>()]+|@[A-Za-z0-9_\-.]+)|(^|[^*\w])(\*(?!\s)[^*]+\*)|(^|[^_\w])(_(?!\s)[^_]+_)/g;
 
 function renderHighlighted(text: string, term: string, key: string): React.ReactNode {
   if (!term) return text;
@@ -150,8 +164,13 @@ export function renderInline(src: string, opts: InlineOpts = {}): React.ReactNod
   };
 
   for (const m of src.matchAll(INLINE_RE)) {
-    const tok = m[0];
-    const at = m.index ?? 0;
+    // A single-marker match carries the character before it; that character
+    // is ordinary text and belongs to whatever came before.
+    const lead = m[1] !== undefined ? '' : (m[3] !== undefined ? (m[2] ?? '') : (m[4] ?? ''));
+    const tok = m[1] ?? m[3] ?? m[5] ?? '';
+    if (!tok) continue;
+
+    const at = (m.index ?? 0) + lead.length;
     plain(src.slice(last, at));
     last = at + tok.length;
     const key = `i${n++}`;

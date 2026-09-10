@@ -9,6 +9,83 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!--
+      Something to look at when the interface does not start.
+
+      A build that will not parse on an older engine leaves a black window
+      while everything behind it carries on running — the services are up, the
+      device is discoverable, and there is nothing on screen and nothing in
+      any log the person can reach. That happened, and the only way to find
+      out why was to have the source and a second machine.
+
+      This is deliberately old-fashioned JavaScript: no arrow functions, no
+      template strings, no const. It has to run on precisely the engines that
+      are too old for the bundle, or it is useless exactly when it is needed.
+    -->
+    <script>
+      (function () {
+        var problems = [];
+
+        function note(what) {
+          if (what && problems.indexOf(what) === -1) problems.push(what);
+        }
+
+        window.addEventListener('error', function (e) {
+          note(e && (e.message || (e.error && e.error.message)) || 'Script error');
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          note((r && (r.message || String(r))) || 'Unhandled rejection');
+        });
+
+        function report() {
+          var root = document.getElementById('root');
+          // Anything on screen means it started; nothing to say.
+          if (!root || root.childNodes.length) return;
+
+          var detail = problems.length ? problems.join('\n') : 'No error was reported.';
+          var wrap = document.createElement('div');
+          wrap.setAttribute(
+            'style',
+            'position:fixed;inset:0;overflow:auto;padding:28px;background:#0C0F14;' +
+              'color:#E6E8EE;font:13px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif',
+          );
+
+          var title = document.createElement('div');
+          title.setAttribute('style', 'font-size:17px;font-weight:600;margin-bottom:6px;color:#F5A623');
+          title.appendChild(document.createTextNode('LANTern could not start its interface'));
+
+          var lead = document.createElement('p');
+          lead.setAttribute('style', 'margin:0 0 16px;max-width:52ch;color:#9AA3B2');
+          lead.appendChild(
+            document.createTextNode(
+              'The network side is probably still running — other devices may well be ' +
+                'able to see this one. It is the screen that failed. Usually that means ' +
+                'this build is newer than the system it is running on.',
+            ),
+          );
+
+          var pre = document.createElement('pre');
+          pre.setAttribute(
+            'style',
+            'margin:0;padding:12px;white-space:pre-wrap;word-break:break-word;' +
+              'background:#151A22;border:1px solid #262C38;border-radius:8px;' +
+              'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#C4CCDA',
+          );
+          pre.appendChild(document.createTextNode(detail + '\n\n' + navigator.userAgent));
+
+          wrap.appendChild(title);
+          wrap.appendChild(lead);
+          wrap.appendChild(pre);
+          root.appendChild(wrap);
+        }
+
+        // Long enough that a slow start is not mistaken for a broken one.
+        window.setTimeout(report, 5000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
