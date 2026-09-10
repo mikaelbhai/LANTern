@@ -31,6 +31,7 @@ import { useStore } from '../../lib/store';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
 import { useLeaveGuard } from './LeaveGuard';
+import { useResult } from './useResult';
 import { usePlayerNames } from './turns';
 
 /** The palette. Flat colours, no gradients — this is meant to look printed. */
@@ -210,6 +211,19 @@ export function Crossy({ onExit }: { onExit: () => void }) {
       alive: id === myId ? me.current.alive : (ghosts.current[id]?.alive ?? true),
     }))
     .sort((a, b) => b.best - a.best);
+
+  // A race has no winner until the last runner is down: somebody still out
+  // there can still go further. So a run that ends while others are going
+  // counts as played, with the rows as its score, and nobody has won it yet.
+  const everyoneDown = standings.every((r) => !r.alive);
+  useResult({
+    game: 'crossy',
+    matchId: active?.id ?? 'crossy:solo',
+    over: dead,
+    players,
+    winnerId: everyoneDown && standings.length ? standings[0].id : null,
+    points: Object.fromEntries(standings.map((r) => [r.id, r.best])),
+  });
 
   return (
     <>

@@ -33,6 +33,7 @@ import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
 import { useLeaveGuard } from './LeaveGuard';
 import { useHostedGame } from './hosted';
+import { useResult } from './useResult';
 import { usePlayerNames } from './turns';
 
 const TEAM_COLOURS = ['#F5A623', '#39D9C8', '#9B8CFF', '#7BD88F'];
@@ -197,6 +198,18 @@ export function Sequence({ onExit }: { onExit: () => void }) {
     send({ square, card: picked });
     setPicked(null);
   };
+
+  useResult({
+    game: 'sequence',
+    matchId: active?.id ?? null,
+    over: board.winner !== null,
+    players,
+    // Seats map onto teams, so the seat that won names the winner.
+    winnerId: board.winner !== null ? (players[board.winner] ?? null) : null,
+    points: Object.fromEntries(
+      players.map((id, seat) => [id, board.sequences[seat] ?? 0]),
+    ),
+  });
 
   const status =
     board.winner !== null

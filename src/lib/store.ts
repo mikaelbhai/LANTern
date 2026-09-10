@@ -4,6 +4,8 @@ import { sfx } from './audio';
 import * as rtc from './webrtc';
 import { notifyMessage } from './ringer';
 import { gameName } from './games';
+import { emptyScores, record } from './scores';
+import type { Result, Scores } from './scores';
 import type {
   ActivityItem,
   Attachment,
@@ -201,6 +203,10 @@ interface State {
    * playing.
    */
   nearbyGame: GameSession | null;
+  /** Wins and points, kept between sessions. */
+  scores: Scores;
+  /** Writes down a finished match. Safe to call more than once for the same one. */
+  recordResult: (r: Result) => void;
   /** Ask the host of `nearbyGame` to deal you in next time. */
   joinNextMatch: () => void;
   leaveNextMatch: () => void;
@@ -283,6 +289,10 @@ function loadPersisted(): Partial<State> {
       saved: p.saved ?? [],
       callLog: p.callLog ?? [],
       activity: p.activity ?? [],
+      // Whitelisted like the rest: anything not named here is written on save
+      // and silently dropped on load, which is a record that resets every
+      // time the application starts.
+      scores: p.scores ?? emptyScores(),
     };
   } catch {
     return {};
@@ -316,6 +326,7 @@ function persist(s: State) {
           saved: s.saved,
           callLog: s.callLog.slice(-200),
           activity: s.activity.slice(0, 100),
+          scores: s.scores,
         }),
       );
     } catch {
@@ -431,6 +442,24 @@ export const useStore = create<State>((set, get) => {
     pendingOffer: null,
     clearPendingOffer: () => set({ pendingOffer: null }),
     nearbyGame: null,
+    scores: persisted.scores ?? emptyScores(),
+
+    recordResult(result) {
+      const me = get().profile.id;
+      const peers = get().peers;
+      // Names are captured now so a record still reads properly after the
+      // person it belongs to has gone home.
+      const names: Record<string, string> = { ...(result.names ?? {}) };
+      for (const id of result.players) {
+        if (names[id]) continue;
+        names[id] = id === me ? get().profile.name || 'You' : (peers[id]?.name ?? 'Someone');
+      }
+
+      const next = record(get().scores, { ...result, names }, me);
+      if (next === get().scores) return;
+      set({ scores: next });
+      persist(get());
+    },
 
     joinNextMatch() {
       const session = get().nearbyGame;

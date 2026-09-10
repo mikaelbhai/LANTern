@@ -29,6 +29,7 @@ import { cn } from '../../lib/utils';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
 import { useLeaveGuard } from './LeaveGuard';
+import { useResult } from './useResult';
 import { useTurnGame, usePlayerNames } from './turns';
 
 const SEAT_COLOURS = ['#F5A623', '#39D9C8', '#9B8CFF', '#7BD88F'];
@@ -80,6 +81,18 @@ export function Dots({ onExit }: { onExit: () => void }) {
   };
 
   const winners = over ? leaders(state) : [];
+
+  useResult({
+    game: 'dots',
+    matchId: active?.id ?? null,
+    over,
+    players,
+    // A shared lead is nobody's win.
+    winnerId: winners.length === 1 ? (players[winners[0]] ?? null) : null,
+    points: Object.fromEntries(
+      players.map((id, seat) => [id, state.scores[seat] ?? 0]),
+    ),
+  });
   const status = over
     ? winners.length > 1
       ? 'A tie'

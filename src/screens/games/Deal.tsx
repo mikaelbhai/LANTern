@@ -30,6 +30,7 @@ import { GameShell } from './GameShell';
 import { useHostedGame } from './hosted';
 import { useLeaveGuard } from './LeaveGuard';
 import { usePlayerNames } from './turns';
+import { useResult } from './useResult';
 
 type View = ReturnType<typeof G.view>;
 type ViewPlayer = View['players'][number];
@@ -375,6 +376,18 @@ export function Deal({ onExit }: { onExit: () => void }) {
     : charge && Object.keys(charge.owed).length
       ? Object.keys(charge.owed).map((id) => names[id] ?? 'someone').join(' and ')
       : null;
+
+  useResult({
+    game: 'deal',
+    matchId: active?.id ?? null,
+    over: !!view.winner,
+    players,
+    winnerId: view.winner ?? null,
+    // Complete sets: the thing the whole game is counted in.
+    points: Object.fromEntries(
+      view.players.map((p) => [p.id, G.completedColours(p).length]),
+    ),
+  });
 
   const status = view.winner
     ? `${names[view.winner] ?? 'Someone'} wins`

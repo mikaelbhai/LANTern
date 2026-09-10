@@ -30,6 +30,7 @@ import { useStore } from '../../lib/store';
 import { useLocalStorage } from '../../lib/hooks';
 import { sfx } from '../../lib/audio';
 import { cn, formatDuration } from '../../lib/utils';
+import { useResult } from './useResult';
 
 type TimeControlId = 'untimed' | 'rapid' | 'blitz' | 'bullet' | 'custom';
 
@@ -106,6 +107,20 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
   }, [tc.base]);
 
   const gameOver = outcome.kind !== 'ongoing';
+
+  useResult({
+    game: 'chess',
+    // Chess is challenged rather than hosted, so the pairing is the match.
+    matchId: opponentId ? `chess:${opponentId}` : null,
+    over: gameOver,
+    players: opponentId ? [profile.id, opponentId] : [],
+    winnerId:
+      outcome.kind === 'checkmate' || outcome.kind === 'timeout'
+        ? outcome.winner === myColor
+          ? profile.id
+          : (opponentId ?? null)
+        : null,
+  });
 
   // Clock ticks only once both sides have moved, matching normal chess practice.
   React.useEffect(() => {

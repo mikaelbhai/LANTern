@@ -23,6 +23,7 @@ import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
 import { GAME_NAMES } from '../lib/games';
+import { standings } from '../lib/scores';
 import type { GameKind, Peer } from '../lib/types';
 
 /**
@@ -46,6 +47,15 @@ const GAMES: {
   seats: '2' | 'party';
   /** How many can play, written out. Not every party game seats the same. */
   seatsLabel: string;
+  /**
+   * Whether it is worth playing on your own.
+   *
+   * Only Crossy Road is: it is a race against a road, and racing it alone is
+   * the same game with fewer people in it. Everything else needs an opponent.
+   * A board you play both sides of is not chess, and a card game against
+   * nobody is one you have already won.
+   */
+  solo?: boolean;
   /**
    * A hard limit, where one exists.
    *
@@ -92,6 +102,7 @@ const GAMES: {
     icon: Footprints,
     seats: 'party',
     seatsLabel: 'Two to four',
+    solo: true,
     accent: '#F7E14A',
   },
   {
@@ -251,14 +262,12 @@ function GamesHub() {
                   <p className="text-2xs text-muted leading-relaxed flex-1 mb-3">{g.blurb}</p>
 
                   <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      full
-                      onClick={() => setActiveGame({ kind: g.id })}
-                    >
-                      Play
-                    </Button>
+                    {/* Only where playing alone is actually a game. */}
+                    {g.solo && (
+                      <Button size="sm" full onClick={() => setActiveGame({ kind: g.id })}>
+                        On your own
+                      </Button>
+                    )}
                     {/*
                       Chess is a game against one person; the rest are races
                       against everyone. So chess asks who, and the others just
@@ -266,12 +275,19 @@ function GamesHub() {
                       a dialog that earns nothing.
                     */}
                     {g.id === 'chess' ? (
-                      <Button size="sm" full onClick={() => setChallenge(g.id)}>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        full
+                        disabled={playable.length === 0}
+                        onClick={() => setChallenge(g.id)}
+                      >
                         Challenge
                       </Button>
                     ) : (
                       <Button
                         size="sm"
+                        variant="primary"
                         full
                         icon={<Users size={13} />}
                         onClick={() => void playTogether(g.id)}
@@ -281,10 +297,20 @@ function GamesHub() {
                       </Button>
                     )}
                   </div>
+
+                  {playable.length === 0 && (
+                    <p className="text-2xs text-muted mt-1.5">
+                      {g.solo
+                        ? 'Nobody else is around — you can still race the road.'
+                        : 'Nobody else is on the network yet.'}
+                    </p>
+                  )}
                 </motion.div>
               );
             })}
           </div>
+
+          <Records />
         </div>
 
         <Lobby onChallenge={(peerId) => setActiveGame({ kind: 'chess', opponentId: peerId })} />
@@ -298,6 +324,81 @@ function GamesHub() {
           setChallenge(null);
         }}
       />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- Records */
+
+/**
+ * Who has been winning.
+ *
+ * The interesting number is never who won the last one — everybody watched
+ * that — but who has been winning all evening. Kept on this device, from the
+ * games this device saw, which is said out loud rather than presented as a
+ * league table it cannot actually be.
+ */
+function Records() {
+  const scores = useStore((s) => s.scores);
+  const me = useStore((s) => s.profile.id);
+  const table = standings(scores);
+
+  if (!table.length) return null;
+
+  return (
+    <div className="mt-5">
+      <SectionTitle>Records</SectionTitle>
+      <div className="panel p-3">
+        <ul className="space-y-1">
+          {table.slice(0, 8).map((row, i) => (
+            <li
+              key={row.id}
+              className={cn(
+                'flex items-center gap-2 px-2 h-9 rounded-input',
+                row.id === me && 'bg-gold/10 border border-gold/25',
+              )}
+            >
+              <span className="text-2xs font-mono text-muted w-4 shrink-0">{i + 1}</span>
+              <Avatar name={row.name} size={20} />
+              <span className="text-xs truncate flex-1">{row.id === me ? 'You' : row.name}</span>
+              <span className="text-2xs text-muted">{row.played} played</span>
+              <Badge tone={row.won > 0 ? 'gold' : 'muted'}>
+                {row.won} {row.won === 1 ? 'win' : 'wins'}
+              </Badge>
+            </li>
+          ))}
+        </ul>
+
+        <MyGames />
+
+        <p className="text-2xs text-muted leading-relaxed mt-2.5">
+          Counted on this device, from the games it was here for.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** My own record broken down by game, where points mean something. */
+function MyGames() {
+  const byGame = useStore((s) => s.scores.byGame);
+  const rows = Object.entries(byGame).filter(([, t]) => t.played > 0);
+  if (!rows.length) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-edge">
+      <span className="label">Yours, by game</span>
+      <div className="grid gap-1 mt-1.5 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
+        {rows.map(([kind, t]) => (
+          <div key={kind} className="flex items-center gap-1.5 text-2xs">
+            <span className="truncate flex-1 text-dim">{GAME_NAMES[kind as GameKind] ?? kind}</span>
+            <span className="font-mono text-muted">
+              {t.won}/{t.played}
+            </span>
+            {t.points > 0 && <Badge tone="muted">{t.points}</Badge>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

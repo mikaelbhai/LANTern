@@ -22,6 +22,7 @@ import { cn } from '../../lib/utils';
 import { sfx } from '../../lib/audio';
 import { GameShell } from './GameShell';
 import { useLeaveGuard } from './LeaveGuard';
+import { useResult } from './useResult';
 import { useTurnGame, usePlayerNames } from './turns';
 
 /** One colour per seat, in seat order. */
@@ -53,6 +54,14 @@ export function ConnectFour({ onExit }: { onExit: () => void }) {
   const leave = useLeaveGuard(onExit, players.length);
 
   const finished = state.winner !== null || isDraw(state);
+
+  useResult({
+    game: 'connect4',
+    matchId: active?.id ?? null,
+    over: finished,
+    players,
+    winnerId: state.winner !== null ? (players[state.winner] ?? null) : null,
+  });
 
   // A result is worth hearing, once.
   const announced = React.useRef(false);
