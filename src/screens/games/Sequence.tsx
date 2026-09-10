@@ -283,23 +283,27 @@ export function Sequence({ onExit }: { onExit: () => void }) {
                     disabled={!playable}
                     aria-label={square.free ? 'Free corner' : `${rankLabel(square.rank as never)}${square.suit}`}
                     className={cn(
-                      'relative rounded-[3px] border text-[9px] leading-none',
-                      'h-[clamp(24px,3.4vw,44px)] w-[clamp(24px,3.4vw,44px)]',
-                      square.free ? 'bg-gold/15 border-gold/40' : 'bg-surface border-edge',
+                      'relative rounded-[3px] leading-none transition-shadow',
+                      // Card-shaped, because the squares are cards: the real
+                      // board has the deck printed on it twice over.
+                      'w-[clamp(24px,3vw,40px)] h-[clamp(37px,4.7vw,62px)]',
+                      square.free && 'bg-gold/15 border border-gold/40',
                       playable && 'ring-2 ring-gold cursor-pointer',
-                      board.locked[i] && !square.free && 'border-gold/50',
+                      board.locked[i] && !square.free && 'ring-1 ring-gold/50',
                     )}
                   >
                     {!square.free && (
-                      <span
-                        className={cn(
-                          'absolute inset-0 grid place-items-center font-medium',
-                          isRed(square.suit) ? 'text-[#E05C5C]' : 'text-txt/80',
-                        )}
-                      >
-                        {rankLabel(square.rank as never)}
-                        {SUIT_GLYPH[square.suit]}
-                      </span>
+                      <PixelFace
+                        fill
+                        labelled={false}
+                        card={{
+                          id: `sq-${i}`,
+                          rank: square.rank as never,
+                          suit: square.suit,
+                          faceUp: true,
+                        }}
+                        className="absolute inset-0 rounded-[3px] overflow-hidden"
+                      />
                     )}
                     {square.free && (
                       <span className="absolute inset-0 grid place-items-center text-gold">★</span>
@@ -343,7 +347,7 @@ export function Sequence({ onExit }: { onExit: () => void }) {
                           : '0 1px 3px rgba(0,0,0,0.4)',
                     }}
                   >
-                    <PixelFace card={card} width={44} />
+                    <PixelFace card={card} width={44} labelled={false} />
                     {/* What a Jack does, on the card, because the two kinds
                         look identical and do opposite things. */}
                     {(isTwoEyedJack(card) || isOneEyedJack(card)) && (
