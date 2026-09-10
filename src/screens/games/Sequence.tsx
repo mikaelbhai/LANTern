@@ -14,6 +14,7 @@ import { RotateCcw, Trophy } from 'lucide-react';
 
 import { Badge, Button } from '../../components/ui';
 import { dealFrom, isRed, rankLabel, SUIT_GLYPH } from '../../lib/cards';
+import { PixelFace } from '../../lib/pixelcards';
 import type { Card } from '../../lib/cards';
 import {
   BOARD,
@@ -328,19 +329,35 @@ export function Sequence({ onExit }: { onExit: () => void }) {
                     key={card.id}
                     onClick={() => (myTurn ? setPicked(picked?.id === card.id ? null : card) : undefined)}
                     disabled={!myTurn}
+                    aria-label={`${rankLabel(card.rank)}${SUIT_GLYPH[card.suit]}`}
                     className={cn(
-                      'h-11 min-w-[46px] px-2 rounded-input border text-xs font-medium transition-colors',
-                      picked?.id === card.id
-                        ? 'border-gold bg-gold/15 text-gold'
-                        : 'border-edge bg-surface hover:border-edge-strong',
-                      isRed(card.suit) && picked?.id !== card.id && 'text-[#E05C5C]',
-                      dead && 'opacity-50',
+                      'relative rounded-[3px] transition-transform',
+                      myTurn && 'hover:-translate-y-1 cursor-pointer',
+                      picked?.id === card.id && '-translate-y-1.5',
+                      dead && 'opacity-45 saturate-50',
                     )}
+                    style={{
+                      boxShadow:
+                        picked?.id === card.id
+                          ? '0 0 0 2px rgba(245,166,35,0.95), 0 4px 10px rgba(0,0,0,0.45)'
+                          : '0 1px 3px rgba(0,0,0,0.4)',
+                    }}
                   >
-                    {rankLabel(card.rank)}
-                    {SUIT_GLYPH[card.suit]}
-                    {isTwoEyedJack(card) && <span className="block text-[8px] text-dim">wild</span>}
-                    {isOneEyedJack(card) && <span className="block text-[8px] text-dim">remove</span>}
+                    <PixelFace card={card} width={44} />
+                    {/* What a Jack does, on the card, because the two kinds
+                        look identical and do opposite things. */}
+                    {(isTwoEyedJack(card) || isOneEyedJack(card)) && (
+                      <span
+                        className={cn(
+                          'absolute bottom-0 inset-x-0 text-[7px] text-center font-semibold py-[1px]',
+                          isTwoEyedJack(card)
+                            ? 'bg-[#282C4C]/85 text-[#8FD3E0]'
+                            : 'bg-[#C7315A]/85 text-white',
+                        )}
+                      >
+                        {isTwoEyedJack(card) ? 'WILD' : 'REMOVE'}
+                      </span>
+                    )}
                   </button>
                 );
               })}
