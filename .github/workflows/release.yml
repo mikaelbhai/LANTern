@@ -26,6 +26,12 @@ jobs:
   macos:
     runs-on: macos-latest
 
+    # Attaching the .dmg to a release is a write to the repository, and the
+    # default token is read-only. Without this the build succeeds and the
+    # upload 403s at the very last step, which is what happened on v1.1.5.
+    permissions:
+      contents: write
+
     steps:
       - uses: actions/checkout@v7
 
