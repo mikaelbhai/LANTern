@@ -95,10 +95,35 @@ pub async fn reachable_address(state: &AppState, peer_id: &str) -> Option<(Strin
             })
     });
     let (addresses, port) = found?;
+    let address = first_to_answer(addresses, port).await?;
+    Some((address, port))
+}
 
+/// The first of several addresses to answer, asked all at once.
+///
+/// Serially was the obvious way and it was wrong on a real network. An address
+/// that is merely unroutable does not refuse a connection — it swallows it, and
+/// the attempt sits there for the full timeout. Asking one at a time therefore
+/// costs four seconds every time the dead address happens to come first, and
+/// mDNS hands them over in no particular order, so it was four seconds
+/// roughly half the time and instant the other half. Intermittent slowness
+/// with no pattern is close to unreportable.
+///
+/// Asked together, a dead address costs nothing at all: the live one answers
+/// in milliseconds and the rest are dropped mid-flight.
+async fn first_to_answer(addresses: Vec<String>, port: u16) -> Option<String> {
+    let mut probes = tokio::task::JoinSet::new();
     for address in addresses {
-        if get(&address, port, "/shares.json").await.is_ok() {
-            return Some((address, port));
+        probes.spawn(async move {
+            get(&address, port, "/shares.json").await.ok().map(|_| address)
+        });
+    }
+
+    while let Some(finished) = probes.join_next().await {
+        if let Ok(Some(address)) = finished {
+            // Nothing the others could say now matters.
+            probes.abort_all();
+            return Some(address);
         }
     }
     None
@@ -322,19 +347,20 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         if !links.contains(&peer.device_id) {
             continue;
         }
-        // A device can answer on several addresses; the first that responds
-        // is the one this device can actually stream from.
+        // A device can answer on several addresses; the one that responds is
+        // the one this device can actually stream from. Which is found before
+        // fetching anything, rather than by attempting the whole library
+        // against each address in turn.
         let mut addresses = peer.addresses.clone();
         if !peer.ip.is_empty() && !addresses.contains(&peer.ip) {
             addresses.push(peer.ip.clone());
         }
 
         let mut reached = false;
-        for address in addresses {
+        if let Some(address) = first_to_answer(addresses, default_port).await {
             if let Some(items) = fetch_peer(&peer.device_id, &address, default_port).await {
                 remote.extend(items);
                 reached = true;
-                break;
             }
         }
 
@@ -403,5 +429,93 @@ mod rehost_tests {
         );
         rehost(&mut v, "10.0.0.9", 7981);
         assert_eq!(v, "http://10.0.0.9:7981/media/x.mkv?audio=4&codec=E-AC-3&t=2362");
+    }
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::*;
+
+    /// An address that swallows connections rather than refusing them.
+    ///
+    /// TEST-NET-1, reserved by RFC 5737 and routed nowhere, which is the same
+    /// thing a second router on a clashing subnet looks like from here.
+    const BLACK_HOLE: &str = "192.0.2.1";
+
+    /// A server that answers `/shares.json`, standing in for a live peer.
+    async fn live_peer() -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    // The request is read before anything is sent back.
+                    // Closing a socket on Windows while bytes are still
+                    // unread resets the connection, which destroys the reply
+                    // along with them — so the stub would look dead.
+                    let mut scratch = [0u8; 1024];
+                    let _ = socket.read(&mut scratch).await;
+                    let _ = socket
+                        .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n[]")
+                        .await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_dead_address_does_not_hold_up_a_live_one() {
+        let port = live_peer().await;
+
+        // The dead one first, which is the order that used to cost four
+        // seconds. mDNS gives no guarantee about which comes first, so this
+        // was slow about half the time and nobody could say when.
+        let started = std::time::Instant::now();
+        let found = first_to_answer(
+            vec![BLACK_HOLE.to_string(), "127.0.0.1".to_string()],
+            port,
+        )
+        .await;
+        let took = started.elapsed();
+
+        assert_eq!(found.as_deref(), Some("127.0.0.1"), "did not find the live address");
+        assert!(
+            took < TIMEOUT,
+            "waited {took:?} on a dead address before trying the live one",
+        );
+    }
+
+    #[tokio::test]
+    async fn the_order_it_is_given_them_in_makes_no_difference() {
+        let port = live_peer().await;
+        let found = first_to_answer(
+            vec!["127.0.0.1".to_string(), BLACK_HOLE.to_string()],
+            port,
+        )
+        .await;
+        assert_eq!(found.as_deref(), Some("127.0.0.1"));
+    }
+
+    /// Nothing answering is still an answer, and has to arrive rather than
+    /// hang: Theatre says "could not read that device's library" on it.
+    #[tokio::test]
+    async fn nothing_answering_reports_nothing() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dead_port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let found = first_to_answer(vec!["127.0.0.1".to_string()], dead_port).await;
+        assert_eq!(found, None);
+    }
+
+    #[tokio::test]
+    async fn no_addresses_at_all() {
+        assert_eq!(first_to_answer(Vec::new(), 7981).await, None);
     }
 }
