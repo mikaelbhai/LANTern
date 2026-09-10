@@ -114,12 +114,10 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
     matchId: opponentId ? `chess:${opponentId}` : null,
     over: gameOver,
     players: opponentId ? [profile.id, opponentId] : [],
-    winnerId:
+    winners:
       outcome.kind === 'checkmate' || outcome.kind === 'timeout'
-        ? outcome.winner === myColor
-          ? profile.id
-          : (opponentId ?? null)
-        : null,
+        ? [outcome.winner === myColor ? profile.id : (opponentId ?? '')].filter(Boolean)
+        : [],
   });
 
   // Clock ticks only once both sides have moved, matching normal chess practice.

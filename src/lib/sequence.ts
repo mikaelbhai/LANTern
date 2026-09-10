@@ -73,26 +73,54 @@ export interface State {
   locked: boolean[];
   /** Sequences completed by each team. */
   sequences: number[];
+  /**
+   * Whose turn it is, as a *seat*.
+   *
+   * Not a team. Sequence is played by people sitting round a table in an
+   * order, and teams alternate around it — with two teams and four players
+   * the seats go A B A B, and each of those four takes a turn. Turn and team
+   * are only the same number in the degenerate case of one player per team,
+   * and conflating them made a four-handed game of two teams impossible.
+   */
   turn: number;
+  /** Which team each seat belongs to, in seating order. */
+  seatTeams: number[];
   teams: number;
   winner: number | null;
 }
 
-export function create(teams: number): State {
+/**
+ * A fresh board.
+ *
+ * `seatTeams` is the seating: one entry per player, saying which team they
+ * are on. Given a bare number of teams it seats one player per team, which is
+ * what a two-player game is.
+ */
+export function create(teams: number, seatTeams?: number[]): State {
   const chips = new Array(SIZE * SIZE).fill(-1);
   const locked = new Array(SIZE * SIZE).fill(false);
   // The corners belong to everybody, which is why a line may run through them.
   for (let i = 0; i < BOARD.length; i++) if (BOARD[i].free) locked[i] = true;
 
+  const count = Math.max(2, teams);
+  const seats = seatTeams?.length ? seatTeams : Array.from({ length: count }, (_, i) => i);
+
   return {
     chips,
     locked,
-    sequences: new Array(Math.max(2, teams)).fill(0),
+    sequences: new Array(count).fill(0),
     turn: 0,
-    teams: Math.max(2, teams),
+    seatTeams: seats,
+    teams: count,
     winner: null,
   };
 }
+
+/** The team sitting in a seat. */
+export const teamAt = (state: State, seat: number): number => state.seatTeams[seat] ?? 0;
+
+/** The team whose turn it is. */
+export const teamToPlay = (state: State): number => teamAt(state, state.turn);
 
 /** Two teams need two sequences; with three, one is enough. */
 export const sequencesToWin = (teams: number): number => (teams >= 3 ? 1 : 2);
@@ -106,7 +134,9 @@ export function squaresFor(state: State, card: Card): number[] {
   if (isOneEyedJack(card)) {
     // Any opposing chip that is not part of a finished sequence.
     return state.chips
-      .map((owner, i) => (owner !== -1 && owner !== state.turn && !state.locked[i] ? i : -1))
+      .map((owner, i) =>
+        owner !== -1 && owner !== teamToPlay(state) && !state.locked[i] ? i : -1,
+      )
       .filter((i) => i >= 0);
   }
   return BOARD.map((sq, i) =>
@@ -177,9 +207,10 @@ export type Move =
  * Returns null when the move is not legal, which is also how a move arriving
  * out of turn is refused.
  */
-export function play(state: State, move: Move, team: number): State | null {
+export function play(state: State, move: Move, seat: number): State | null {
   if (state.winner !== null) return null;
-  if (team !== state.turn) return null;
+  if (seat !== state.turn) return null;
+  const team = teamAt(state, seat);
 
   const legal = squaresFor(state, move.card);
   if (!legal.includes(move.square)) return null;
@@ -213,6 +244,7 @@ export function play(state: State, move: Move, team: number): State | null {
     locked,
     sequences,
     winner,
-    turn: winner !== null ? state.turn : (state.turn + 1) % state.teams,
+    // Round the table, seat by seat — not team by team.
+    turn: winner !== null ? state.turn : (state.turn + 1) % state.seatTeams.length,
   };
 }

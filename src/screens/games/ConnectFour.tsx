@@ -60,7 +60,7 @@ export function ConnectFour({ onExit }: { onExit: () => void }) {
     matchId: active?.id ?? null,
     over: finished,
     players,
-    winnerId: state.winner !== null ? (players[state.winner] ?? null) : null,
+    winners: state.winner !== null && players[state.winner] ? [players[state.winner]] : [],
   });
 
   // A result is worth hearing, once.

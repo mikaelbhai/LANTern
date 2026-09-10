@@ -88,7 +88,7 @@ export function Dots({ onExit }: { onExit: () => void }) {
     over,
     players,
     // A shared lead is nobody's win.
-    winnerId: winners.length === 1 ? (players[winners[0]] ?? null) : null,
+    winners: winners.length === 1 && players[winners[0]] ? [players[winners[0]]] : [],
     points: Object.fromEntries(
       players.map((id, seat) => [id, state.scores[seat] ?? 0]),
     ),

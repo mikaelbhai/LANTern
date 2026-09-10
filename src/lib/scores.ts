@@ -47,8 +47,13 @@ export interface Result {
   game: GameKind;
   /** Everyone who was in it, by peer id. */
   players: string[];
-  /** Who won, or null for a draw. */
-  winnerId: string | null;
+  /**
+   * Who won. Empty for a draw.
+   *
+   * A list because a win is not always one person's: Sequence is played in
+   * teams, and both partners won it.
+   */
+  winners: string[];
   /** What each player scored, if the game counts anything. */
   points?: Record<string, number>;
   /** Names to remember them by. */
@@ -74,7 +79,7 @@ export function record(scores: Scores, result: Result, me: string): Scores {
   if (result.players.includes(me)) {
     const mine = { ...(byGame[result.game] ?? blank()) };
     mine.played++;
-    if (result.winnerId === me) mine.won++;
+    if (result.winners.includes(me)) mine.won++;
     mine.points += result.points?.[me] ?? 0;
     byGame[result.game] = mine;
   }
@@ -83,7 +88,7 @@ export function record(scores: Scores, result: Result, me: string): Scores {
     const previous = byPlayer[id];
     const entry: PlayerRecord = {
       played: (previous?.played ?? 0) + 1,
-      won: (previous?.won ?? 0) + (result.winnerId === id ? 1 : 0),
+      won: (previous?.won ?? 0) + (result.winners.includes(id) ? 1 : 0),
       points: (previous?.points ?? 0) + (result.points?.[id] ?? 0),
       name: result.names?.[id] ?? previous?.name ?? 'Someone',
       lastSeen: now,

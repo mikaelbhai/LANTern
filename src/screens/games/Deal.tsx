@@ -205,6 +205,22 @@ export function Deal({ onExit }: { onExit: () => void }) {
     else sfx.gameLose();
   }, [view?.winner, me]);
 
+  /*
+   * Recorded before the early return below, so the hook count does not change
+   * between the "dealing" render and the table.
+   */
+  useResult({
+    game: 'deal',
+    matchId: active?.id ?? null,
+    over: !!view?.winner,
+    players,
+    winners: view?.winner ? [view.winner] : [],
+    // Complete sets: the thing the whole game is counted in.
+    points: Object.fromEntries(
+      (view?.players ?? []).map((p) => [p.id, G.completedColours(p).length]),
+    ),
+  });
+
   if (!view || !mine) {
     return (
       <div className="h-full grid place-items-center">
@@ -377,17 +393,6 @@ export function Deal({ onExit }: { onExit: () => void }) {
       ? Object.keys(charge.owed).map((id) => names[id] ?? 'someone').join(' and ')
       : null;
 
-  useResult({
-    game: 'deal',
-    matchId: active?.id ?? null,
-    over: !!view.winner,
-    players,
-    winnerId: view.winner ?? null,
-    // Complete sets: the thing the whole game is counted in.
-    points: Object.fromEntries(
-      view.players.map((p) => [p.id, G.completedColours(p).length]),
-    ),
-  });
 
   const status = view.winner
     ? `${names[view.winner] ?? 'Someone'} wins`

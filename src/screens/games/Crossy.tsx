@@ -221,7 +221,7 @@ export function Crossy({ onExit }: { onExit: () => void }) {
     matchId: active?.id ?? 'crossy:solo',
     over: dead,
     players,
-    winnerId: everyoneDown && standings.length ? standings[0].id : null,
+    winners: everyoneDown && standings.length ? [standings[0].id] : [],
     points: Object.fromEntries(standings.map((r) => [r.id, r.best])),
   });
 

@@ -18,15 +18,15 @@ export function useResult({
   matchId,
   over,
   players,
-  winnerId,
+  winners,
   points,
 }: {
   game: GameKind;
   matchId: string | null;
   over: boolean;
   players: string[];
-  /** The winner's peer id, or null for a draw. */
-  winnerId: string | null;
+  /** Everybody who won it. Empty for a draw; more than one for a team game. */
+  winners: string[];
   /** What each player scored, where the game counts anything. */
   points?: Record<string, number>;
 }) {
@@ -44,7 +44,7 @@ export function useResult({
 
   // The payload is compared by value, so a new object each render does not
   // re-fire the effect.
-  const signature = JSON.stringify({ players, winnerId, points });
+  const signature = JSON.stringify({ players, winners, points });
 
   React.useEffect(() => {
     if (!over || !matchId) {
@@ -55,16 +55,16 @@ export function useResult({
     written.current = true;
     match.current++;
 
-    const { players: p, winnerId: w, points: pts } = JSON.parse(signature) as {
+    const { players: p, winners: w, points: pts } = JSON.parse(signature) as {
       players: string[];
-      winnerId: string | null;
+      winners: string[];
       points?: Record<string, number>;
     };
     recordResult({
       sessionId: `${matchId}#${match.current}`,
       game,
       players: p,
-      winnerId: w,
+      winners: w,
       points: pts,
     });
   }, [over, matchId, game, signature, recordResult]);
