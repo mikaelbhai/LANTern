@@ -156,6 +156,8 @@ export function Deal({ onExit }: { onExit: () => void }) {
       }
     },
     redact: (state, forPlayer) => G.view(state, forPlayer),
+    // A substitute inherits the seat, and everything sitting in it.
+    rename: G.rename,
   });
 
   const { view, players, me, send, restart, isHost } = hosted;

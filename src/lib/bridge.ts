@@ -337,8 +337,19 @@ export const api = {
      * Host only - the native side ignores it from anyone else, so a peer
      * cannot deal itself in by saying it is playing.
      */
-    lobby: (sessionId: string, waiting: string[], nextGame: GameKind | null) =>
-      call<GameSession | null>('game_lobby', { sessionId, waiting, nextGame }),
+    lobby: (
+      sessionId: string,
+      waiting: string[],
+      nextGame: GameKind | null,
+      /** A rewritten seat list, when somebody has been substituted in. */
+      players?: string[],
+    ) =>
+      call<GameSession | null>('game_lobby', {
+        sessionId,
+        waiting,
+        nextGame,
+        players: players ?? null,
+      }),
 
     /**
      * Sends to one player rather than the table.

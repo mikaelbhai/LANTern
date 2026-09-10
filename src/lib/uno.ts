@@ -408,6 +408,27 @@ export function scoreFor(s: UnoState, winner: string): number {
     .reduce((n, p) => n + p.hand.reduce((m, i) => m + value(card(i)), 0), 0);
 }
 
+/* --------------------------------------------------------- substitution */
+
+/**
+ * Hands one player's seat to somebody else.
+ *
+ * A substitute inherits the hand, because they inherit the seat — the cards
+ * belong to the chair, not to the person who was in it. Everything else that
+ * names a player moves with it.
+ *
+ * Lives here rather than on the screen because it is a rule about the state,
+ * and a rename that misses a field is a game that quietly stops working for
+ * one person.
+ */
+export function rename(state: UnoState, from: string, to: string): UnoState {
+  if (from === to) return state;
+  const s = clone(state);
+  for (const p of s.players) if (p.id === from) p.id = to;
+  if (s.winner === from) s.winner = to;
+  return s;
+}
+
 /* ------------------------------------------------------------ redaction */
 
 /** What one player is allowed to see: their own hand, and nobody else's. */

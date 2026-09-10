@@ -474,6 +474,50 @@ function checkWin(s: State): State {
   return s;
 }
 
+/* --------------------------------------------------------- substitution */
+
+/**
+ * Hands one player's seat to somebody else.
+ *
+ * The hand, the bank and the property all belong to the chair rather than to
+ * whoever was in it, so a substitute inherits them. Every other place a
+ * player is named by id moves too — a charge they owe, an action waiting on
+ * their answer — because a debt addressed to somebody who has left is a debt
+ * nobody can settle and the game stops there.
+ */
+export function rename(state: State, from: string, to: string): State {
+  if (from === to) return state;
+  const s = clone(state);
+  const swap = (id: string) => (id === from ? to : id);
+
+  for (const p of s.players) if (p.id === from) p.id = to;
+  if (s.winner === from) s.winner = to;
+
+  if (s.charge) {
+    s.charge.from = swap(s.charge.from);
+    s.charge.owed = Object.fromEntries(
+      Object.entries(s.charge.owed).map(([id, n]) => [swap(id), n]),
+    );
+    s.charge.paid = Object.fromEntries(
+      Object.entries(s.charge.paid).map(([id, c]) => [swap(id), c]),
+    );
+  }
+
+  if (s.pending) {
+    s.pending.from = swap(s.pending.from);
+    s.pending.awaiting = swap(s.pending.awaiting);
+    s.pending.targets = s.pending.targets.map(swap);
+    s.pending.refusals = s.pending.refusals.map(swap);
+    s.pending.cancelled = s.pending.cancelled.map(swap);
+    // The detail names an owner on everything aimed at a person.
+    const d = s.pending.detail as { owner?: string; only?: string };
+    if (d.owner) d.owner = swap(d.owner);
+    if (d.only) d.only = swap(d.only);
+  }
+
+  return s;
+}
+
 /* ------------------------------------------------------------ redaction */
 
 /** What one player is allowed to see: their own hand, and nobody else's. */

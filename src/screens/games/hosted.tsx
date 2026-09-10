@@ -40,6 +40,7 @@ export function useHostedGame<S, V, I>({
   create,
   apply,
   redact,
+  rename,
 }: {
   session: GameSession | null;
   /** The opening position. */
@@ -48,6 +49,17 @@ export function useHostedGame<S, V, I>({
   apply: (state: S, intent: I, by: string, players: string[]) => S | null;
   /** What `forPlayer` is allowed to see. */
   redact: (state: S, forPlayer: string, players: string[]) => V;
+  /**
+   * Hands the seat belonging to `from` over to `to`.
+   *
+   * Only needed by games that key anything on a player's id — a hand of
+   * cards, usually. Games whose state is positional need nothing: their seat
+   * is an index, and the index has not moved.
+   *
+   * Without it a substitute would sit down at the table holding no cards,
+   * while the person who left kept theirs from wherever they had gone.
+   */
+  rename?: (state: S, from: string, to: string) => S;
 }): Hosted<S, V, I> {
   const myId = useStore((s) => s.profile.id);
 
@@ -67,8 +79,8 @@ export function useHostedGame<S, V, I>({
   // The rules arrive as props and are rebuilt on every render, so they are
   // held in refs: a callback that closed over the first render's copy would
   // still work, but only by accident.
-  const rules = React.useRef({ create, apply, redact });
-  rules.current = { create, apply, redact };
+  const rules = React.useRef({ create, apply, redact, rename });
+  rules.current = { create, apply, redact, rename };
 
   const [full, setFull] = React.useState<S | null>(null);
   const [view, setView] = React.useState<V | null>(null);
@@ -145,6 +157,34 @@ export function useHostedGame<S, V, I>({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostId, session?.hostId]);
+
+  /**
+   * Somebody was swapped into a seat while the game was running.
+   *
+   * Spotted by comparing the seat list with the one from last render: same
+   * length, different name in the same place. Only the host does anything
+   * about it, because only the host holds the state that has to change.
+   */
+  const seated = React.useRef(players);
+  React.useEffect(() => {
+    const before = seated.current;
+    seated.current = players;
+    if (!isHost || before.length !== players.length) return;
+
+    const swaps = before
+      .map((was, i) => [was, players[i]] as const)
+      .filter(([was, now]) => was !== now);
+    if (!swaps.length) return;
+
+    const state = fullRef.current;
+    const move = rules.current.rename;
+    if (state === null || !move) return;
+
+    let next: S = state;
+    for (const [from, to] of swaps) next = move(next, from, to);
+    publish(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players.join(','), isHost, publish]);
 
   const send = React.useCallback(
     (intent: I) => {

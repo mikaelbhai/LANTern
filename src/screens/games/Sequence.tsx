@@ -240,6 +240,16 @@ export function Sequence({ onExit }: { onExit: () => void }) {
     create: createGame,
     apply: applyIntent,
     redact,
+    // Seats and hands are both keyed by who is sitting there, so a
+    // substitution moves the name on the seat and the hand along with it.
+    rename: (game, from, to) => {
+      const hands = { ...game.hands };
+      if (from in hands) {
+        hands[to] = hands[from];
+        delete hands[from];
+      }
+      return { ...game, seats: game.seats.map((id) => (id === from ? to : id)), hands };
+    },
   });
 
   const { view, players: joined, me, isHost, send, restart } = game;

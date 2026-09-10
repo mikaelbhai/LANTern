@@ -213,6 +213,15 @@ interface State {
   /** Ask for the next match to be a different game. */
   proposeNextGame: (game: GameKind) => void;
   /**
+   * Swap somebody waiting into somebody else's seat, mid-match.
+   *
+   * The two change places: whoever comes out joins the queue. Host only —
+   * everybody else asks, through `askToSubOut`.
+   */
+  substitute: (out: string, incoming: string) => void;
+  /** Ask to be replaced by whoever is first in the queue. */
+  askToSubOut: () => void;
+  /**
    * Start the match everyone has been waiting for. Host only.
    *
    * Takes the players still here plus whoever queued, and whatever game was
@@ -511,6 +520,46 @@ export const useStore = create<State>((set, get) => {
       void api.game.send(session.hostId, 'lobby', { t: 'next', game }).catch(() => {});
     },
 
+    substitute(out, incoming) {
+      const session = get().gameSession;
+      const me = get().profile.id;
+      if (!session || session.hostId !== me) return;
+
+      const waiting = session.waiting ?? [];
+      if (!session.players.includes(out) || !waiting.includes(incoming)) return;
+
+      // They change places. The seat keeps its position in the list, which is
+      // what keeps the turn order and everything hanging off it intact.
+      const players = session.players.map((p) => (p === out ? incoming : p));
+      const queue = waiting.map((p) => (p === incoming ? out : p));
+
+      void api.game
+        .lobby(session.id, queue, session.nextGame ?? null, players)
+        .then((s) => {
+          if (!s) return;
+          set({ gameSession: { ...s, hostId: me, players, waiting: queue } });
+          get().toast({
+            kind: 'info',
+            title: `${get().peers[incoming]?.name ?? 'Someone'} is in`,
+            body: `They took ${out === me ? 'your' : `${get().peers[out]?.name ?? 'a'}’s`} seat.`,
+          });
+        })
+        .catch(() => {});
+    },
+
+    askToSubOut() {
+      const session = get().gameSession;
+      const me = get().profile.id;
+      if (!session) return;
+      if (session.hostId === me) {
+        // The host does not have to ask anybody.
+        const first = (session.waiting ?? [])[0];
+        if (first) get().substitute(me, first);
+        return;
+      }
+      void api.game.send(session.hostId, 'lobby', { t: 'subout' }).catch(() => {});
+    },
+
     async startNextMatch() {
       const session = get().gameSession;
       const me = get().profile.id;
@@ -687,6 +736,13 @@ export const useStore = create<State>((set, get) => {
           });
         } else if (msg.t === 'unwait') {
           next = waiting.filter((id) => id !== msg.from);
+        } else if (msg.t === 'subout') {
+          // Somebody in the game asking to be let out, and there is a queue.
+          const first = waiting[0];
+          if (first && session.players.includes(msg.from)) {
+            get().substitute(msg.from, first);
+          }
+          return;
         } else if (msg.t === 'next' && msg.game) {
           nextGame = msg.game;
           get().toast({

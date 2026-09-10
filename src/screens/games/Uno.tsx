@@ -68,6 +68,8 @@ export function Uno({ onExit }: { onExit: () => void }) {
       }
     },
     redact: (state, forPlayer) => U.view(state, forPlayer),
+    // The seat keeps its cards; only the name on it changes.
+    rename: U.rename,
   });
 
   const { view, players, me, send, restart, isHost } = hosted;

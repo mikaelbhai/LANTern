@@ -8,6 +8,7 @@ import {
   Eye,
   Footprints,
   Gamepad2,
+  Repeat,
   Grid3x3,
   Spade,
   Users,
@@ -440,6 +441,8 @@ function NextMatch() {
   const leave = useStore((s) => s.leaveNextMatch);
   const propose = useStore((s) => s.proposeNextGame);
   const startNext = useStore((s) => s.startNextMatch);
+  const substitute = useStore((s) => s.substitute);
+  const askToSubOut = useStore((s) => s.askToSubOut);
 
   const hosting = !!session && (session.hostId === 'me' || session.hostId === me);
   const live = nearby ?? (hosting ? session : null);
@@ -472,16 +475,49 @@ function NextMatch() {
       </p>
 
       {waiting.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-2.5">
+        <div className="mt-2.5 space-y-1.5">
           {waiting.map((id) => (
-            <span
+            <div
               key={id}
               className="flex items-center gap-1.5 text-2xs rounded-input border border-edge bg-raised px-1.5 py-1"
             >
               <Avatar name={named(id)} color={peers[id]?.color} emoji={peers[id]?.emoji} size={16} />
-              {id === me ? 'You' : named(id)}
-            </span>
+              <span className="flex-1 truncate">{id === me ? 'You' : named(id)}</span>
+
+              {/*
+                Waiting does not have to mean waiting until the end. The host
+                can put somebody in now, and whoever comes out takes their
+                place in the queue rather than being dropped.
+              */}
+              {hosting && (
+                <Select
+                  value=""
+                  onChange={(out) => out && substitute(out, id)}
+                  options={[
+                    { value: '', label: 'Swap in for…' },
+                    ...live.players.map((p) => ({
+                      value: p,
+                      label: p === me ? 'You' : named(p),
+                    })),
+                  ]}
+                />
+              )}
+            </div>
           ))}
+        </div>
+      )}
+
+      {/* Somebody in the game who would rather not be. */}
+      {live.players.includes(me) && waiting.length > 0 && (
+        <div className="flex items-center gap-2 mt-2.5 pt-2.5 border-t border-edge">
+          <span className="text-2xs text-muted flex-1">
+            {hosting
+              ? 'You can hand your seat to whoever is first in the queue.'
+              : 'Ask to hand your seat over — somebody is waiting.'}
+          </span>
+          <Button size="xs" icon={<Repeat size={11} />} onClick={askToSubOut}>
+            Sub me out
+          </Button>
         </div>
       )}
 
