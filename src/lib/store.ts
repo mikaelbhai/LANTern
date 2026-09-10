@@ -264,6 +264,15 @@ interface State {
    */
   micMuted: boolean;
   setMicMuted: (muted: boolean) => void;
+  /**
+   * Whether the call has been sent out of the application on purpose.
+   *
+   * The corner window appears on its own when LANTern is out of sight; this
+   * is the other way round — the window stays up while the application is
+   * right there, because somebody asked for it to.
+   */
+  poppedOut: boolean;
+  setPoppedOut: (out: boolean) => void;
   updateCall: (fn: (c: CallSession) => CallSession) => void;
 
   addTransfers: (t: Transfer[]) => void;
@@ -643,6 +652,8 @@ export const useStore = create<State>((set, get) => {
     },
     micMuted: false,
     setMicMuted: (micMuted) => set({ micMuted }),
+    poppedOut: false,
+    setPoppedOut: (poppedOut) => set({ poppedOut }),
 
     async init() {
       if (initialised) return;
@@ -1358,7 +1369,12 @@ export const useStore = create<State>((set, get) => {
 
       // Mute does not carry into the next call. Someone who muted themselves
       // an hour ago should not join the next one silent and unaware of it.
-      set((s) => ({ call: null, callLog: [entry, ...s.callLog], micMuted: false }));
+      set((s) => ({
+        call: null,
+        callLog: [entry, ...s.callLog],
+        micMuted: false,
+        poppedOut: false,
+      }));
       sfx.callEnd();
       persist(get());
     },

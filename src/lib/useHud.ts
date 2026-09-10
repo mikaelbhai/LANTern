@@ -29,6 +29,7 @@ export function useHud() {
   const offer = useStore((s) => s.pendingOffer);
   const transfers = useStore((s) => s.transfers);
   const micMuted = useStore((s) => s.micMuted);
+  const poppedOut = useStore((s) => s.poppedOut);
   const downloadDir = useStore((s) => s.settings.files.downloadDir);
 
   const [away, setAway] = React.useState(false);
@@ -144,11 +145,13 @@ export function useHud() {
   /** Push the snapshot, and show or hide the window to match. */
   const latest = React.useRef(EMPTY);
   React.useEffect(() => {
-    const wanted = away && hasContent(snapshot);
+    // Out of sight, or deliberately sent out. The second is what "pop out"
+    // means: the window stays up while the application is right there.
+    const wanted = (away || poppedOut) && hasContent(snapshot);
     latest.current = wanted ? snapshot : EMPTY;
     void emitNative(HUD_STATE, latest.current);
     void api.hud.set(wanted, GUESS).catch(() => {});
-  }, [away, snapshot]);
+  }, [away, poppedOut, snapshot]);
 
   /** The popup finished loading and wants to know what it missed. */
   React.useEffect(() => {
@@ -204,6 +207,10 @@ export function useHud() {
           setDismissed(done?.id ?? null);
           break;
         case 'open':
+          // Going back to the application is also the end of having sent the
+          // call out of it — otherwise the window is hidden and immediately
+          // put back, because the reason for it is still set.
+          s.setPoppedOut(false);
           void api.hud.openApp().catch(() => {});
           break;
         default:

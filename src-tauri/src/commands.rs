@@ -1728,41 +1728,34 @@ fn is_github(url: &reqwest::Url) -> bool {
         )
 }
 
-/// Fetches an update and writes it to disk, without it passing through the UI.
+/// Checks a name is a plain filename and nothing else.
 ///
-/// The installer used to be fetched by the webview, held in memory there,
-/// hashed there, and then handed back down through the IPC to be written. That
-/// is a forty megabyte file crossing the boundary twice and sitting in a
-/// phone's javascript heap in between, and the handing-back stopped working on
-/// Android - which is how this came to be looked at.
+/// A release asset is a filename; anything with a separator in it is refused
+/// rather than cleaned up, because there is no honest reason for one to be
+/// there and a cleaned-up path is a path somebody chose.
+fn is_plain_filename(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(['/', '\\', '\0'])
+        && !name.contains("..")
+        && name.len() <= 128
+}
+
+/// Fetches an update to `dest`, hashing it on the way past.
 ///
-/// Now the bytes never reach the interface at all. They stream from the socket
-/// to the file, hashed on the way past, and what comes back is a path.
-#[tauri::command]
-pub async fn update_download(
-    app: AppHandle,
-    url: String,
-    name: String,
-    // The digest published beside the release, with or without its `sha256:`
-    // prefix. Absent where the release did not publish one.
-    expected: Option<String>,
-) -> Result<String, String> {
+/// Free of the window handle so it can be exercised against the real releases
+/// rather than only by pressing the button — see the tests at the foot of this
+/// file. Progress goes to the caller; the command turns that into an event.
+pub async fn fetch_update(
+    url: &str,
+    dest: &std::path::Path,
+    expected: Option<&str>,
+    mut on_progress: impl FnMut(u64, u64),
+) -> Result<(), String> {
     use futures_util::StreamExt;
     use sha2::{Digest, Sha256};
     use std::io::Write;
 
-    // The same rule the staging command applied: a release asset is a plain
-    // filename, and anything with a separator in it is refused rather than
-    // cleaned up, because there is no honest reason for one to be there.
-    if name.is_empty()
-        || name.contains(['/', '\\', '\0'])
-        || name.contains("..")
-        || name.len() > 128
-    {
-        return Err("refusing an update file with a suspicious name".into());
-    }
-
-    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("not a usable address: {e}"))?;
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("not a usable address: {e}"))?;
     if !is_github(&parsed) {
         return Err("updates only come from the project's own releases".into());
     }
@@ -1788,9 +1781,8 @@ pub async fn update_download(
     }
 
     let total = response.content_length().unwrap_or(0);
-    let path = update_dir(&app)?.join(&name);
     let mut file =
-        std::fs::File::create(&path).map_err(|e| format!("could not write {path:?}: {e}"))?;
+        std::fs::File::create(dest).map_err(|e| format!("could not write {dest:?}: {e}"))?;
 
     let mut hasher = Sha256::new();
     let mut done: u64 = 0;
@@ -1800,9 +1792,9 @@ pub async fn update_download(
         let chunk = chunk.map_err(|e| format!("the download stopped: {e}"))?;
         hasher.update(&chunk);
         file.write_all(&chunk)
-            .map_err(|e| format!("could not write {path:?}: {e}"))?;
+            .map_err(|e| format!("could not write {dest:?}: {e}"))?;
         done += chunk.len() as u64;
-        let _ = app.emit("update:progress", serde_json::json!({ "done": done, "total": total }));
+        on_progress(done, total);
     }
     file.flush().map_err(|e| format!("could not finish writing: {e}"))?;
     drop(file);
@@ -1812,10 +1804,46 @@ pub async fn update_download(
     if let Some(want) = expected.filter(|w| !w.is_empty()) {
         let got = format!("{:x}", hasher.finalize());
         if !got.eq_ignore_ascii_case(want.trim_start_matches("sha256:")) {
-            let _ = std::fs::remove_file(&path);
-            return Err("the download does not match the published checksum. It was not saved.".into());
+            let _ = std::fs::remove_file(dest);
+            return Err(
+                "the download does not match the published checksum. It was not saved.".into(),
+            );
         }
     }
+
+    Ok(())
+}
+
+/// Fetches an update and writes it to disk, without it passing through the UI.
+///
+/// The installer used to be fetched by the webview, held in memory there,
+/// hashed there, and then handed back down through the IPC to be written. That
+/// is a forty megabyte file crossing the boundary twice and sitting in a
+/// phone's javascript heap in between, and the handing-back stopped working on
+/// Android - which is how this came to be looked at.
+///
+/// Now the bytes never reach the interface at all. They stream from the socket
+/// to the file, hashed on the way past, and what comes back is a path.
+#[tauri::command]
+pub async fn update_download(
+    app: AppHandle,
+    url: String,
+    name: String,
+    expected: Option<String>,
+) -> Result<String, String> {
+    if !is_plain_filename(&name) {
+        return Err("refusing an update file with a suspicious name".into());
+    }
+
+    let path = update_dir(&app)?.join(&name);
+    let emitter = app.clone();
+    fetch_update(&url, &path, expected.as_deref(), move |done, total| {
+        let _ = emitter.emit(
+            "update:progress",
+            serde_json::json!({ "done": done, "total": total }),
+        );
+    })
+    .await?;
 
     Ok(path.to_string_lossy().to_string())
 }
@@ -1842,10 +1870,57 @@ pub fn update_launch(app: AppHandle, path: String) -> Result<(), String> {
         return Err("that file was not staged by the updater".into());
     }
 
-    use tauri_plugin_opener::OpenerExt;
-    app.opener()
-        .open_path(target.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|e| format!("could not start the installer: {e}"))
+    // Windows can do the whole thing without asking anything further.
+    //
+    // The setup program is an NSIS one, which installs without a window when
+    // given /S. Left to open normally it puts a wizard in front of somebody
+    // who has already said what they want by pressing update, and every page
+    // of that wizard is a chance to abandon halfway.
+    //
+    // The relaunch is driven from here rather than left to the installer,
+    // because whether it relaunches is the installer's business and this is
+    // the one part that has to be certain: an update that finishes with the
+    // application closed looks exactly like an update that crashed it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let exe = std::env::current_exe()
+            .map_err(|e| format!("could not find this application: {e}"))?;
+
+        // The pause is for this process to finish going: the installer cannot
+        // replace an executable that is still running, and asking it to would
+        // put a "close LANTern first" box on screen — which is precisely the
+        // question this is meant to stop being asked.
+        let script = format!(
+            r#"timeout /t 3 /nobreak >nul & "{}" /S & start "" "{}""#,
+            target.display(),
+            exe.display(),
+        );
+
+        std::process::Command::new("cmd")
+            .raw_arg("/C")
+            .raw_arg(&script)
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("could not start the installer: {e}"))?;
+
+        // Out of the way, so the files it is about to replace are not held.
+        app.exit(0);
+        return Ok(());
+    }
+
+    // Everywhere else the system's own installer asks its own questions: a
+    // .dmg is mounted and dragged, and Android's package installer wants a
+    // confirmation that is not ours to skip.
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_path(target.to_string_lossy().to_string(), None::<&str>)
+            .map_err(|e| format!("could not start the installer: {e}"))
+    }
 }
 
 /// Whether this device can switch audio tracks.

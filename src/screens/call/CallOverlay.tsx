@@ -20,6 +20,7 @@ import {
   Video,
   VideoOff,
   X,
+  ExternalLink,
 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
 import { Badge, Button, IconButton, Slider, Tooltip } from '../../components/ui';
@@ -29,6 +30,7 @@ import { ring } from '../../lib/ringer';
 import * as rtc from '../../lib/webrtc';
 import { Zoomable } from './Zoomable';
 import { cn, formatDuration } from '../../lib/utils';
+import { bringVideoBack, popOutVideo } from '../../lib/popout';
 import { ScreenShareStage, ShareSourcePicker } from './ScreenShare';
 import { InCallChat } from './InCallChat';
 import type { CallParticipant } from '../../lib/types';
@@ -44,6 +46,8 @@ export function CallOverlay() {
   const updateCall = useStore((s) => s.updateCall);
 
   const [elapsed, setElapsed] = React.useState(0);
+  const poppedOut = useStore((s) => s.poppedOut);
+  const setPoppedOut = useStore((s) => s.setPoppedOut);
   const selfMuted = useStore((s) => s.micMuted);
   const setSelfMuted = useStore((s) => s.setMicMuted);
   const [selfCam, setSelfCam] = React.useState(call.kind === 'video');
@@ -151,6 +155,31 @@ export function CallOverlay() {
   React.useEffect(() => {
     rtc.setMicrophoneEnabled(transmitting);
   }, [transmitting]);
+
+  /**
+   * Sends the call out of the application.
+   *
+   * Two different mechanisms, because a call is two different things. The
+   * picture goes to the system's own Picture-in-Picture, which floats above
+   * every other application — a second webview could not hold the stream, so
+   * this is the only way the video can genuinely leave. The controls go to
+   * LANTern's corner window, which already knows how to mute and hang up, and
+   * on a voice call is the whole of it.
+   */
+  const popOut = async () => {
+    setPoppedOut(true);
+    if (call.kind !== 'video') return;
+
+    // The other person, not a mirror of yourself. Falls back to whatever
+    // video is there, which on a screen share is the share.
+    const remote = document.querySelector<HTMLVideoElement>('video[data-call-video="remote"]');
+    await popOutVideo(remote ?? document.querySelector<HTMLVideoElement>('video'));
+  };
+
+  const bringBack = async () => {
+    setPoppedOut(false);
+    await bringVideoBack();
+  };
 
   const react = (emoji: string) => {
     const id = Date.now() + Math.random();
@@ -345,6 +374,14 @@ export function CallOverlay() {
           </IconButton>
 
           <IconButton
+            label={poppedOut ? 'Bring the call back' : 'Pop out of LANTern'}
+            size="sm"
+            onClick={() => void (poppedOut ? bringBack() : popOut())}
+          >
+            <ExternalLink size={13} className={poppedOut ? 'text-gold' : undefined} />
+          </IconButton>
+
+          <IconButton
             label="Back to call"
             size="sm"
             onClick={() => updateCall((c) => ({ ...c, pip: false }))}
@@ -408,6 +445,12 @@ export function CallOverlay() {
             onClick={() => updateCall((c) => ({ ...c, pip: true }))}
           >
             <Minimize2 size={15} />
+          </IconButton>
+          <IconButton
+            label={poppedOut ? 'Bring the call back' : 'Pop out of LANTern'}
+            onClick={() => void (poppedOut ? bringBack() : popOut())}
+          >
+            <ExternalLink size={15} className={poppedOut ? 'text-gold' : undefined} />
           </IconButton>
         </div>
       </header>
@@ -812,6 +855,9 @@ function Tile({
           ref={videoRef}
           autoPlay
           playsInline
+          // Which tile this is, so "pop out" can float the other person
+          // rather than a mirror of yourself.
+          data-call-video={isSelf ? 'self' : 'remote'}
           // Never play your own microphone back at yourself.
           muted={isSelf}
           className={cn(

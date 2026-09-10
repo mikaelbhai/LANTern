@@ -22,6 +22,8 @@ mod net;
 mod phrase;
 pub mod shares;
 mod sidecar;
+#[cfg(test)]
+mod update_tests;
 mod signaling;
 pub mod state;
 mod transfers;
