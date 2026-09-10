@@ -27,6 +27,7 @@ import { cn } from './lib/utils';
 import { useBackDismiss } from './lib/hooks';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
+import { useHud } from './lib/useHud';
 import { RejoinBanner } from './screens/games/LeaveGuard';
 
 export default function App() {
@@ -35,6 +36,10 @@ export default function App() {
   const settings = useStore((s) => s.settings);
   const call = useStore((s) => s.call);
   const isMobile = useIsMobile();
+
+  // Drives the popup in the corner of the screen while this window is out of
+  // sight. Does nothing on a phone, and nothing while the window is up.
+  useHud();
 
   const [screen, setScreen] = React.useState<Screen>('home');
 

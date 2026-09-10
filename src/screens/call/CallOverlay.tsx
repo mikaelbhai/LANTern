@@ -44,7 +44,8 @@ export function CallOverlay() {
   const updateCall = useStore((s) => s.updateCall);
 
   const [elapsed, setElapsed] = React.useState(0);
-  const [selfMuted, setSelfMuted] = React.useState(false);
+  const selfMuted = useStore((s) => s.micMuted);
+  const setSelfMuted = useStore((s) => s.setMicMuted);
   const [selfCam, setSelfCam] = React.useState(call.kind === 'video');
   const [handUp, setHandUp] = React.useState(false);
   const [chatOpen, setChatOpen] = React.useState(false);

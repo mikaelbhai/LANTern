@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hud",
+  "description": "The corner popup. Deliberately much smaller than the main window's grant: it only listens for the snapshot it renders and sends back what was clicked, so it needs events and nothing else. It never touches the filesystem, the network or the clipboard - the main window does that on its behalf, where the rules already live.",
+  "windows": [
+    "hud"
+  ],
+  "platforms": [
+    "windows",
+    "linux",
+    "macOS"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:default"
+  ]
+}

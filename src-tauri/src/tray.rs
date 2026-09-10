@@ -34,6 +34,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
+                crate::hud::sync(app);
             }
             "quit" => app.exit(0),
             _ => {}
@@ -59,4 +60,6 @@ pub fn restore<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+    // The window being back is what takes the corner popup away.
+    crate::hud::sync(app);
 }

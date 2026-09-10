@@ -213,6 +213,15 @@ interface State {
   startCall: (kind: CallKind, peerIds: string[], roomId?: string) => void;
   answerCall: () => void;
   endCall: () => void;
+  /**
+   * Whether this microphone is muted.
+   *
+   * Held here rather than in the call overlay because the corner popup can
+   * mute too, and two copies of a flag that decides whether people can hear
+   * you is exactly the arrangement that gets somebody overheard.
+   */
+  micMuted: boolean;
+  setMicMuted: (muted: boolean) => void;
   updateCall: (fn: (c: CallSession) => CallSession) => void;
 
   addTransfers: (t: Transfer[]) => void;
@@ -359,6 +368,8 @@ export const useStore = create<State>((set, get) => {
     dropHeldGame: () => set({ heldGame: null }),
     pendingOffer: null,
     clearPendingOffer: () => set({ pendingOffer: null }),
+    micMuted: false,
+    setMicMuted: (micMuted) => set({ micMuted }),
 
     async init() {
       if (initialised) return;
@@ -972,7 +983,9 @@ export const useStore = create<State>((set, get) => {
         rtc.hangUp();
       }
 
-      set((s) => ({ call: null, callLog: [entry, ...s.callLog] }));
+      // Mute does not carry into the next call. Someone who muted themselves
+      // an hour ago should not join the next one silent and unaware of it.
+      set((s) => ({ call: null, callLog: [entry, ...s.callLog], micMuted: false }));
       sfx.callEnd();
       persist(get());
     },

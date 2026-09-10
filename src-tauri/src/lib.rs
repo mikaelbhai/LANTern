@@ -27,11 +27,51 @@ pub mod state;
 mod transfers;
 mod stun;
 #[cfg(desktop)]
+mod hud;
+#[cfg(desktop)]
 mod tray;
 mod upnp;
 
 use state::AppState;
 use tauri::Manager;
+
+/// Shows or hides the corner popup.
+///
+/// Declared here rather than in `hud` so the command list handed to Tauri is
+/// identical on every platform: `generate_handler!` cannot take a `cfg` per
+/// entry, and a phone has no corner to put this in.
+#[tauri::command]
+fn hud_set(_app: tauri::AppHandle, _visible: bool, _height: f64) -> Result<(), String> {
+    #[cfg(desktop)]
+    return hud::set(_app, _visible, _height);
+    #[cfg(not(desktop))]
+    return Ok(());
+}
+
+#[tauri::command]
+fn hud_resize(_app: tauri::AppHandle, _height: f64) -> Result<(), String> {
+    #[cfg(desktop)]
+    return hud::resize(_app, _height);
+    #[cfg(not(desktop))]
+    return Ok(());
+}
+
+#[tauri::command]
+fn hud_open_app(_app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    hud::open_app(_app);
+}
+
+/// Asks for the main window's visibility to be re-announced.
+///
+/// Window events cover every later change, but not the state the application
+/// starts in — launched at login it is hidden and nothing has happened yet.
+/// The frontend calls this once it is listening.
+#[tauri::command]
+fn hud_sync(_app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    hud::sync(&_app);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -144,6 +184,10 @@ pub fn run() {
             commands::party_start,
             commands::party_sync,
             commands::party_leave,
+            hud_set,
+            hud_resize,
+            hud_open_app,
+            hud_sync,
         ])
         .setup(|app| {
             // Services come up with the process, not with the window.
@@ -169,9 +213,24 @@ pub fn run() {
             // On mobile the OS owns the lifecycle, so there is nothing to do.
             #[cfg(desktop)]
             if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
-                if tray::TRAY_IS_NATIVE {
+                if tray::TRAY_IS_NATIVE && _window.label() == "main" {
                     api.prevent_close();
                     let _ = _window.hide();
+                }
+            }
+
+            // Whether the main window is out of sight decides whether the
+            // corner popup should be. There is no "minimised" event, so the
+            // state is read back after anything that could have changed it.
+            #[cfg(desktop)]
+            if _window.label() == "main" {
+                if matches!(
+                    _event,
+                    tauri::WindowEvent::Resized(_)
+                        | tauri::WindowEvent::Focused(_)
+                        | tauri::WindowEvent::CloseRequested { .. }
+                ) {
+                    hud::sync(&_window.app_handle().clone());
                 }
             }
         })

@@ -63,6 +63,28 @@ async function call<T>(cmd: string, args?: any): Promise<T> {
   return s.handle(cmd, args) as Promise<T>;
 }
 
+/**
+ * Sends an event to the other windows of this application.
+ *
+ * `emit` above is the in-page bus and never leaves this webview. The corner
+ * popup is a different webview, so reaching it means going through Tauri.
+ */
+export async function emitNative(event: string, payload?: unknown): Promise<void> {
+  if (!isTauri()) return;
+  const { emit: send } = await import('@tauri-apps/api/event');
+  await send(event, payload);
+}
+
+/** Listens for one of those, from whichever window sent it. */
+export async function listenNative(
+  event: string,
+  fn: (payload: any) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen(event, (e) => fn(e.payload));
+}
+
 /** Wire Rust-side events into the local bus. Idempotent. */
 let wired = false;
 export async function startBridge() {
@@ -96,6 +118,7 @@ export async function startBridge() {
       'library:unreachable',
       'party:changed',
       'game:session',
+      'main:away',
     ];
 
     await Promise.all(
@@ -202,6 +225,13 @@ export const api = {
     cancel: (id: string) => call<void>('files_cancel', { id }),
     reveal: (path: string) => call<void>('files_reveal', { path }),
     open: (path: string) => call<void>('files_open', { path }),
+  },
+  /** The popup in the corner of the screen. Desktop only; a no-op elsewhere. */
+  hud: {
+    set: (visible: boolean, height: number) => call<void>('hud_set', { visible, height }),
+    resize: (height: number) => call<void>('hud_resize', { height }),
+    openApp: () => call<void>('hud_open_app'),
+    sync: () => call<void>('hud_sync'),
   },
   /** The built-in static server that publishes folders to the LAN. */
   host: {
