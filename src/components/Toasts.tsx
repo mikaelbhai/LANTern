@@ -40,7 +40,14 @@ export function Toasts() {
               <div className="flex gap-2.5">
                 <Icon size={15} className={`${tone} shrink-0 mt-[1px]`} />
                 <div className="min-w-0">
-                  <div className="text-xs font-medium text-txt">{t.title}</div>
+                  <div className="text-xs font-medium text-txt flex items-center gap-1.5">
+                    <span className="min-w-0 truncate">{t.title}</span>
+                    {(t.count ?? 1) > 1 && (
+                      <span className="shrink-0 text-2xs font-mono text-muted border border-edge rounded px-1">
+                        ×{t.count}
+                      </span>
+                    )}
+                  </div>
                   {t.body && <div className="text-2xs text-dim mt-0.5">{t.body}</div>}
                   {t.action && (
                     <Button

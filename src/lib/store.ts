@@ -139,7 +139,12 @@ export interface Toast {
   kind: 'info' | 'success' | 'error';
   peerId?: string;
   action?: { label: string; run: () => void };
+  /** How many times this same message has arrived while it was on screen. */
+  count?: number;
 }
+
+/** Beyond this many, the oldest goes to make room. */
+const TOASTS_AT_ONCE = 4;
 
 interface State {
   ready: boolean;
@@ -310,9 +315,33 @@ let initialised = false;
 export const useStore = create<State>((set, get) => {
   const persisted = loadPersisted();
 
+  /**
+   * Puts a message on screen, briefly.
+   *
+   * Two things stop the corner filling up. The same message arriving again
+   * while it is still showing counts up rather than stacking - five identical
+   * "someone started a game" cards say nothing that one saying "x5" does not.
+   * And whatever survives that is capped, because a column of toasts taller
+   * than the window hides the thing they are about.
+   */
   const notify = (t: Omit<Toast, 'id'>) => {
+    const same = (a: Omit<Toast, 'id'>, b: Toast) =>
+      a.kind === b.kind && a.title === b.title && a.body === b.body && !a.action && !b.action;
+
+    const existing = get().toasts.find((x) => same(t, x));
+    if (existing) {
+      set((s) => ({
+        toasts: s.toasts.map((x) =>
+          x.id === existing.id ? { ...x, count: (x.count ?? 1) + 1 } : x,
+        ),
+      }));
+      // Its life starts again, so a repeating message stays up while it repeats.
+      setTimeout(() => get().dismissToast(existing.id), 5200);
+      return;
+    }
+
     const toast = { ...t, id: uid() };
-    set((s) => ({ toasts: [...s.toasts, toast] }));
+    set((s) => ({ toasts: [...s.toasts, toast].slice(-TOASTS_AT_ONCE) }));
     setTimeout(() => get().dismissToast(toast.id), 5200);
   };
 
