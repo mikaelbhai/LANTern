@@ -4,6 +4,8 @@ import { sfx } from './audio';
 import * as rtc from './webrtc';
 import { notifyMessage } from './ringer';
 import { gameName } from './games';
+import { openPrivacySettings, readMediaError } from './mediaerror';
+import type { MediaWanted } from './mediaerror';
 import { emptyScores, record } from './scores';
 import type { Result, Scores } from './scores';
 import type {
@@ -373,6 +375,50 @@ function qualify(session: GameSession, hostId: string): GameSession {
 }
 
 /**
+ * Says why a call could not happen, in terms somebody can act on.
+ *
+ * A refused microphone used to surface as its raw exception - "Permission
+ * denied" - which is both unhelpful and misleading, because the webview will
+ * never ask again and trying another call fails identically for reasons
+ * nobody can see. Where the operating system has a page that fixes it, the
+ * message comes with a button that opens it.
+ */
+function reportCallFailure(
+  get: () => State,
+  err: unknown,
+  kind: CallKind,
+  fallback: string,
+): void {
+  const want: MediaWanted = kind === 'video' ? 'camera' : 'microphone';
+  const name = (err as { name?: string } | null)?.name ?? '';
+
+  // Anything that is not the media devices refusing is a networking problem,
+  // and dressing it up as a permissions one would send people to the wrong
+  // place entirely.
+  const isMedia = /^(NotAllowedError|SecurityError|NotFoundError|OverconstrainedError|NotReadableError|AbortError)$/.test(
+    name,
+  );
+  if (!isMedia) {
+    get().toast({
+      kind: 'error',
+      title: 'Could not start the call',
+      body: (err as { message?: string } | null)?.message ?? fallback,
+    });
+    return;
+  }
+
+  const problem = readMediaError(err, want);
+  get().toast({
+    kind: 'error',
+    title: problem.title,
+    body: problem.body,
+    action: problem.fixable
+      ? { label: 'Open settings', run: () => void openPrivacySettings(want) }
+      : undefined,
+  });
+}
+
+/**
  * Puts this device's chosen name on the network.
  *
  * Quietly ignored where there is no native layer — in a plain browser there is
@@ -415,7 +461,10 @@ export const useStore = create<State>((set, get) => {
 
     const toast = { ...t, id: uid() };
     set((s) => ({ toasts: [...s.toasts, toast].slice(-TOASTS_AT_ONCE) }));
-    setTimeout(() => get().dismissToast(toast.id), 5200);
+    // One that offers to do something waits to be answered. Five seconds is
+    // long enough to read a passing remark and nowhere near long enough to
+    // notice a button, decide, and reach it.
+    if (!toast.action) setTimeout(() => get().dismissToast(toast.id), 5200);
   };
 
   return {
@@ -1260,11 +1309,7 @@ export const useStore = create<State>((set, get) => {
         })
         .catch((err: Error) => {
           set((s) => (s.call?.id === call.id ? { call: null } : {}));
-          get().toast({
-            kind: 'error',
-            title: 'Could not start the call',
-            body: err?.message ?? 'That device is not reachable.',
-          });
+          reportCallFailure(get, err, kind, 'That device is not reachable.');
         });
     },
 
@@ -1285,11 +1330,7 @@ export const useStore = create<State>((set, get) => {
           sfx.callConnect();
         })
         .catch((err: Error) => {
-          get().toast({
-            kind: 'error',
-            title: 'Could not answer',
-            body: err?.message ?? 'The microphone or camera was unavailable.',
-          });
+          reportCallFailure(get, err, call.kind, 'The microphone or camera was unavailable.');
           get().endCall();
         });
     },

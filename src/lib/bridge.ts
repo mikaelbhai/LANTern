@@ -388,6 +388,14 @@ export const api = {
     showWindow: () => call<void>('window_show'),
     getAutostart: () => call<boolean>('autostart_get'),
     setAutostart: (enabled: boolean) => call<boolean>('autostart_set', { enabled }),
+    /**
+     * Opens the operating system's own microphone or camera privacy page.
+     *
+     * The addresses are fixed natively rather than passed from here: a command
+     * that opens whatever URL it is handed is a command that opens anything.
+     */
+    openPrivacySettings: (kind: 'microphone' | 'camera') =>
+      call<boolean>('open_privacy_settings', { kind }),
   },
   profile: {
     os: () => call<string>('host_os'),

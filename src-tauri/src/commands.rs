@@ -1782,6 +1782,49 @@ pub fn media_can_switch_audio() -> bool {
 /// goes through. It deliberately does not travel in the peer handshake: a
 /// 500x500 image is a few hundred kilobytes, and the handshake is a single
 /// line of JSON on a link that chat, calls and games all share.
+/// Opens the operating system's own microphone or camera privacy settings.
+///
+/// A denied permission is remembered by the webview and never asked about
+/// again, so a single mistaken "no" left calls broken with nothing in the
+/// application able to undo it — the only way back was to reinstall. This is
+/// the way back.
+///
+/// The addresses are fixed and chosen here rather than passed in: a command
+/// that opens whatever URL it is handed is a command that opens anything.
+#[tauri::command]
+pub fn open_privacy_settings(app: AppHandle, kind: String) -> bool {
+    let _ = &app;
+    let _ = &kind;
+
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_opener::OpenerExt;
+
+        let camera = kind == "camera";
+        let target = if cfg!(target_os = "windows") {
+            if camera {
+                "ms-settings:privacy-webcam"
+            } else {
+                "ms-settings:privacy-microphone"
+            }
+        } else if cfg!(target_os = "macos") {
+            if camera {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"
+            } else {
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+            }
+        } else {
+            // No single answer on Linux; the desktop environment decides.
+            return false;
+        };
+
+        return app.opener().open_url(target, None::<&str>).is_ok();
+    }
+
+    #[allow(unreachable_code)]
+    false
+}
+
 /// Tells the network what this person calls themselves.
 ///
 /// The name lives in the frontend, where it is typed and stored; the
