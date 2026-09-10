@@ -96,6 +96,11 @@ jobs:
           path: ${{ steps.named.outputs.path }}
 
       # Only when a tag was pushed; a manual run just leaves the artifact.
+      #
+      # The .dmg is neither signed nor notarised - that needs a paid Apple
+      # developer account - so macOS refuses to open it on a double click and
+      # offers only "Move to Trash". The note below is appended to every
+      # release so nobody meets that with no idea what to do about it.
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
