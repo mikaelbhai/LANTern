@@ -14,6 +14,7 @@ export const GAME_NAMES: Record<GameKind, string> = {
   crossy: 'Crossy Road',
   dots: 'Dots & Boxes',
   deal: 'Monopoly Deal',
+  uno: 'Uno',
   klondike: 'Klondike',
   freecell: 'FreeCell',
   spider: 'Spider',

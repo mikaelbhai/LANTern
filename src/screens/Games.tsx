@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import {
   Banknote,
+  Layers,
   Circle,
   Crown,
   Eye,
@@ -19,6 +20,7 @@ import { Dots } from './games/Dots';
 import { Sequence } from './games/Sequence';
 import { Crossy } from './games/Crossy';
 import { Deal } from './games/Deal';
+import { Uno } from './games/Uno';
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { cn } from '../lib/utils';
@@ -117,6 +119,17 @@ const GAMES: {
     accent: '#E86FB0',
   },
   {
+    id: 'uno',
+    name: GAME_NAMES.uno,
+    blurb:
+      'Match the colour or the number, and say it when you are down to one — somebody is watching.',
+    icon: Layers,
+    seats: 'party',
+    seatsLabel: 'Two to eight',
+    maxPlayers: 8,
+    accent: '#B08628',
+  },
+  {
     id: 'dots',
     name: GAME_NAMES.dots,
     blurb: 'Draw a line, close a box, go again. Better with four people than with two.',
@@ -146,6 +159,8 @@ export function Games() {
         return <Dots onExit={exit} />;
       case 'deal':
         return <Deal onExit={exit} />;
+      case 'uno':
+        return <Uno onExit={exit} />;
       default:
         // A session for a game this build no longer has — someone on an older
         // version started a solitaire. Better to land in the hub than to

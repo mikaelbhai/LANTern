@@ -398,6 +398,7 @@ export type GameKind =
   | 'crossy'
   | 'dots'
   | 'deal'
+  | 'uno'
   | 'klondike'
   | 'freecell'
   | 'spider'
