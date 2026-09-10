@@ -56,11 +56,24 @@ export interface HudDone {
   count: number;
 }
 
+/** Somebody has started a game and dealt you in. */
+export interface HudGame {
+  /** The session, so answering twice cannot start two of them. */
+  id: string;
+  /** What is being played, written out. */
+  game: string;
+  /** Who started it. */
+  who: string;
+  /** How many are at the table already. */
+  players: number;
+}
+
 export interface HudSnapshot {
   call: HudCall | null;
   offer: HudOffer | null;
   active: HudTransfer[];
   done: HudDone | null;
+  game: HudGame | null;
 }
 
 export type HudAction =
@@ -73,6 +86,8 @@ export type HudAction =
   | { t: 'accept'; id: string }
   | { t: 'reject'; id: string }
   | { t: 'reveal'; path: string }
+  | { t: 'join-game' }
+  | { t: 'decline-game' }
   | { t: 'dismiss' };
 
 export const HUD_STATE = 'hud:state';
@@ -87,8 +102,14 @@ export const HUD_ACTION = 'hud:action';
  */
 export const HUD_READY = 'hud:ready';
 
-export const EMPTY: HudSnapshot = { call: null, offer: null, active: [], done: null };
+export const EMPTY: HudSnapshot = {
+  call: null,
+  offer: null,
+  active: [],
+  done: null,
+  game: null,
+};
 
 /** Whether a snapshot is worth putting on the screen at all. */
 export const hasContent = (s: HudSnapshot): boolean =>
-  !!s.call || !!s.offer || s.active.length > 0 || !!s.done;
+  !!s.call || !!s.offer || s.active.length > 0 || !!s.done || !!s.game;

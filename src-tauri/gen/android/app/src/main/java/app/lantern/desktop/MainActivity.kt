@@ -1,10 +1,13 @@
 package app.lantern.desktop
 
+import android.app.PictureInPictureParams
 import android.content.Context
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Rational
 import androidx.activity.enableEdgeToEdge
 
 /**
@@ -77,6 +80,49 @@ class MainActivity : TauriActivity() {
       setReferenceCounted(true)
       runCatching { acquire() }
     }
+  }
+
+  /**
+   * Shrinks the call into a floating window when you leave the app.
+   *
+   * This is what "pop the call out" means on a phone: not a second window -
+   * Android does not have those - but the app itself continuing in a small
+   * frame above whatever you go to next. The system calls this the moment
+   * Home or a task switch takes you away, which is exactly when a call still
+   * running needs to stay visible.
+   *
+   * Whether a call is running is read from the audio mode rather than asked
+   * of the web layer. There is no channel from the Rust side into this
+   * activity, and inventing one through JNI to answer a single yes-or-no
+   * question is a lot of machinery that crashes the app when it is wrong.
+   * MODE_IN_COMMUNICATION is set by the media stack while a microphone is
+   * captured for a call, so it says the same thing without the bridge.
+   *
+   * The cost of the heuristic being wrong is small in both directions: no
+   * floating window when there should be one, or a floating window when
+   * nothing is on the call. Neither breaks anything.
+   */
+  override fun onUserLeaveHint() {
+    super.onUserLeaveHint()
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    if (!isCallRunning()) return
+    if (isInPictureInPictureMode) return
+
+    runCatching {
+      enterPictureInPictureMode(
+        PictureInPictureParams.Builder()
+          // The shape of a video call. Android clamps anything too extreme.
+          .setAspectRatio(Rational(16, 9))
+          .build(),
+      )
+    }
+  }
+
+  private fun isCallRunning(): Boolean {
+    val audio = applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      ?: return false
+    return audio.mode == AudioManager.MODE_IN_COMMUNICATION ||
+      audio.mode == AudioManager.MODE_IN_CALL
   }
 
   override fun onDestroy() {

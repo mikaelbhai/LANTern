@@ -139,7 +139,15 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>) {
         .map(|w| {
             let visible = w.is_visible().unwrap_or(true);
             let minimized = w.is_minimized().unwrap_or(false);
-            !visible || minimized
+            // Not in front counts as away, not only hidden or minimised.
+            //
+            // A call ringing behind the window somebody is actually working in
+            // is a call they will not see, and the whole point of a corner
+            // that floats above everything is that it does not wait its turn.
+            // The converse is the same rule: bring LANTern forward and it
+            // takes its own notifications back.
+            let focused = w.is_focused().unwrap_or(true);
+            !visible || minimized || !focused
         })
         .unwrap_or(false);
 

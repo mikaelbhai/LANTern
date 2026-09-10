@@ -17,6 +17,7 @@ import { api, emitNative, listenNative, on } from './bridge';
 import { EMPTY, HUD_ACTION, HUD_READY, HUD_STATE, hasContent } from './hud';
 import type { HudAction, HudSnapshot } from './hud';
 import { pickFolder } from './picker';
+import { gameName } from './games';
 import { useStore } from './store';
 import * as rtc from './webrtc';
 
@@ -31,6 +32,9 @@ export function useHud() {
   const micMuted = useStore((s) => s.micMuted);
   const poppedOut = useStore((s) => s.poppedOut);
   const downloadDir = useStore((s) => s.settings.files.downloadDir);
+  const session = useStore((s) => s.gameSession);
+  const activeGame = useStore((s) => s.activeGame);
+  const me = useStore((s) => s.profile.id);
 
   const [away, setAway] = React.useState(false);
 
@@ -88,6 +92,8 @@ export function useHud() {
   }, [done]);
 
   const [dismissed, setDismissed] = React.useState<string | null>(null);
+  /** A game invitation answered here, so it stops being offered. */
+  const [answeredGame, setAnsweredGame] = React.useState<string | null>(null);
 
   // Coming back to the application is as good as reading the card: the file
   // is right there in Files, and the popup should not be waiting with old
@@ -139,8 +145,35 @@ export function useHud() {
           speedBps: t.speedBps,
         })),
       done: done && done.id !== dismissed ? done : null,
+      // An invitation is a session you have been dealt into and have not yet
+      // opened. Once the game is on screen there is nothing left to ask.
+      game:
+        session &&
+        session.id !== answeredGame &&
+        activeGame?.kind !== session.game &&
+        session.players.includes(me)
+          ? {
+              id: session.id,
+              game: gameName(session.game),
+              who: peers[session.hostId]?.name ?? 'Someone',
+              players: session.players.length,
+            }
+          : null,
     };
-  }, [call, peers, offer, transfers, micMuted, downloadDir, done, dismissed]);
+  }, [
+    call,
+    peers,
+    offer,
+    transfers,
+    micMuted,
+    downloadDir,
+    done,
+    dismissed,
+    session,
+    activeGame,
+    answeredGame,
+    me,
+  ]);
 
   /** Push the snapshot, and show or hide the window to match. */
   const latest = React.useRef(EMPTY);
@@ -206,6 +239,21 @@ export function useHud() {
         case 'dismiss':
           setDismissed(done?.id ?? null);
           break;
+        case 'join-game': {
+          const invite = useStore.getState().gameSession;
+          if (invite) {
+            setAnsweredGame(invite.id);
+            s.setActiveGame({ kind: invite.game });
+          }
+          void api.hud.openApp().catch(() => {});
+          break;
+        }
+        case 'decline-game': {
+          // Declined here rather than left: the session stays, so it can still
+          // be joined from the Games screen, but it stops asking.
+          setAnsweredGame(useStore.getState().gameSession?.id ?? null);
+          break;
+        }
         case 'open':
           // Going back to the application is also the end of having sent the
           // call out of it — otherwise the window is hidden and immediately

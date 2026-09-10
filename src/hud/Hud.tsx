@@ -12,6 +12,7 @@
 import React from 'react';
 import {
   ArrowUpRight,
+  Gamepad2,
   Check,
   Download,
   FileDown,
@@ -91,6 +92,7 @@ export function Hud() {
       </div>
 
       {snap.call && <CallCard call={snap.call} />}
+      {snap.game && <GameCard game={snap.game} />}
       {snap.offer && <OfferCard offer={snap.offer} />}
       {snap.active.length > 0 && <Progress list={snap.active} />}
       {snap.done && <DoneCard done={snap.done} />}
@@ -163,6 +165,35 @@ function CallCard({ call }: { call: NonNullable<HudSnapshot['call']> }) {
             </Action>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ games */
+
+function GameCard({ game }: { game: NonNullable<HudSnapshot['game']> }) {
+  return (
+    <div className="p-2.5 border-t border-edge">
+      <div className="flex items-center gap-2.5">
+        <span className="h-8 w-8 shrink-0 rounded-input grid place-items-center bg-gold/10 border border-gold/30 text-gold">
+          <Gamepad2 size={15} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-medium truncate">{game.game}</div>
+          <div className="text-[10px] text-muted truncate">
+            {game.who} started it · {game.players} playing
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-1.5 mt-2">
+        <Action tone="go" icon={<Gamepad2 size={12} />} onClick={() => send({ t: 'join-game' })}>
+          Join
+        </Action>
+        <Action icon={<X size={12} />} onClick={() => send({ t: 'decline-game' })}>
+          Not now
+        </Action>
       </div>
     </div>
   );
