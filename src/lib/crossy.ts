@@ -111,10 +111,28 @@ export function obstaclesAt(row: Row, seconds: number): number[] {
   return out;
 }
 
-/** True when the cell is inside an obstacle on this row. */
+/**
+ * How much narrower the hopper is than the square it stands on.
+ *
+ * The sprite is drawn inset from its cell, and until this existed the rules
+ * judged it as filling the whole square: a car three pixels clear of you on
+ * screen was already a collision, which reads as being killed by nothing.
+ * The painter takes its inset from this same number so the two cannot drift.
+ */
+export const HITBOX_INSET = 3 / 22;
+
+/**
+ * True when something on this row is touching the hopper standing at `cell`.
+ *
+ * The hopper occupies the middle of its square rather than all of it, so this
+ * is an overlap between two spans and not a point test.
+ */
 export function occupied(row: Row, seconds: number, cell: number): boolean {
-  for (const left of obstaclesAt(row, seconds)) {
-    if (cell + 0.999 > left && cell < left + row.width) return true;
+  const left = cell + HITBOX_INSET;
+  const right = cell + 1 - HITBOX_INSET;
+
+  for (const at of obstaclesAt(row, seconds)) {
+    if (left < at + row.width && right > at) return true;
   }
   return false;
 }

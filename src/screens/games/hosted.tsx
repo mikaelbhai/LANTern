@@ -51,18 +51,15 @@ export function useHostedGame<S, V, I>({
 }): Hosted<S, V, I> {
   const myId = useStore((s) => s.profile.id);
 
-  // Seats in an order every device agrees on. Sorting rather than trusting
-  // arrival order matters: the host's list and a late joiner's could differ.
+  // Seats in the session's own order, which every device has the same copy of.
+  // Not sorted: a sorted seat can move when its occupant changes, and a
+  // substitution has to leave the seat exactly where it was.
   const players = React.useMemo(() => {
     if (!session) return [myId];
-    const named = session.players.map((p) => (p === 'me' ? myId : p));
-    return Array.from(new Set(named)).sort();
+    return Array.from(new Set(session.players));
   }, [session, myId]);
 
-  const hostId = React.useMemo(() => {
-    if (!session) return myId;
-    return session.hostId === 'me' ? myId : session.hostId;
-  }, [session, myId]);
+  const hostId = React.useMemo(() => session?.hostId ?? myId, [session, myId]);
 
   const isHost = hostId === myId;
   const seed = session?.seed ?? 1;

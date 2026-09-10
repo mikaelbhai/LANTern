@@ -340,6 +340,29 @@ const AVATAR_COLORS = [
   '#7BD88F', '#FF8FC7', '#5BA9F5', '#FFD17A',
 ];
 
+/**
+ * Spells out who "me" is in a session.
+ *
+ * The native side writes the host into its own session as the literal string
+ * "me" and broadcasts that verbatim, so every device receives a list in which
+ * one entry means "whoever sent this". Left alone, a peer reading its own id
+ * into that entry merges the host's seat with its own: a three-handed game
+ * shows three seats on the host's screen and two on everybody else's.
+ *
+ * Resolving it once, here, means the rest of the application can treat a
+ * session's players as ordinary peer ids — which is also what lets a seat keep
+ * its place when somebody is substituted into it.
+ */
+function qualify(session: GameSession, hostId: string): GameSession {
+  const name = (p: string) => (p === 'me' ? hostId : p);
+  return {
+    ...session,
+    hostId: name(session.hostId),
+    players: session.players.map(name),
+    waiting: session.waiting?.map(name),
+  };
+}
+
 /** Guards against double-registering bridge listeners (StrictMode remounts). */
 let initialised = false;
 
@@ -411,7 +434,9 @@ export const useStore = create<State>((set, get) => {
     toasts: [],
     activeGame: null,
     gameSession: null,
-    setGameSession: (session) => set({ gameSession: session }),
+    setGameSession: (session) =>
+      // A session minted here has this device as its host.
+      set({ gameSession: session ? qualify(session, get().profile.id) : null }),
 
     heldGame: null,
     /** A minute is long enough to answer a door and short enough not to strand anyone. */
@@ -590,6 +615,9 @@ export const useStore = create<State>((set, get) => {
 
         const me = get().profile.id;
         const host = session.hostId === 'me' ? (session.from ?? me) : session.hostId;
+        // Everything below reads a session whose "me" has been spelled out,
+        // so a seat means the same person on every device.
+        const full = qualify(session, host);
 
         /*
          * A match nobody is running is not a match.
@@ -605,21 +633,19 @@ export const useStore = create<State>((set, get) => {
         // And a match with a result is over. The winner is announced to the
         // table; it is not an invitation.
         if (session.winnerId) {
-          if (get().gameSession?.id === session.id) get().setGameSession(session);
+          if (get().gameSession?.id === session.id) set({ gameSession: full });
           else if (get().nearbyGame?.id === session.id) set({ nearbyGame: null });
           return;
         }
 
-        const mine = session.players?.includes('me') || session.players?.includes(me);
-        if (!mine) {
+        if (!full.players.includes(me)) {
           // Not dealt in, but worth knowing about: the Games screen offers
           // the next one rather than pretending nothing is happening.
-          set({ nearbyGame: { ...session, hostId: host } });
+          set({ nearbyGame: full });
           return;
         }
 
-        set({ nearbyGame: null });
-        get().setGameSession(session);
+        set({ nearbyGame: null, gameSession: full });
 
         const inCall = !!get().call && get().call?.state === 'active';
         const alreadyPlaying = get().activeGame?.kind === session.game;

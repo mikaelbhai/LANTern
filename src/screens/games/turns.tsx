@@ -12,9 +12,11 @@
  * a move out of turn is dropped independently by everyone who receives it.
  * That also means nobody's game ends when the host closes their laptop.
  *
- * Seats are assigned by sorting the session's player ids. Sorting rather than
- * using the order they arrived in matters: the host's list and a late joiner's
- * could differ, and then two people would think they were the same colour.
+ * Seats follow the session's own order, which every device has the same copy
+ * of because the host broadcasts it. They used to be sorted instead, as a
+ * guard against the lists disagreeing — but sorting also meant a seat could
+ * move when its occupant changed, which is exactly what must not happen when
+ * somebody is substituted in.
  */
 import React from 'react';
 
@@ -41,8 +43,9 @@ export function seats(session: GameSession | null, myId: string): string[] {
   // would be refused.
   if (!session) return [myId, `${myId}${SOLO}`];
 
-  const normalised = session.players.map((p) => (p === ME ? myId : p));
-  return Array.from(new Set(normalised)).sort();
+  // "me" is spelled out when the session is stored, so the ids here are
+  // already everybody's real ones — see `qualify` in the store.
+  return Array.from(new Set(session.players));
 }
 
 export interface TurnGame<S, M> {

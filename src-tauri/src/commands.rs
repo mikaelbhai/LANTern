@@ -2173,6 +2173,7 @@ pub fn game_lobby(
     session_id: String,
     waiting: Vec<String>,
     next_game: Option<String>,
+    players: Option<Vec<String>>,
 ) -> Option<GameSession> {
     let updated = state.with(|s| {
         let session = s.session.as_mut()?;
@@ -2181,6 +2182,14 @@ pub fn game_lobby(
         }
         session.waiting = waiting;
         session.next_game = next_game;
+        // Substituting somebody in rewrites the seats. Only ever the same
+        // number of them: this replaces who is sitting where, it does not
+        // add a chair to a game already under way.
+        if let Some(seats) = players {
+            if seats.len() == session.players.len() {
+                session.players = seats;
+            }
+        }
         Some(session.clone())
     });
 

@@ -17,6 +17,7 @@ import { Trophy } from 'lucide-react';
 
 import { Badge, Button } from '../../components/ui';
 import {
+  HITBOX_INSET,
   LANES,
   VIEW_ROWS,
   hop,
@@ -420,7 +421,9 @@ function paint(
     ctx.fillRect(x + 3, y + cellSize - 6, cellSize - 6, 4);
     // Body, then a lighter face, then two eyes: the whole sprite.
     ctx.fillStyle = colour;
-    ctx.fillRect(x + 3, y + 4, cellSize - 6, cellSize - 8);
+    // Drawn exactly as wide as the rules judge it — see HITBOX_INSET.
+    const inset = Math.round(HITBOX_INSET * cellSize);
+    ctx.fillRect(x + inset, y + 4, cellSize - inset * 2, cellSize - 8);
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.fillRect(x + 5, y + 6, cellSize - 10, 6);
     ctx.fillStyle = '#1A1A1F';
