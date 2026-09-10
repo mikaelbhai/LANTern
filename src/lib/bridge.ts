@@ -111,6 +111,7 @@ export async function startBridge() {
       'game:move',
       'game:state',
       'game:intent',
+      'game:lobby',
       'net:changed',
       'service:failed',
       'host:changed',
@@ -330,13 +331,23 @@ export const api = {
       call<boolean>('game_move', { sessionId, payload }),
 
     /**
+     * The host writing down who is waiting for the next match, and what it
+     * will be, then telling everybody.
+     *
+     * Host only - the native side ignores it from anyone else, so a peer
+     * cannot deal itself in by saying it is playing.
+     */
+    lobby: (sessionId: string, waiting: string[], nextGame: GameKind | null) =>
+      call<GameSession | null>('game_lobby', { sessionId, waiting, nextGame }),
+
+    /**
      * Sends to one player rather than the table.
      *
      * `state` is the host describing the game to somebody; `intent` is a
      * player asking the host to do something. Card games need this because a
      * hand nobody else can see cannot be broadcast.
      */
-    send: (peerId: string, channel: 'state' | 'intent', payload: unknown) =>
+    send: (peerId: string, channel: 'state' | 'intent' | 'lobby', payload: unknown) =>
       call<boolean>('game_send', { peerId, channel, payload }),
     leave: (sessionId: string) => call<void>('game_leave', { sessionId }),
   },

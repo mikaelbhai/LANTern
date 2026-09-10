@@ -432,6 +432,16 @@ export interface GameSession {
   progress: Record<string, GameProgress>;
   /** Set once someone finishes. */
   winnerId?: string;
+  /**
+   * Who has asked to be dealt into the next match.
+   *
+   * A match already running cannot take anybody new: hands are dealt, turns
+   * are in order, and a board is half full. Somebody who arrives late queues
+   * for the next one instead of being turned away.
+   */
+  waiting?: string[];
+  /** What the next match will be. The same game again unless changed. */
+  nextGame?: GameKind;
 }
 
 export interface GameInvite {

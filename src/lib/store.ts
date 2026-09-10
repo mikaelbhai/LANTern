@@ -193,6 +193,26 @@ interface State {
   holdGame: (session: GameSession) => void;
   rejoinGame: () => void;
   dropHeldGame: () => void;
+  /**
+   * A match running on the network that you are not in.
+   *
+   * Kept so the Games screen can offer the next one. Without it a late
+   * arrival sees an ordinary menu and no sign that four people are already
+   * playing.
+   */
+  nearbyGame: GameSession | null;
+  /** Ask the host of `nearbyGame` to deal you in next time. */
+  joinNextMatch: () => void;
+  leaveNextMatch: () => void;
+  /** Ask for the next match to be a different game. */
+  proposeNextGame: (game: GameKind) => void;
+  /**
+   * Start the match everyone has been waiting for. Host only.
+   *
+   * Takes the players still here plus whoever queued, and whatever game was
+   * asked for.
+   */
+  startNextMatch: () => Promise<void>;
 
   // actions
   init: () => Promise<void>;
@@ -392,11 +412,73 @@ export const useStore = create<State>((set, get) => {
         set({ heldGame: null });
         return;
       }
+      // The minute you were away is long enough for the host to have gone,
+      // and the seat you are going back to only exists on their device.
+      const me = get().profile.id;
+      const host = held.session.hostId;
+      if (host !== 'me' && host !== me && !get().peers[host]) {
+        set({ heldGame: null });
+        get().toast({
+          kind: 'info',
+          title: 'That game has ended',
+          body: 'The device running it left the network.',
+        });
+        return;
+      }
       set({ heldGame: null, gameSession: held.session, activeGame: { kind: held.session.game } });
     },
     dropHeldGame: () => set({ heldGame: null }),
     pendingOffer: null,
     clearPendingOffer: () => set({ pendingOffer: null }),
+    nearbyGame: null,
+
+    joinNextMatch() {
+      const session = get().nearbyGame;
+      if (!session) return;
+      void api.game.send(session.hostId, 'lobby', { t: 'wait' }).catch(() => {});
+    },
+    leaveNextMatch() {
+      const session = get().nearbyGame;
+      if (!session) return;
+      void api.game.send(session.hostId, 'lobby', { t: 'unwait' }).catch(() => {});
+    },
+    proposeNextGame(game) {
+      const session = get().nearbyGame ?? get().gameSession;
+      if (!session) return;
+      const me = get().profile.id;
+      // The host changes it directly; everybody else has to ask.
+      if (session.hostId === 'me' || session.hostId === me) {
+        void api.game
+          .lobby(session.id, session.waiting ?? [], game)
+          .then((s) => s && set({ gameSession: s }))
+          .catch(() => {});
+        return;
+      }
+      void api.game.send(session.hostId, 'lobby', { t: 'next', game }).catch(() => {});
+    },
+
+    async startNextMatch() {
+      const session = get().gameSession;
+      const me = get().profile.id;
+      if (!session) return;
+      if (session.hostId !== 'me' && session.hostId !== me) return;
+
+      const online = get().peers;
+      // Anybody who has gone offline in the meantime is not dealt in again.
+      const here = session.players
+        .map((p) => (p === 'me' ? me : p))
+        .filter((id) => id === me || !!online[id]);
+      const queued = (session.waiting ?? []).filter((id) => !!online[id]);
+      const players = Array.from(new Set([...here, ...queued])).filter((id) => id !== me);
+
+      const game = session.nextGame ?? session.game;
+      try {
+        const next = await api.game.start(game, players, Math.floor(Math.random() * 1_000_000));
+        set({ gameSession: next, activeGame: { kind: game } });
+      } catch {
+        get().toast({ kind: 'error', title: 'Could not start the next match' });
+      }
+    },
     micMuted: false,
     setMicMuted: (micMuted) => set({ micMuted }),
 
@@ -420,6 +502,22 @@ export const useStore = create<State>((set, get) => {
           return { peers };
         });
         if (p) get().pushActivity({ kind: 'peer', text: `${p.name} left the network`, peerId: id });
+
+        // One device runs each game and tells the others what is happening.
+        // When that device goes, nothing is coming: the board freezes on
+        // whatever it last said and every click does nothing. Saying so and
+        // clearing it beats leaving people staring at a turn that will never
+        // arrive.
+        const session = get().gameSession;
+        if (session && session.hostId === id) {
+          set({ gameSession: null, activeGame: null, heldGame: null });
+          get().toast({
+            kind: 'info',
+            title: 'The game ended',
+            body: `${p?.name ?? 'The host'} left, and the match was running on their device.`,
+          });
+        }
+        if (get().nearbyGame?.hostId === id) set({ nearbyGame: null });
       });
       on('net:changed', (n: NetInfo) => set({ net: n }));
 
@@ -454,11 +552,44 @@ export const useStore = create<State>((set, get) => {
        * it is an invitation, because being yanked into a game by someone you
        * are not talking to is another matter entirely.
        */
-      on('game:session', (session: GameSession & { from?: string }) => {
-        const me = get().profile.id;
-        const mine = session.players?.includes('me') || session.players?.includes(me);
-        if (!mine) return;
+      on('game:session', (session: (GameSession & { from?: string }) | null) => {
+        // The host clearing the session out.
+        if (!session) {
+          set({ gameSession: null, nearbyGame: null });
+          return;
+        }
 
+        const me = get().profile.id;
+        const host = session.hostId === 'me' ? (session.from ?? me) : session.hostId;
+
+        /*
+         * A match nobody is running is not a match.
+         *
+         * One device holds the game and tells the others what is happening.
+         * If that device is not on the network - it has gone, or this
+         * announcement outlived it - then joining puts you on a board that
+         * never moves, with no way to tell that from a slow turn.
+         */
+        const hostHere = host === me || !!get().peers[host];
+        if (!hostHere) return;
+
+        // And a match with a result is over. The winner is announced to the
+        // table; it is not an invitation.
+        if (session.winnerId) {
+          if (get().gameSession?.id === session.id) get().setGameSession(session);
+          else if (get().nearbyGame?.id === session.id) set({ nearbyGame: null });
+          return;
+        }
+
+        const mine = session.players?.includes('me') || session.players?.includes(me);
+        if (!mine) {
+          // Not dealt in, but worth knowing about: the Games screen offers
+          // the next one rather than pretending nothing is happening.
+          set({ nearbyGame: { ...session, hostId: host } });
+          return;
+        }
+
+        set({ nearbyGame: null });
         get().setGameSession(session);
 
         const inCall = !!get().call && get().call?.state === 'active';
@@ -473,6 +604,49 @@ export const useStore = create<State>((set, get) => {
             body: `${get().peers[session.from ?? '']?.name ?? 'Someone'} started ${gameName(session.game)}`,
           });
         }
+      }),
+
+      /*
+       * Somebody asking to be in the next match, or for it to be something
+       * else. Only the host acts on this; everybody else has no session to
+       * change and ignores it.
+       */
+      on('game:lobby', (msg: { from?: string; t?: string; game?: GameKind }) => {
+        const session = get().gameSession;
+        const me = get().profile.id;
+        if (!session || !msg?.from) return;
+        if (session.hostId !== 'me' && session.hostId !== me) return;
+
+        const waiting = session.waiting ?? [];
+        let next = waiting;
+        let nextGame = session.nextGame ?? null;
+
+        if (msg.t === 'wait' && !waiting.includes(msg.from)) {
+          // Somebody already playing does not also need a place in the queue.
+          if (session.players.includes(msg.from)) return;
+          next = [...waiting, msg.from];
+          get().toast({
+            kind: 'info',
+            title: `${get().peers[msg.from]?.name ?? 'Someone'} is waiting to play`,
+            body: 'They will be dealt into the next match.',
+          });
+        } else if (msg.t === 'unwait') {
+          next = waiting.filter((id) => id !== msg.from);
+        } else if (msg.t === 'next' && msg.game) {
+          nextGame = msg.game;
+          get().toast({
+            kind: 'info',
+            title: 'Next match changed',
+            body: `${get().peers[msg.from]?.name ?? 'Someone'} suggested ${gameName(msg.game)}.`,
+          });
+        } else {
+          return;
+        }
+
+        void api.game
+          .lobby(session.id, next, nextGame)
+          .then((s) => s && set({ gameSession: s }))
+          .catch(() => {});
       }),
 
       on('transfer:offer', (t: Transfer) => {

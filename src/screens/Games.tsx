@@ -12,7 +12,7 @@ import {
   Users,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
-import { Badge, Button, Empty, Modal, SectionTitle } from '../components/ui';
+import { Badge, Button, Empty, Modal, SectionTitle, Select } from '../components/ui';
 import { Chess } from './games/Chess';
 import { ConnectFour } from './games/ConnectFour';
 import { Dots } from './games/Dots';
@@ -216,6 +216,7 @@ function GamesHub() {
 
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0 scroll-y p-4">
+          <NextMatch />
           <SectionTitle>Choose a game</SectionTitle>
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
             {GAMES.map((g, i) => {
@@ -297,6 +298,104 @@ function GamesHub() {
           setChallenge(null);
         }}
       />
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------- Next match */
+
+/**
+ * What to do when a game is already going.
+ *
+ * A match that has started cannot take anybody new - hands are dealt, turns
+ * are in order, a board is half full - and dropping somebody into one is worse
+ * than telling them to wait. So the answer to arriving late is a place in the
+ * next match rather than a door that does nothing.
+ *
+ * It doubles as the only place the next game can be changed. Nobody wants to
+ * play the same thing four times because the person hosting has the only vote.
+ */
+function NextMatch() {
+  const nearby = useStore((s) => s.nearbyGame);
+  const session = useStore((s) => s.gameSession);
+  const peers = useStore((s) => s.peers);
+  const me = useStore((s) => s.profile.id);
+  const join = useStore((s) => s.joinNextMatch);
+  const leave = useStore((s) => s.leaveNextMatch);
+  const propose = useStore((s) => s.proposeNextGame);
+  const startNext = useStore((s) => s.startNextMatch);
+
+  const hosting = !!session && (session.hostId === 'me' || session.hostId === me);
+  const live = nearby ?? (hosting ? session : null);
+  if (!live) return null;
+
+  const waiting = live.waiting ?? [];
+  const queued = waiting.includes(me);
+  const nextGame = live.nextGame ?? live.game;
+  const named = (id: string) => peers[id]?.name ?? 'Someone';
+
+  return (
+    <div className="panel p-3.5 mb-4 border-gold/30 bg-gold/[0.04]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Users size={14} className="text-gold shrink-0" />
+        <span className="text-sm font-medium">
+          {GAME_NAMES[live.game]} is running
+        </span>
+        <Badge tone="muted">{live.players.length} playing</Badge>
+        {waiting.length > 0 && (
+          <Badge tone="gold">
+            {waiting.length} waiting
+          </Badge>
+        )}
+      </div>
+
+      <p className="text-2xs text-muted leading-relaxed mt-1.5">
+        {nearby
+          ? 'You cannot join one that has already started — the cards are dealt and the turns are in order. Take a place in the next one instead.'
+          : 'People who arrive while this is running queue here. They are dealt in when you start the next match.'}
+      </p>
+
+      {waiting.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
+          {waiting.map((id) => (
+            <span
+              key={id}
+              className="flex items-center gap-1.5 text-2xs rounded-input border border-edge bg-raised px-1.5 py-1"
+            >
+              <Avatar name={named(id)} color={peers[id]?.color} emoji={peers[id]?.emoji} size={16} />
+              {id === me ? 'You' : named(id)}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mt-3">
+        {nearby &&
+          (queued ? (
+            <Button size="sm" onClick={leave}>
+              Leave the queue
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" icon={<Users size={13} />} onClick={join}>
+              Play the next match
+            </Button>
+          ))}
+
+        {hosting && (
+          <Button size="sm" variant="primary" onClick={() => void startNext()}>
+            Start next match
+          </Button>
+        )}
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <span className="text-2xs text-muted">Next up</span>
+          <Select
+            value={nextGame}
+            onChange={(v) => propose(v as GameKind)}
+            options={GAMES.map((g) => ({ value: g.id, label: g.name }))}
+          />
+        </div>
+      </div>
     </div>
   );
 }

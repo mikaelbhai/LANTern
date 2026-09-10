@@ -181,6 +181,7 @@ pub fn run() {
             commands::game_move,
             commands::game_send,
             commands::game_leave,
+            commands::game_lobby,
             commands::party_start,
             commands::party_sync,
             commands::party_leave,

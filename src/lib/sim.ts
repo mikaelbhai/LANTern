@@ -524,6 +524,14 @@ export async function handle(cmd: string, args: any): Promise<any> {
       return { ...session };
     }
 
+    case 'game_lobby': {
+      if (!session || session.id !== args.sessionId) return null;
+      session.waiting = args.waiting ?? [];
+      session.nextGame = args.nextGame ?? undefined;
+      emit('game:session', { ...session });
+      return { ...session };
+    }
+
     case 'game_leave':
       clearInterval(opponentTimer);
       session = null;

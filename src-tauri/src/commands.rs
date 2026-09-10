@@ -2010,6 +2010,8 @@ pub fn game_start(
         started_at: now_ms(),
         progress: std::collections::HashMap::new(),
         winner_id: None,
+        waiting: Vec::new(),
+        next_game: None,
     };
     state.with(|s| s.session = Some(session.clone()));
 
@@ -2082,6 +2084,10 @@ pub fn game_send(
     let kind = match channel.as_str() {
         "state" => "gamestate",
         "intent" => "gameintent",
+        // Asking to be dealt into the next match, and saying what it should
+        // be. Separate from "intent" because it is not a move in the game
+        // being played and must not reach the game's own rules.
+        "lobby" => "gamelobby",
         _ => return false,
     };
 
@@ -2138,6 +2144,43 @@ pub fn game_report(
         if finished && session.winner_id.is_none() {
             session.winner_id = Some("me".into());
         }
+        Some(session.clone())
+    });
+
+    if let Some(session) = updated.as_ref() {
+        let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+        links.broadcast(&Envelope {
+            v: 1,
+            from: me,
+            kind: "game".into(),
+            payload: serde_json::to_value(session).unwrap_or_default(),
+        });
+        let _ = app.emit("game:session", session);
+    }
+    updated
+}
+
+/// The host recording who is waiting, and what the next match will be.
+///
+/// The rule about who may be added and when lives in the frontend, where the
+/// rest of the lobby does; this writes down what it decided and tells
+/// everybody. Anyone but the host asking is ignored, so a peer cannot add
+/// itself to a match by saying so loudly.
+#[tauri::command]
+pub fn game_lobby(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    waiting: Vec<String>,
+    next_game: Option<String>,
+) -> Option<GameSession> {
+    let updated = state.with(|s| {
+        let session = s.session.as_mut()?;
+        if session.id != session_id || session.host_id != "me" {
+            return None;
+        }
+        session.waiting = waiting;
+        session.next_game = next_game;
         Some(session.clone())
     });
 

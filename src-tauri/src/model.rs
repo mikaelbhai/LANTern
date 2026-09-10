@@ -266,6 +266,17 @@ pub struct GameSession {
     pub started_at: u64,
     pub progress: std::collections::HashMap<String, GameProgress>,
     pub winner_id: Option<String>,
+    /// Who has asked to be dealt into the next match.
+    ///
+    /// A match already running cannot take anybody new - hands are dealt and
+    /// turns are in order - so somebody who arrives late queues instead of
+    /// being turned away.
+    #[serde(default)]
+    pub waiting: Vec<String>,
+    /// What the next match will be, if anyone has changed it. The same game
+    /// again otherwise.
+    #[serde(default)]
+    pub next_game: Option<String>,
 }
 
 /// A synchronised viewing session. The host owns the clock.

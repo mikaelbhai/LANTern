@@ -486,6 +486,7 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         "gamemove" => "game:move",
         "gamestate" => "game:state",
         "gameintent" => "game:intent",
+        "gamelobby" => "game:lobby",
         "signal" => "call:state",
         _ => return,
     };
