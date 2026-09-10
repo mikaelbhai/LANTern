@@ -372,6 +372,16 @@ function qualify(session: GameSession, hostId: string): GameSession {
   };
 }
 
+/**
+ * Puts this device's chosen name on the network.
+ *
+ * Quietly ignored where there is no native layer — in a plain browser there is
+ * nothing to announce to.
+ */
+function announceName(name: string): void {
+  void api.profile.announce(name ?? '').catch(() => {});
+}
+
 /** Guards against double-registering bridge listeners (StrictMode remounts). */
 let initialised = false;
 
@@ -958,6 +968,10 @@ export const useStore = create<State>((set, get) => {
         ready: true,
       });
 
+      // The name lives here and the announcement lives natively, so the two
+      // have to be introduced on every start.
+      announceName(get().profile.name);
+
       // Expire stale typing indicators.
       setInterval(() => {
         const now = Date.now();
@@ -999,11 +1013,15 @@ export const useStore = create<State>((set, get) => {
     completeOnboarding(p) {
       set((s) => ({ onboarded: true, profile: { ...s.profile, ...p } }));
       persist(get());
+      announceName(get().profile.name);
     },
 
     setProfile(p) {
       set((s) => ({ profile: { ...s.profile, ...p } }));
       persist(get());
+      // A rename should show up on everybody else's screen without anybody
+      // restarting anything, so the network is told each time.
+      announceName(get().profile.name);
     },
 
     setSettings(fn) {

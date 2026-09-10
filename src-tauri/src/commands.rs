@@ -198,11 +198,15 @@ pub fn boot(app: AppHandle, state: AppState) {
             s.net.interfaces.iter().map(|i| i.ip.clone()).collect::<Vec<_>>(),
         )
     });
+    // Empty until the frontend says who is here; the announcement is redone
+    // the moment it does.
+    let who = state.with(|s| s.display_name.clone());
     match discovery::start(
         app.clone(),
         (*state).clone(),
         &device_id,
         &device_name,
+        &who,
         &addresses,
         port,
     ) {
@@ -329,7 +333,8 @@ fn watch_network(app: AppHandle, state: AppState) {
             });
 
             if let Some(daemon) = daemon {
-                discovery::reannounce(&daemon, &device_id, &instance, &current, port);
+                let who = state.with(|s| s.display_name.clone());
+                discovery::reannounce(&daemon, &device_id, &instance, &who, &current, port);
             }
 
             // Published stream URLs embed our address, so the library has to be
@@ -408,6 +413,9 @@ pub fn net_add_manual_peer(
         id: id.clone(),
         device_id: id,
         name: ip.clone(),
+        // Reached by address rather than found by name, so this is all we know
+        // of it until it announces itself.
+        device_name: ip.clone(),
         color: "#F5A623".into(),
         emoji: "🏮".into(),
         os: "unknown".into(),
@@ -470,7 +478,8 @@ pub async fn net_refresh(app: AppHandle, state: State<'_, AppState>) -> Res<usiz
         )
     });
     if let Some(daemon) = daemon {
-        discovery::reannounce(&daemon, &device_id, &instance, &addresses, announce_port);
+        let who = owned.with(|s| s.display_name.clone());
+        discovery::reannounce(&daemon, &device_id, &instance, &who, &addresses, announce_port);
     }
 
     // Re-dial everything we know that has no live link.
@@ -1773,6 +1782,43 @@ pub fn media_can_switch_audio() -> bool {
 /// goes through. It deliberately does not travel in the peer handshake: a
 /// 500x500 image is a few hundred kilobytes, and the handshake is a single
 /// line of JSON on a link that chat, calls and games all share.
+/// Tells the network what this person calls themselves.
+///
+/// The name lives in the frontend, where it is typed and stored; the
+/// announcement lives here. Until these were connected the two never met, and
+/// every device on the network advertised its hostname and nothing else — so
+/// everybody saw a list of machines rather than a list of people.
+///
+/// Re-announcing on every change is what makes a rename show up on other
+/// screens without anybody restarting anything.
+#[tauri::command]
+pub fn profile_announce(state: State<'_, AppState>, name: String) {
+    let trimmed = name.trim().to_string();
+    let changed = state.with(|s| {
+        if s.display_name == trimmed {
+            return false;
+        }
+        s.display_name = trimmed.clone();
+        true
+    });
+    if !changed {
+        return;
+    }
+
+    let (daemon, device_id, instance, addresses, port) = state.with(|s| {
+        (
+            s.daemon.clone(),
+            s.device_id.clone(),
+            s.instance.clone(),
+            s.net.interfaces.iter().map(|i| i.ip.clone()).collect::<Vec<_>>(),
+            s.net.port,
+        )
+    });
+    if let Some(daemon) = daemon {
+        discovery::reannounce(&daemon, &device_id, &instance, &trimmed, &addresses, port);
+    }
+}
+
 #[tauri::command]
 pub fn profile_set_avatar(app: AppHandle, state: State<'_, AppState>, png: Vec<u8>) -> Res<()> {
     // A picture that will not fit in memory twice is not a picture.

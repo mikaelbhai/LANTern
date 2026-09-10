@@ -233,6 +233,7 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                 let peer = crate::model::Peer {
                     id: peer_id.clone(),
                     device_id: peer_id.clone(),
+                    device_name: name.clone(),
                     name,
                     color: String::from("#F5A623"),
                     emoji: String::from("🏮"),

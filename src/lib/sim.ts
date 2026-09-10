@@ -33,10 +33,13 @@ const hashish = (s: string) => {
 const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
 const SEED: Array<Partial<Peer> & { name: string; os: OS }> = [
-  { name: 'Nadia', os: 'macos', color: '#39D9C8', emoji: '🦊', layer: 'direct', ip: '192.168.1.24' },
-  { name: 'Ravi', os: 'windows', color: '#F5A623', emoji: '🎧', layer: 'direct', ip: '192.168.1.31' },
+  // Some of these have set a name and some have not, which is the case worth
+  // rehearsing: where they have not, the machine's name stands in and showing
+  // it twice would be noise.
+  { name: 'Nadia', deviceName: 'nadia-mbp', os: 'macos', color: '#39D9C8', emoji: '🦊', layer: 'direct', ip: '192.168.1.24' },
+  { name: 'Ravi', deviceName: 'RAVI-DESKTOP', os: 'windows', color: '#F5A623', emoji: '🎧', layer: 'direct', ip: '192.168.1.31' },
   { name: 'Studio-PC', os: 'linux', color: '#9B8CFF', emoji: '🖥', layer: 'upnp', ip: '10.0.4.12' },
-  { name: 'Tomas', os: 'android', color: '#E05C5C', emoji: '🚀', layer: 'relayed', ip: '10.0.4.88' },
+  { name: 'Tomas', deviceName: 'Pixel-9a', os: 'android', color: '#E05C5C', emoji: '🚀', layer: 'relayed', ip: '10.0.4.88' },
   { name: 'Workshop', os: 'linux', color: '#7BD88F', emoji: '🔧', layer: 'routed', ip: '192.168.5.9' },
 ];
 
@@ -230,6 +233,7 @@ function makePeer(
     id,
     deviceId: id,
     name: s.name,
+    deviceName: s.deviceName,
     color: s.color ?? '#F5A623',
     emoji: s.emoji ?? '🏮',
     os: s.os,

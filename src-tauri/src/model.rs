@@ -56,7 +56,12 @@ pub struct Peer {
     pub id: String,
     /// Stable across address changes — the thing that makes a peer one peer.
     pub device_id: String,
+    /// What to call them: their own name where they have set one.
     pub name: String,
+    /// The machine's name, which is a different thing and worth showing too —
+    /// one person can be at three devices.
+    #[serde(default)]
+    pub device_name: String,
     pub color: String,
     pub emoji: String,
     pub os: String,

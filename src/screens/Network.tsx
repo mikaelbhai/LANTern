@@ -21,6 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { DeviceTag } from '../components/PeerName';
 import { QrCode } from '../components/QrCode';
 import { ConnBadge, LAYER_META, NatBadge, ScopeBadge, latencyTone } from '../components/ConnBadge';
 import {
@@ -444,7 +445,10 @@ function UpstreamCard() {
               >
                 <Avatar name={p.name} color={p.color} emoji={p.emoji} size={26} />
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs truncate">{p.name}</div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs truncate">{p.name}</span>
+                    <DeviceTag peer={p} />
+                  </div>
                   <div className="text-[10px] font-mono text-muted truncate">
                     {p.ip}:{p.port}
                   </div>
@@ -695,6 +699,7 @@ function PeerConnCard({ peerId, onDiagnose }: { peerId: string; onDiagnose: () =
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium truncate">{peer.name}</span>
             <span className="text-2xs">{osGlyph(peer.os)}</span>
+            <DeviceTag peer={peer} />
           </div>
           <div className="text-2xs font-mono text-muted truncate">
             {peer.ip}:{peer.port}

@@ -33,6 +33,12 @@ pub struct Inner {
     pub device_id: String,
     /// Name this device announces itself under.
     pub instance: String,
+    /// What the person at this device calls themselves.
+    ///
+    /// Separate from `instance`, which is the machine's own name. Until this
+    /// existed only the machine name went out, so everybody on the network saw
+    /// each other as a list of hostnames.
+    pub display_name: String,
     /// Live mDNS handle, kept so the service can be re-announced on a network change.
     pub daemon: Option<mdns_sd::ServiceDaemon>,
     /// Open peer links, keyed by device id.
@@ -83,6 +89,7 @@ impl AppState {
 
         AppState(Arc::new(Mutex::new(Inner {
             net,
+            display_name: String::new(),
             peers: HashMap::new(),
             mappings: Vec::new(),
             shares: Vec::new(),

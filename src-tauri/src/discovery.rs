@@ -24,11 +24,12 @@ pub fn start(
     state: AppState,
     device_id: &str,
     instance: &str,
+    who: &str,
     addresses: &[String],
     port: u16,
 ) -> anyhow::Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new()?;
-    register(&daemon, device_id, instance, addresses, port)?;
+    register(&daemon, device_id, instance, who, addresses, port)?;
 
     let receiver = daemon.browse(SERVICE_TYPE)?;
     let own_id = device_id.to_string();
@@ -46,10 +47,18 @@ pub fn start(
                         continue;
                     }
 
-                    let name = info
+                    // The machine's name, which every version has sent.
+                    let device_name = info
                         .get_property_val_str("name")
                         .unwrap_or_else(|| info.get_fullname())
                         .to_string();
+                    // The person's, where they are running a build that sends
+                    // it. Older ones do not, and fall back to the machine.
+                    let name = info
+                        .get_property_val_str("who")
+                        .map(str::to_string)
+                        .filter(|w| !w.trim().is_empty())
+                        .unwrap_or_else(|| device_name.clone());
 
                     let found: Vec<String> = info
                         .get_addresses()
@@ -73,6 +82,7 @@ pub fn start(
                                     }
                                 }
                                 existing.name = name.clone();
+                                existing.device_name = device_name.clone();
                                 existing.port = info.get_port();
                                 existing.last_seen = now_ms();
                                 // Prefer an address we can still reach.
@@ -86,6 +96,7 @@ pub fn start(
                                     id: peer_id.clone(),
                                     device_id: peer_id.clone(),
                                     name: name.clone(),
+                                    device_name: device_name.clone(),
                                     color: String::from("#F5A623"),
                                     emoji: String::from("🏮"),
                                     os: info
@@ -135,13 +146,21 @@ fn register(
     daemon: &ServiceDaemon,
     device_id: &str,
     instance: &str,
+    who: &str,
     addresses: &[String],
     port: u16,
 ) -> anyhow::Result<()> {
     let host = format!("{}.local.", sanitize(instance));
     let mut props: HashMap<String, String> = HashMap::new();
     props.insert("id".into(), device_id.to_string());
+    // The machine's name, which is what this has always announced.
     props.insert("name".into(), instance.to_string());
+    // And the person's, which it never did — so everybody appeared to each
+    // other as a list of hostnames. Sent separately rather than instead,
+    // because both are worth knowing: one person can be at three devices.
+    if !who.is_empty() {
+        props.insert("who".into(), who.to_string());
+    }
     props.insert("os".into(), std::env::consts::OS.to_string());
     props.insert("v".into(), env!("CARGO_PKG_VERSION").to_string());
 
@@ -165,11 +184,12 @@ pub fn reannounce(
     daemon: &ServiceDaemon,
     device_id: &str,
     instance: &str,
+    who: &str,
     addresses: &[String],
     port: u16,
 ) {
     let _ = daemon.unregister(&format!("{}.{}", sanitize(instance), SERVICE_TYPE));
-    if let Err(e) = register(daemon, device_id, instance, addresses, port) {
+    if let Err(e) = register(daemon, device_id, instance, who, addresses, port) {
         eprintln!("could not re-announce after a network change: {e}");
     }
 }

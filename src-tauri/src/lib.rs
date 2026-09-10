@@ -112,6 +112,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_services,
             commands::host_os,
+            commands::profile_announce,
             commands::profile_set_avatar,
             commands::profile_has_avatar,
             commands::net_info,

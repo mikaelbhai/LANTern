@@ -24,7 +24,15 @@ export interface Peer {
   id: string;
   /** Stable across address changes — the thing that makes a peer one peer. */
   deviceId: string;
+  /** What to call them: their own name, where they have set one. */
   name: string;
+  /**
+   * The machine's name.
+   *
+   * Worth showing alongside rather than instead — one person can be at three
+   * devices, and "Mikael" on its own does not say which.
+   */
+  deviceName?: string;
   color: string;
   emoji: string;
   os: OS;

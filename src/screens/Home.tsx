@@ -16,6 +16,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { DeviceTag } from '../components/PeerName';
 import { ConnBadge, NatBadge, ScopeBadge, latencyTone } from '../components/ConnBadge';
 import { Badge, Button, Empty, IconButton, SectionTitle, Tooltip } from '../components/ui';
 import { api } from '../lib/bridge';
@@ -320,6 +321,7 @@ function PeerCard({ peer, onNavigate }: { peer: Peer; onNavigate: (s: Screen) =>
             <Tooltip content={osLabel(peer.os)}>
               <span className="text-xs leading-none">{osGlyph(peer.os)}</span>
             </Tooltip>
+            <DeviceTag peer={peer} />
           </div>
           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
             <ConnBadge layer={peer.layer} />

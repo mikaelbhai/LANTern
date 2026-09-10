@@ -391,6 +391,14 @@ export const api = {
   },
   profile: {
     os: () => call<string>('host_os'),
+    /**
+     * Tells the network what to call you.
+     *
+     * The name is typed and stored in the frontend; the announcement happens
+     * natively. Until these were connected every device advertised only its
+     * hostname, so the network was a list of machines rather than of people.
+     */
+    announce: (name: string) => call<void>('profile_announce', { name }),
     /** Stores a 500x500 PNG. An empty array clears it. */
     setAvatar: (png: number[]) => call<void>('profile_set_avatar', { png }),
     hasAvatar: () => call<boolean>('profile_has_avatar'),
