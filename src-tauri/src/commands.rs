@@ -1,5 +1,7 @@
 //! Tauri command surface. Mirrors `src/lib/bridge.ts` one-to-one.
 
+use std::time::Duration;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::model::{
@@ -133,25 +135,15 @@ pub fn boot(app: AppHandle, state: AppState) {
     }
 
     // Static host server for published folders.
+    //
+    // The detached host is stopped first, and here rather than once the app has
+    // finished starting: only one process can hold this port, and a bind while
+    // it is still held fails outright. Stopping it later was the bug — by the
+    // time the host died the app's own server had already given up, and the
+    // window went on showing folders live at a port nothing answered on.
     {
-        let owned = (*state).clone();
-        let app_for_host = app.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(e) = hosting::serve(owned, host_port).await {
-                // A port that will not bind is the difference between an app
-                // that works and one that looks fine and answers nothing. It
-                // has to reach the window, not just stderr.
-                let _ = app_for_host.emit(
-                    "service:failed",
-                    serde_json::json!({
-                        "service": "hosting",
-                        "port": host_port,
-                        "detail": e.to_string(),
-                    }),
-                );
-                eprintln!("host server stopped: {e}");
-            }
-        });
+        stop_host_service(&app);
+        spawn_share_server(&app, &state, host_port);
     }
 
     // Peer transport. This is what carries chat, presence and call setup —
@@ -1304,6 +1296,62 @@ pub fn media_set_tracks(
 
 /* ------------------------------------------------ hosting without the app */
 
+/// Binds the hosting port, waiting for it if something else still holds it.
+///
+/// Returns the reason it could not, or `None` if it served until the process
+/// ended. Patience matters here: a detached host that has just been killed
+/// does not release its socket the same instant, and a second copy of the app
+/// may be part-way through exiting. A refusal in the first few seconds is not
+/// an answer yet, and treating it as one leaves nobody serving at all.
+/// How long the hosting port is waited for before the wait becomes a failure.
+///
+/// Long enough for a stopped host to let go of its socket, short enough that a
+/// port genuinely taken by something else is reported while somebody is still
+/// looking at the screen.
+const PATIENCE: Duration = Duration::from_secs(10);
+
+/// Starts the published-folders server and remembers how it went.
+///
+/// The failure is recorded as well as announced. The announcement happens
+/// while the window is still loading, so nothing is listening for it yet — the
+/// recorded reason is what the window reads once it arrives.
+fn spawn_share_server(app: &AppHandle, state: &AppState, port: u16) {
+    let owned = state.clone();
+    let reporter = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let failure = serve_shares(owned.clone(), port, PATIENCE).await;
+        owned.with(|s| s.host_error = failure.clone());
+        if let Some(detail) = failure {
+            // A port that will not bind is the difference between an app that
+            // works and one that looks fine and answers nothing.
+            let _ = reporter.emit(
+                "service:failed",
+                serde_json::json!({
+                    "service": "hosting",
+                    "port": port,
+                    "detail": detail,
+                }),
+            );
+            eprintln!("host server stopped: {detail}");
+        }
+    });
+}
+
+async fn serve_shares(state: AppState, port: u16, patience: Duration) -> Option<String> {
+    let started = std::time::Instant::now();
+    loop {
+        match hosting::serve(state.clone(), port).await {
+            Ok(()) => return None,
+            Err(e) if started.elapsed() < patience => {
+                eprintln!("host port {port} busy ({e}); retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            }
+            Err(e) => return Some(e.to_string()),
+        }
+    }
+}
+
+
 /// Where the detached host records that it is running.
 fn host_pid_file(app: &AppHandle) -> Option<std::path::PathBuf> {
     use tauri::Manager;
@@ -1449,12 +1497,78 @@ pub fn service_set(app: AppHandle, state: State<'_, AppState>, enabled: bool) {
     }
 }
 
+/// Whether a process with this id exists.
+///
+/// Asked because a host that was killed does not tidy up after itself, so its
+/// note saying "I am running" outlives it.
+fn process_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let Ok(out) = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        else {
+            return false;
+        };
+        // With no match tasklist prints an informational line rather than
+        // failing, so the exit status says nothing; the id itself does.
+        String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+}
+
 /// Whether the detached host is running right now.
+///
+/// The pid file surviving is not the question. A host stopped with force
+/// leaves its note behind, and reading only the note had the window reporting
+/// a background server that had not existed since the last restart.
 #[tauri::command]
 pub fn service_running(app: AppHandle) -> bool {
-    host_pid_file(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .is_some()
+    let Some(path) = host_pid_file(&app) else {
+        return false;
+    };
+    let alive = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| t.trim().parse::<u32>().ok())
+        .map(process_alive)
+        .unwrap_or(false);
+    if !alive {
+        let _ = std::fs::remove_file(&path);
+    }
+    alive
+}
+
+/// Why published folders are not being served, when they are not.
+///
+/// Returns nothing at all when the server is up, which is the ordinary case.
+#[tauri::command]
+pub fn host_status(state: State<'_, AppState>) -> Option<String> {
+    state.with(|s| s.host_error.clone())
+}
+
+/// Tries the hosting port again after it would not bind.
+///
+/// Only when it is actually down: starting a second server beside a working
+/// one would bind nothing, then record the working one as broken.
+#[tauri::command]
+pub fn host_retry(app: AppHandle, state: State<'_, AppState>) -> bool {
+    let owned = (*state).clone();
+    let Some(port) = owned.with(|s| s.host_error.take().map(|_| s.net.host_port)) else {
+        return false;
+    };
+    stop_host_service(&app);
+    spawn_share_server(&app, &owned, port);
+    true
 }
 
 /* -------------------------------------------- browsing a peer's folders */
@@ -2661,4 +2775,80 @@ pub fn media_set_progress(state: State<'_, AppState>, id: String, progress_sec: 
     // place on restart is the difference between "Continue watching" being a
     // feature and being an empty row.
     media::save_progress(&state, &id, progress_sec, duration);
+}
+
+#[cfg(test)]
+mod host_port_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// Connecting the way a phone would, to see whether anybody is home.
+    async fn answers(port: u16) -> bool {
+        tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok()
+    }
+
+    /// The whole bug in one test.
+    ///
+    /// A detached host was holding the port when the app started. The app
+    /// tried once, failed, and gave up; the host was stopped a moment later,
+    /// and from then on nothing at all was listening while the window happily
+    /// showed two folders live. Waiting for the port is what makes the order
+    /// of those two events stop mattering.
+    #[tokio::test]
+    async fn waits_for_a_port_somebody_else_is_holding() {
+        let squatter = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let port = squatter.local_addr().unwrap().port();
+
+        let state = AppState::new();
+        let gave_up = Arc::new(AtomicBool::new(false));
+        let flag = gave_up.clone();
+        let serving = state.clone();
+        tokio::spawn(async move {
+            let _ = serve_shares(serving, port, Duration::from_secs(10)).await;
+            flag.store(true, Ordering::SeqCst);
+        });
+
+        // While the port is held, it must still be trying.
+        tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+        assert!(!gave_up.load(Ordering::SeqCst), "it gave up while the port was busy");
+
+        // The host lets go, as it does when the app stops it.
+        drop(squatter);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if answers(port).await {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("the port came free and nothing took it");
+    }
+
+    /// A port that is never coming free has to be reported, not waited on
+    /// forever — silence there is the same failure wearing a different hat.
+    #[tokio::test]
+    async fn a_port_that_never_frees_is_reported() {
+        let squatter = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let port = squatter.local_addr().unwrap().port();
+
+        let why = serve_shares(AppState::new(), port, Duration::from_millis(600)).await;
+        assert!(why.is_some(), "a permanently busy port looked like success");
+        drop(squatter);
+    }
+
+    /// The process this device is definitely running is its own.
+    #[test]
+    fn a_live_process_is_seen_as_live() {
+        assert!(process_alive(std::process::id()), "own process reported dead");
+    }
+
+    /// And a note left behind by a dead one is not evidence of anything.
+    #[test]
+    fn an_impossible_process_is_not() {
+        // Ids are recycled, so the guarantee here is only about a value that
+        // is not a process id at all.
+        assert!(!process_alive(0xFFFF_FFFE));
+    }
 }

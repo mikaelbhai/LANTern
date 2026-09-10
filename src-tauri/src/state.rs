@@ -56,6 +56,14 @@ pub struct Inner {
     pub library_unreachable: Vec<String>,
     /// Where a given transfer should be saved, when the receiver chose.
     pub download_into: std::collections::HashMap<String, Option<String>>,
+    /// Why the published-folders server is not answering, when it is not.
+    ///
+    /// A share is marked live in the database, which is a record of intent and
+    /// not of a bound socket. The two came apart badly: a detached host held
+    /// the port, the app's own bind failed, and the window went on showing two
+    /// green dots at a port nothing was listening on. Keeping the reason means
+    /// the window can say what happened instead of looking like a firewall.
+    pub host_error: Option<String>,
     /// Devices refused outright: no link, no calls, no files, not listed.
     ///
     /// Keyed by device id rather than address, because an address is not an
@@ -107,6 +115,7 @@ impl AppState {
             thumb_dir: None,
             library_unreachable: Vec::new(),
             download_into: std::collections::HashMap::new(),
+            host_error: None,
             blocked: std::collections::HashSet::new(),
         })))
     }

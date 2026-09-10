@@ -4,6 +4,7 @@ import { Menu, Flashlight, Settings as SettingsIcon, X } from 'lucide-react';
 import { MobileTabBar, NAV_ITEMS, Sidebar } from './components/Sidebar';
 import { Onboarding } from './components/Onboarding';
 import { Toasts } from './components/Toasts';
+import { SystemPromptHost } from './components/SystemPrompt';
 import { Wordmark } from './components/Logo';
 import { Avatar } from './components/Avatar';
 import { IconButton } from './components/ui';
@@ -235,6 +236,9 @@ export default function App() {
 
       {call && <CallOverlay />}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {/* Above the call overlay in the tree, because the microphone prompt it
+          explains is the one that happens on the way into a call. */}
+      <SystemPromptHost />
       <Toasts />
     </div>
   );

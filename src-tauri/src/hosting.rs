@@ -456,7 +456,7 @@ async fn respond(
     // A media share advertises its contents as JSON so a peer's Theatre can
     // enumerate titles without scraping an HTML listing.
     if mode == ShareMode::Media && rel == "index.json" {
-        return media_manifest(&state, &slug, &root).await;
+        return media_manifest(&state, &slug, &root, headers).await;
     }
 
     // SubRip is the format everyone has and no browser will load. Converting
@@ -637,11 +637,30 @@ fn parse_range(header: &str, total: u64) -> Option<(u64, u64)> {
 }
 
 
+/// The host and port the caller used to get here.
+///
+/// Taken from the request rather than from this device's own configuration,
+/// because they are not the same question: one is where somebody reached us,
+/// the other is where we happen to think we live. Only the first is known to
+/// work for whoever is asking.
+fn origin_of(headers: &HeaderMap) -> Option<String> {
+    let host = headers.get(header::HOST)?.to_str().ok()?.trim();
+    // A bare name with no port would build a URL to port 80, which is not
+    // where this server is. Refusing here falls back to the configured
+    // address, which is at least complete.
+    (!host.is_empty() && host.contains(':')).then(|| host.to_string())
+}
+
 /// Walks a media share and returns every video file it holds.
 ///
 /// Recursion is bounded so a share pointed at a deep or looping tree cannot
 /// stall the request.
-async fn media_manifest(state: &AppState, slug: &str, root: &Path) -> Response {
+async fn media_manifest(
+    state: &AppState,
+    slug: &str,
+    root: &Path,
+    headers: &HeaderMap,
+) -> Response {
     let (share_id, ip, host_port) = state.with(|s| {
         (
             s.shares
@@ -654,12 +673,20 @@ async fn media_manifest(state: &AppState, slug: &str, root: &Path) -> Response {
         )
     });
 
+    // Every title carries the address it can be fetched from, and the only
+    // address known to work is the one this request just arrived on. Using
+    // this device's own idea of its address instead was wrong the moment
+    // there was more than one: a machine on both ethernet and wi-fi picks one
+    // of them, and a phone that can only reach the other was handed a library
+    // of titles it could list and not one it could play.
+    let authority = origin_of(headers).unwrap_or_else(|| format!("{ip}:{host_port}"));
+
     // Exactly what this device's own Theatre shows for the same share. Walking
     // the folder a second time here is how the two views drifted apart.
     let root = root.to_path_buf();
     let slug_captured = slug.to_string();
     let items = tokio::task::spawn_blocking(move || {
-        crate::media::items_for_share(&share_id, &slug_captured, &root, &ip, host_port)
+        crate::media::items_for_share(&share_id, &slug_captured, &root, &authority)
     })
     .await
     .unwrap_or_default();
@@ -956,9 +983,15 @@ mod tests {
     }
 
     async fn get(addr: std::net::SocketAddr, path: &str, extra: &str) -> String {
+        get_as(addr, path, "localhost", extra).await
+    }
+
+    /// The same request, from somebody who reached this server by a
+    /// particular address — which is what the manifest has to answer with.
+    async fn get_as(addr: std::net::SocketAddr, path: &str, host: &str, extra: &str) -> String {
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let request =
-            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n{extra}\r\n");
+            format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n{extra}\r\n");
         stream.write_all(request.as_bytes()).await.unwrap();
         let mut out = Vec::new();
         stream.read_to_end(&mut out).await.unwrap();
@@ -1023,5 +1056,51 @@ mod tests {
         std::fs::write(root.join("clip.mp4"), b"fake video").unwrap();
         let response = get(addr, "/test/index.json", "").await;
         assert!(response.contains("clip.mp4"), "{response}");
+    }
+
+    /// A machine on two networks has two addresses, and the one it picked for
+    /// itself is not necessarily the one that reached it. Answering with that
+    /// address anyway gave a phone a library it could list and could not play
+    /// a single title from.
+    #[tokio::test]
+    async fn stream_urls_use_the_address_the_caller_reached() {
+        let (addr, root) = serve_fixture(ShareMode::Media).await;
+        std::fs::write(root.join("clip.mp4"), b"fake video").unwrap();
+
+        let response = get_as(addr, "/test/index.json", "192.168.100.141:7981", "").await;
+        assert!(
+            response.contains("http://192.168.100.141:7981/test/clip.mp4"),
+            "{response}"
+        );
+    }
+
+    /// Every generated address, not only the video: art and subtitles hang off
+    /// the same manifest and are just as unreachable when they point elsewhere.
+    #[tokio::test]
+    async fn so_does_everything_else_in_the_manifest() {
+        let (addr, root) = serve_fixture(ShareMode::Media).await;
+        std::fs::write(root.join("clip.mp4"), b"fake video").unwrap();
+
+        let response = get_as(addr, "/test/index.json", "10.0.0.9:7981", "").await;
+        assert!(response.contains("thumb=1"), "no thumbnail url at all: {response}");
+        assert!(
+            !response.contains("http://0.0.0.0:"),
+            "something still points at the configured address: {response}"
+        );
+    }
+
+    /// A name with no port would build a URL to port 80, where this server is
+    /// not. The configured address is wrong for some callers; port 80 is wrong
+    /// for all of them.
+    #[tokio::test]
+    async fn a_host_without_a_port_is_not_believed() {
+        let (addr, root) = serve_fixture(ShareMode::Media).await;
+        std::fs::write(root.join("clip.mp4"), b"fake video").unwrap();
+
+        let response = get_as(addr, "/test/index.json", "lantern.local", "").await;
+        assert!(
+            !response.contains("http://lantern.local/"),
+            "built a url to port 80: {response}"
+        );
     }
 }

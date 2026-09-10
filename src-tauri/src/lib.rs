@@ -172,6 +172,8 @@ pub fn run() {
             commands::service_get,
             commands::service_set,
             commands::service_running,
+            commands::host_status,
+            commands::host_retry,
             commands::peers_shares,
             commands::peers_browse,
             commands::peers_block,
@@ -241,21 +243,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while running LANTern")
-        .run(|app, event| {
-            // Only one process can hold the hosting port. While the app is
-            // open it should be this one, so a detached host from a previous
-            // session is stopped before anything else happens.
-            if let tauri::RunEvent::Ready = event {
-                commands::stop_host_service(app);
-            }
-
+        .run(|_app, event| {
             // On the way out, hand hosting back — if that was asked for. The
             // host waits for the port, because this process is still holding
             // it as it exits.
             #[cfg(desktop)]
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
-                let state = app.state::<state::AppState>();
+                let state = _app.state::<state::AppState>();
                 let keep = state.with(|s| {
                     s.db.as_ref()
                         .and_then(|db| {
@@ -270,7 +265,7 @@ pub fn run() {
                         .unwrap_or(false)
                 });
                 if keep {
-                    commands::start_host_service(app, &state);
+                    commands::start_host_service(_app, &state);
                 }
             }
         });

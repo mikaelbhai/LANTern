@@ -5,6 +5,7 @@ import * as rtc from './webrtc';
 import { notifyMessage } from './ringer';
 import { gameName } from './games';
 import { openPrivacySettings, readMediaError } from './mediaerror';
+import { primed } from './primergate';
 import type { MediaWanted } from './mediaerror';
 import { emptyScores, record } from './scores';
 import type { Result, Scores } from './scores';
@@ -1314,12 +1315,28 @@ export const useStore = create<State>((set, get) => {
 
       // Negotiate for real. The session stays "connecting" until the far side
       // answers — there is no timer pretending it succeeded.
-      void Promise.all(peerIds.map((peerId) => rtc.placeCall(peerId, call.id, kind)))
+      //
+      // The microphone prompt happens inside `placeCall`, so the explanation
+      // of it has to come first. Every button that starts a call arrives here,
+      // which is why this sits in the store rather than beside any of them.
+      const wanted: MediaWanted = kind === 'video' ? 'camera' : 'microphone';
+      void primed(wanted)
+        .then((go) => {
+          // Backed out of the explanation: nothing has been asked of the
+          // system yet, so the call simply never happens.
+          if (!go) {
+            set((s) => (s.call?.id === call.id ? { call: null } : {}));
+            return Promise.reject(new Error('cancelled'));
+          }
+          return Promise.all(peerIds.map((peerId) => rtc.placeCall(peerId, call.id, kind)));
+        })
         .then(() => {
           set((s) => (s.call?.id === call.id ? { call: { ...s.call, state: 'ringing' } } : {}));
         })
         .catch((err: Error) => {
           set((s) => (s.call?.id === call.id ? { call: null } : {}));
+          // Choosing not to go ahead is not a failure to report back.
+          if (err.message === 'cancelled') return;
           reportCallFailure(get, err, kind, 'That device is not reachable.');
         });
     },
@@ -1329,8 +1346,16 @@ export const useStore = create<State>((set, get) => {
       const pending = call && pendingOffers.get(call.id);
       if (!call || !pending) return;
 
-      void rtc
-        .answerCall(pending.from, pending)
+      // Same prompt on this side of the call, and a worse moment to meet it
+      // unexpectedly: the phone is already ringing.
+      const wanted: MediaWanted = call.kind === 'video' ? 'camera' : 'microphone';
+      void primed(wanted)
+        .then((go) => {
+          // Still ringing, still answerable — backing out of the explanation
+          // does not decline the call on somebody's behalf.
+          if (!go) return Promise.reject(new Error('cancelled'));
+          return rtc.answerCall(pending.from, pending);
+        })
         .then(() => {
           pendingOffers.delete(call.id);
           set((s) =>
@@ -1341,6 +1366,7 @@ export const useStore = create<State>((set, get) => {
           sfx.callConnect();
         })
         .catch((err: Error) => {
+          if (err.message === 'cancelled') return;
           reportCallFailure(get, err, call.kind, 'The microphone or camera was unavailable.');
           get().endCall();
         });

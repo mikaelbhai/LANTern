@@ -384,6 +384,15 @@ export const api = {
     get: () => call<boolean>('service_get'),
     set: (enabled: boolean) => call<void>('service_set', { enabled }),
     running: () => call<boolean>('service_running'),
+    /**
+     * Why published folders are not being served, or null when they are.
+     *
+     * The failure happens while the window is still loading, so the event
+     * announcing it has nobody to reach. This is the same answer, asked for.
+     */
+    status: () => call<string | null>('host_status'),
+    /** Tries the port again. False when it was not down to begin with. */
+    retry: () => call<boolean>('host_retry'),
   },
   /** Tray and launch behaviour. No-ops in a plain browser. */
   system: {

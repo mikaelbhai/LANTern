@@ -38,6 +38,7 @@ import { useNow } from '../../lib/hooks';
 import type { Share, ShareMode, StagedEntry } from '../../lib/types';
 import { copyText } from '../../lib/clipboard';
 import { NetworkPrivacy } from '../../components/NetworkPrivacy';
+import { primed } from '../../lib/primergate';
 
 const MODES: {
   id: ShareMode;
@@ -88,7 +89,6 @@ const MODES: {
 function KeepHosting() {
   const [on, setOn] = React.useState(false);
   const [supported, setSupported] = React.useState(true);
-
   React.useEffect(() => {
     void api.service
       .get()
@@ -111,10 +111,84 @@ function KeepHosting() {
       <Toggle
         checked={on}
         onChange={(v) => {
-          setOn(v);
-          void api.service.set(v);
+          // Turning it off asks nobody anything, so it happens straight away.
+          if (!v) {
+            setOn(false);
+            void api.service.set(false);
+            return;
+          }
+          // Turning it on starts a separately-named program listening on the
+          // network, and the firewall asks about it. Somebody who was not
+          // expecting that has every reason to press Cancel — which disables
+          // the feature in a way that afterwards looks like a broken network.
+          void primed('firewall').then((go) => {
+            if (!go) return;
+            setOn(true);
+            void api.service.set(true);
+          });
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * The server behind those URLs, when it is not answering.
+ *
+ * A share stays marked live in the database whether or not anything holds the
+ * port — that record is intent, not a bound socket. The two came apart once,
+ * and the window went on showing green dots beside an address that refused
+ * every connection, which looks exactly like a firewall and is not one.
+ */
+function HostDown({ port }: { port: number }) {
+  const [why, setWhy] = React.useState<string | null>(null);
+  const [trying, setTrying] = React.useState(false);
+
+  React.useEffect(() => {
+    const read = () => {
+      void api.service
+        .status()
+        .then(setWhy)
+        .catch(() => setWhy(null));
+    };
+    read();
+    // It can also fail long after this screen was opened, and it spends a few
+    // seconds waiting for the port before deciding, so one look is too early
+    // to be sure either way.
+    const timer = window.setInterval(read, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!why) return null;
+
+  return (
+    <div className="rounded-card border border-danger/40 bg-danger/12 px-3 py-2.5 mb-3">
+      <p className="text-xs font-medium text-danger">
+        Nothing is being served on port {port}
+      </p>
+      <p className="text-2xs text-dim leading-relaxed mt-0.5">
+        The folders below are published, but the server that answers for them could not
+        start: {why}. Until it does, this device is unreachable in everyone else&rsquo;s
+        Theatre and file browser — no firewall setting will change that.
+      </p>
+      <Button
+        size="sm"
+        className="mt-2"
+        disabled={trying}
+        onClick={() => {
+          setTrying(true);
+          void api.service
+            .retry()
+            .catch(() => false)
+            .finally(() => {
+              // The bind waits before it gives up, so the answer is not
+              // instant; the poll above reports it either way.
+              window.setTimeout(() => setTrying(false), 1200);
+            });
+        }}
+      >
+        {trying ? 'Trying…' : 'Try again'}
+      </Button>
     </div>
   );
 }
@@ -161,6 +235,8 @@ export function Hosting() {
       </div>
 
       <div className="flex-1 scroll-y p-4">
+        {/* A dead server first: it is the one cause no network setting fixes. */}
+        <HostDown port={net ? net.hostPort : 7981} />
         {/* Publishing is exactly where "nobody can reach my files" matters. */}
         <NetworkPrivacy />
         <KeepHosting />

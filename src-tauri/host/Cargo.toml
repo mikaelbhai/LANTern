@@ -23,3 +23,10 @@ path = "src/main.rs"
 # name the code imports.
 lantern = { path = ".." }
 tokio = { version = "1", features = ["rt", "macros", "time", "net"] }
+
+# Windows shows a process by the name embedded in the file, and falls back to
+# the bare filename when there is none. Without this the firewall prompt asks
+# whether to allow "lantern-host.exe" — which reads like something that
+# arrived uninvited, and is the kind of thing people click Cancel on.
+[target.'cfg(windows)'.build-dependencies]
+tauri-winres = "0.3"

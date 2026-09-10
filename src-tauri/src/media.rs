@@ -26,9 +26,13 @@ pub fn rebuild(state: &AppState) -> Vec<serde_json::Value> {
         )
     });
 
+    // This device's own library, so its own address is the right one — there
+    // is no request to take a better answer from.
+    let authority = format!("{ip}:{host_port}");
+
     let mut items = Vec::new();
     for (share_id, slug, root) in shares {
-        items.extend(items_for_share(&share_id, &slug, &root, &ip, host_port));
+        items.extend(items_for_share(&share_id, &slug, &root, &authority));
     }
     items
 }
@@ -44,8 +48,10 @@ pub fn items_for_share(
     share_id: &str,
     slug: &str,
     root: &Path,
-    ip: &str,
-    host_port: u16,
+    // Host and port together, as `192.168.1.5:7981`. One argument rather than
+    // two because they always travel together and the caller that matters
+    // reads them from a single request header.
+    authority: &str,
 ) -> Vec<serde_json::Value> {
     let mut items = Vec::new();
 
@@ -71,7 +77,7 @@ pub fn items_for_share(
             "genres": Vec::<String>::new(),
             "addedAt": crate::model::now_ms(),
             "progressSec": 0,
-            "streamUrl": format!("http://{ip}:{host_port}/{slug}/{url_path}"),
+            "streamUrl": format!("http://{authority}/{slug}/{url_path}"),
         });
 
         // Read from the raw relative path, not the cleaned title: cleaning is
@@ -124,7 +130,7 @@ pub fn items_for_share(
                             "label": track.label(),
                             "lang": track.lang,
                             "url": format!(
-                                "http://{ip}:{host_port}/{slug}/{url_path}?subtitle={}",
+                                "http://{authority}/{slug}/{url_path}?subtitle={}",
                                 track.number
                             ),
                         }));
@@ -150,7 +156,7 @@ pub fn items_for_share(
                 obj.insert(
                     "posterUrl".into(),
                     serde_json::Value::String(format!(
-                        "http://{ip}:{host_port}/{slug}/{url_path}?thumb=1"
+                        "http://{authority}/{slug}/{url_path}?thumb=1"
                     )),
                 );
             }
@@ -158,7 +164,7 @@ pub fn items_for_share(
                 obj.insert(
                     "posterUrl".into(),
                     serde_json::Value::String(format!(
-                        "http://{ip}:{host_port}/{slug}/{dir_prefix}{}",
+                        "http://{authority}/{slug}/{dir_prefix}{}",
                         percent_encode(&art)
                     )),
                 );
@@ -172,7 +178,7 @@ pub fn items_for_share(
                     "label": sub.label,
                     "lang": sub.lang,
                     "url": format!(
-                        "http://{ip}:{host_port}/{slug}/{dir_prefix}{}",
+                        "http://{authority}/{slug}/{dir_prefix}{}",
                         percent_encode(&sub.file)
                     ),
                 })
