@@ -125,24 +125,37 @@ def symbol_mask(kind):
     d = ImageDraw.Draw(m)
 
     if kind == "skip":
-        d.ellipse([0, 0, SYM - 1, SYM - 1], outline=255, width=3)
-        d.line([3, SYM - 4, SYM - 4, 3], fill=255, width=3)
+        # An octagon, not a circle: it is a stop sign, and at this size the
+        # flat top edge is most of what tells the two apart.
+        d.regular_polygon(
+            (SYM // 2, SYM // 2, SYM // 2), n_sides=8, rotation=22, outline=255, width=2
+        )
+        d.line([3, SYM - 4, SYM - 4, 3], fill=255, width=2)
     elif kind == "reverse":
-        # Two arrows side by side heading opposite ways. Drawn apart rather
-        # than rotated about the centre: overlapped in the middle they stop
-        # being two arrows and start being a letter N.
-        d.line([4, SYM - 2, 4, 4], fill=255, width=2)
-        d.line([4, 3, 1, 7], fill=255, width=2)
-        d.line([4, 3, 7, 7], fill=255, width=2)
-
-        d.line([SYM - 5, 1, SYM - 5, SYM - 5], fill=255, width=2)
-        d.line([SYM - 5, SYM - 4, SYM - 8, SYM - 8], fill=255, width=2)
-        d.line([SYM - 5, SYM - 4, SYM - 2, SYM - 8], fill=255, width=2)
+        # One arrow with a head at each end, on the diagonal. Two separate
+        # arrows side by side read as the letter N at this size, which is what
+        # the first attempt at this drew.
+        d.line([2, SYM - 3, SYM - 3, 2], fill=255, width=2)
+        d.line([SYM - 3, 2, SYM - 8, 2], fill=255, width=2)
+        d.line([SYM - 3, 2, SYM - 3, 7], fill=255, width=2)
+        d.line([2, SYM - 3, 7, SYM - 3], fill=255, width=2)
+        d.line([2, SYM - 3, 2, SYM - 8], fill=255, width=2)
     elif kind == "draw2":
-        # Two cards, one behind the other.
-        d.rectangle([0, 3, SYM - 6, SYM - 1], outline=255, width=2)
-        d.rectangle([4, 0, SYM - 1, SYM - 5], fill=0, outline=255, width=2)
+        # Two cards, one behind the other and offset the way the reference
+        # stacks them.
+        d.rectangle([0, 4, SYM - 7, SYM - 1], outline=255, width=2)
+        d.rectangle([5, 0, SYM - 1, SYM - 6], fill=0, outline=255, width=2)
     return m
+
+
+def mini_cards(im, ox, oy):
+    """Four little cards fanned out, for the Wild Draw Four."""
+    d = ImageDraw.Draw(im)
+    order = ["blue", "red", "green", "yellow"]
+    for n, name in enumerate(order):
+        x = ox + n * 2
+        y = oy + (n % 2) * 2
+        d.rectangle([x, y, x + 4, y + 7], fill=BODY[name], outline=(20, 20, 24, 255))
 
 
 def blit(im, mask, ox, oy, colour):
@@ -191,7 +204,12 @@ def build_face(colour, face):
 def build_wild(four):
     im = card_base(WILD_BODY)
     oval(im, WILD_BODY)
-    quarters(im, (W - 13) // 2, 14, 13)
+    # The plain Wild is the four colours in a circle; the Draw Four is four
+    # cards, which is what the reference draws and what the card means.
+    if four:
+        mini_cards(im, (W - 12) // 2, 15)
+    else:
+        quarters(im, (W - 13) // 2, 14, 13)
     px = im.load()
     if four:
         corners(px, SMALL["+"], SMALL["4"])
