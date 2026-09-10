@@ -120,6 +120,7 @@ export async function startBridge() {
       'party:changed',
       'game:session',
       'main:away',
+      'update:progress',
     ];
 
     await Promise.all(
@@ -286,13 +287,16 @@ export const api = {
    * them and hands the file to the system installer.
    */
   update: {
-    /** Names the file that the next `stage` call will write. */
-    begin: (name: string) => call<void>('update_begin', { name }),
-    /** Writes the installer to disk and returns where it landed. */
-    stage: async (bytes: ArrayBuffer): Promise<string> => {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return invoke<string>('update_stage', bytes);
-    },
+    /**
+     * Fetches the installer straight to disk and returns where it landed.
+     *
+     * The bytes do not pass through here. They used to: the interface fetched
+     * the file, held it in memory, hashed it, and handed all forty megabytes
+     * back down to be written — which is a phone's javascript heap doing work
+     * it has no business doing, and which stopped working on Android.
+     */
+    download: (url: string, name: string, expected?: string) =>
+      call<string>('update_download', { url, name, expected: expected ?? null }),
     /** Opens it with the system installer. */
     launch: (path: string) => call<void>('update_launch', { path }),
   },
@@ -396,6 +400,14 @@ export const api = {
      */
     openPrivacySettings: (kind: 'microphone' | 'camera') =>
       call<boolean>('open_privacy_settings', { kind }),
+    /**
+     * Opens a web address in the system browser.
+     *
+     * Not `files.open`: a path and a URL are different things to the operating
+     * system, and asking it to open an https address as a file did nothing at
+     * all on Android.
+     */
+    openExternal: (url: string) => call<void>('open_external', { url }),
   },
   profile: {
     os: () => call<string>('host_os'),

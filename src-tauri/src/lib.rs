@@ -112,6 +112,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::start_services,
             commands::host_os,
+            commands::update_download,
+            commands::open_external,
             commands::open_privacy_settings,
             commands::profile_announce,
             commands::profile_set_avatar,
@@ -174,8 +176,6 @@ pub fn run() {
             commands::peers_blocked,
             commands::net_connection_profiles,
             commands::net_set_private,
-            commands::update_begin,
-            commands::update_stage,
             commands::update_launch,
             commands::media_set_progress,
             commands::game_start,

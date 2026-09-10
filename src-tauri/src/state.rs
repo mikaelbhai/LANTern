@@ -52,8 +52,6 @@ pub struct Inner {
     pub avatar: Option<Vec<u8>>,
     /// Where generated still frames are kept between runs.
     pub thumb_dir: Option<std::path::PathBuf>,
-    /// Filename announced by `update_begin`, awaiting its bytes.
-    pub pending_update: Option<String>,
     /// Peers that are linked but whose library could not be read.
     pub library_unreachable: Vec<String>,
     /// Where a given transfer should be saved, when the receiver chose.
@@ -107,7 +105,6 @@ impl AppState {
             transfers: Vec::new(),
             avatar: None,
             thumb_dir: None,
-            pending_update: None,
             library_unreachable: Vec::new(),
             download_into: std::collections::HashMap::new(),
             blocked: std::collections::HashSet::new(),

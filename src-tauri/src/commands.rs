@@ -1235,6 +1235,31 @@ pub fn files_open(app: AppHandle, path: String) {
     let _ = app.opener().open_path(path, None::<&str>);
 }
 
+/// Opens a web address in whatever the system uses for one.
+///
+/// Separate from `files_open` because a path and a URL are different things to
+/// the operating system, and asking it to open `https://...` as a file is a
+/// request it cannot satisfy. On the desktop that failed quietly; on Android
+/// it did nothing at all, which is how it was noticed.
+///
+/// Only http and https: this hands a string to the system's launcher, and the
+/// schemes it would otherwise accept include ones that run programs.
+#[tauri::command]
+pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    // reqwest's Url, which is already a dependency, rather than adding the
+    // same crate a second time under its own name.
+    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("not a usable address: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only web addresses can be opened".into());
+    }
+
+    app.opener()
+        .open_url(parsed.as_str(), None::<&str>)
+        .map_err(|e| format!("nothing could open it: {e}"))
+}
+
 fn reveal(app: &AppHandle, path: &str) {
     use tauri_plugin_opener::OpenerExt;
     // Selecting the file is friendlier than opening its folder, where it
@@ -1687,16 +1712,48 @@ fn update_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     Ok(dir)
 }
 
-/// Names the file the next `update_stage` call will write.
+/// The only hosts an update may come from.
 ///
-/// Split from the transfer itself because the bytes arrive as a raw body with
-/// no room for arguments alongside them — sending a 17 MB installer as a JSON
-/// array of numbers would cost several times its own size in the process.
+/// Checked on the final URL as well as the first, because a redirect is how a
+/// release asset is actually served and a redirect is also how somebody would
+/// send this somewhere else.
+fn is_github(url: &reqwest::Url) -> bool {
+    matches!(url.scheme(), "https")
+        && matches!(
+            url.host_str(),
+            Some("api.github.com")
+                | Some("github.com")
+                | Some("objects.githubusercontent.com")
+                | Some("release-assets.githubusercontent.com")
+        )
+}
+
+/// Fetches an update and writes it to disk, without it passing through the UI.
+///
+/// The installer used to be fetched by the webview, held in memory there,
+/// hashed there, and then handed back down through the IPC to be written. That
+/// is a forty megabyte file crossing the boundary twice and sitting in a
+/// phone's javascript heap in between, and the handing-back stopped working on
+/// Android - which is how this came to be looked at.
+///
+/// Now the bytes never reach the interface at all. They stream from the socket
+/// to the file, hashed on the way past, and what comes back is a path.
 #[tauri::command]
-pub fn update_begin(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    // A name from a release asset should be a plain filename; anything with a
-    // separator in it is refused rather than sanitised, because there is no
-    // legitimate reason for one to be there.
+pub async fn update_download(
+    app: AppHandle,
+    url: String,
+    name: String,
+    // The digest published beside the release, with or without its `sha256:`
+    // prefix. Absent where the release did not publish one.
+    expected: Option<String>,
+) -> Result<String, String> {
+    use futures_util::StreamExt;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    // The same rule the staging command applied: a release asset is a plain
+    // filename, and anything with a separator in it is refused rather than
+    // cleaned up, because there is no honest reason for one to be there.
     if name.is_empty()
         || name.contains(['/', '\\', '\0'])
         || name.contains("..")
@@ -1704,36 +1761,62 @@ pub fn update_begin(state: State<'_, AppState>, name: String) -> Result<(), Stri
     {
         return Err("refusing an update file with a suspicious name".into());
     }
-    state.with(|s| s.pending_update = Some(name));
-    Ok(())
-}
 
-/// Writes the downloaded installer to disk.
-///
-/// The bytes were fetched, and their SHA-256 checked against the digest GitHub
-/// published, by the webview — the only part of this application with a TLS
-/// stack, deliberately. This end only stores what it is given.
-#[tauri::command]
-pub fn update_stage(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    request: tauri::ipc::Request<'_>,
-) -> Result<String, String> {
-    let name = state
-        .with(|s| s.pending_update.clone())
-        .ok_or_else(|| "no update was announced".to_string())?;
-
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("expected the installer as a raw body".into());
-    };
-    if bytes.is_empty() {
-        return Err("the download was empty".into());
+    let parsed = reqwest::Url::parse(&url).map_err(|e| format!("not a usable address: {e}"))?;
+    if !is_github(&parsed) {
+        return Err("updates only come from the project's own releases".into());
     }
 
-    let path = update_dir(&app)?.join(&name);
-    std::fs::write(&path, bytes).map_err(|e| format!("could not write {path:?}: {e}"))?;
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("LANTern/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("could not start the download: {e}"))?;
 
-    state.with(|s| s.pending_update = None);
+    let response = client
+        .get(parsed)
+        .header("Accept", "application/octet-stream")
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub: {e}"))?;
+
+    // Wherever the redirects ended up has to be somewhere we would have gone.
+    if !is_github(response.url()) {
+        return Err("the download was redirected off GitHub".into());
+    }
+    if !response.status().is_success() {
+        return Err(format!("GitHub answered {}", response.status()));
+    }
+
+    let total = response.content_length().unwrap_or(0);
+    let path = update_dir(&app)?.join(&name);
+    let mut file =
+        std::fs::File::create(&path).map_err(|e| format!("could not write {path:?}: {e}"))?;
+
+    let mut hasher = Sha256::new();
+    let mut done: u64 = 0;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("the download stopped: {e}"))?;
+        hasher.update(&chunk);
+        file.write_all(&chunk)
+            .map_err(|e| format!("could not write {path:?}: {e}"))?;
+        done += chunk.len() as u64;
+        let _ = app.emit("update:progress", serde_json::json!({ "done": done, "total": total }));
+    }
+    file.flush().map_err(|e| format!("could not finish writing: {e}"))?;
+    drop(file);
+
+    // Checked before anything is allowed to run it, and the file is removed
+    // rather than left on disk where a later press might pick it up.
+    if let Some(want) = expected.filter(|w| !w.is_empty()) {
+        let got = format!("{:x}", hasher.finalize());
+        if !got.eq_ignore_ascii_case(want.trim_start_matches("sha256:")) {
+            let _ = std::fs::remove_file(&path);
+            return Err("the download does not match the published checksum. It was not saved.".into());
+        }
+    }
+
     Ok(path.to_string_lossy().to_string())
 }
 

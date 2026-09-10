@@ -31,11 +31,10 @@ import {
   RELEASE_REPO,
   checkForUpdate,
   currentVersion,
-  downloadUpdate,
   type UpdateStatus,
 } from '../lib/update';
 import { useLocalStorage } from '../lib/hooks';
-import { api } from '../lib/bridge';
+import { api, on } from '../lib/bridge';
 import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
@@ -920,16 +919,24 @@ function AboutTab() {
     setError(null);
     setProgress(0);
     setInstalling(true);
+
+    // Progress is reported from underneath, because that is where the bytes
+    // are now. Nothing of the file passes through here.
+    const off = on('update:progress', (p: { done?: number; total?: number }) =>
+      setProgress(p?.total ? (p.done ?? 0) / p.total : 0),
+    );
+
     try {
-      const bytes = await downloadUpdate(update.asset, (received, total) =>
-        setProgress(total ? received / total : 0),
+      const path = await api.update.download(
+        update.asset.url,
+        update.asset.name,
+        update.asset.digest,
       );
-      await api.update.begin(update.asset.name);
-      const path = await api.update.stage(bytes);
       await api.update.launch(path);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      off();
       setInstalling(false);
     }
   };
@@ -1013,7 +1020,7 @@ function AboutTab() {
                   <Button
                     size="sm"
                     icon={<ExternalLink size={13} />}
-                    onClick={() => update.url && void api.files.open(update.url)}
+                    onClick={() => update.url && void api.system.openExternal(update.url)}
                     disabled={!update.url}
                   >
                     Open the download page
@@ -1022,7 +1029,7 @@ function AboutTab() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => void api.files.open(update.asset!.url)}
+                      onClick={() => void api.system.openExternal(update.asset!.url)}
                     >
                       Download in browser
                     </Button>

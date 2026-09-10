@@ -47,6 +47,14 @@ anyhow = "1"
 # made natively. The plugin's scope, in capabilities/default.json,
 # limits it to the GitHub release hosts and nothing else.
 tauri-plugin-http = "2"
+# Downloading an update. Pinned to the version tauri-plugin-http already
+# brings, so this adds a dependency and not a second copy of a TLS stack.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "stream",
+] }
+sha2 = "0.10"
+futures-util = "0.3"
 tauri-plugin-clipboard-manager = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
