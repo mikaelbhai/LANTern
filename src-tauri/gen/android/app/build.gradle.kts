@@ -40,6 +40,26 @@ android {
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }
+    // One APK per processor architecture, alongside the universal one.
+    //
+    // Four fifths of this package is three copies of the same Rust library,
+    // one per architecture, and any given device runs exactly one of them.
+    // Splitting turns a 41 MB download into a 16-20 MB one; nothing is
+    // removed, each device simply stops carrying the two builds it cannot
+    // execute.
+    //
+    // The universal APK is kept because it installs anywhere, which matters
+    // when you are standing in front of a television and do not know what is
+    // inside it. It stays the one the build script installs over adb.
+    splits {
+        abi {
+            isEnable = project.hasProperty("lanternSplit")
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["usesCleartextTraffic"] = "true"

@@ -15,7 +15,14 @@ param(
   [switch]$Installer,
   # Also build LANTV: the same application under its own name and package, so
   # it can sit on a television beside the phone build rather than replacing it.
-  [switch]$Tv
+  [switch]$Tv,
+  # Also write one APK per processor architecture.
+  #
+  # Four fifths of the package is three copies of the same Rust library and a
+  # device runs exactly one of them, so a split APK is roughly half the size.
+  # Off by default because it is only worth the packaging time when the result
+  # is going to be published.
+  [switch]$Split
 )
 
 # Deliberately NOT "Stop": Windows PowerShell turns any native command's
@@ -191,7 +198,37 @@ if (-not $SkipAndroid) {
     Write-Host "  $($abi.jni)  $mb MB"
   }
 
-  $apk = "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
+  # Turning splits on renames the universal output as well: gradle stops
+  # writing app-universal-debug.apk and writes app-universal-universal-debug
+  # instead — the flavour and the "every architecture" split are both called
+  # universal. Everything downstream copies from this path, so it has to follow,
+  # and when it did not the TV APK was silently left over from the last build.
+  $apk = if ($Split) {
+    "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-universal-debug.apk"
+  } else {
+    "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
+  }
+
+
+# Collects the per-architecture APKs gradle just wrote.
+#
+# With splits on, gradle names the outputs app-<abi>-universal-debug.apk
+# alongside app-universal-universal-debug.apk. Both are copied out under
+# names that say which is which, because "universal" appearing twice in a
+# filename is not a thing anybody should have to interpret.
+function Save-SplitApks {
+  param([string]$outDir, [string]$prefix)
+
+  $built = "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug"
+  foreach ($abi in @("arm64-v8a", "armeabi-v7a", "x86_64")) {
+    # Gradle names these flavour-first: app-universal-arm64-v8a-debug.apk.
+    $from = "$built\app-universal-$abi-debug.apk"
+    if (-not (Test-Path $from)) { continue }
+    $to = "$outDir\$prefix-$abi.apk"
+    Copy-Item $from $to -Force
+    Write-Host ("  {0,-24} {1,5:N1} MB" -f "$prefix-$abi", ((Get-Item $to).Length / 1MB))
+  }
+}
 
   Write-Host "`n=== android: gradle ===" -ForegroundColor Cyan
   # Delete the previous APK first. Gradle packages incrementally, and when
@@ -202,10 +239,18 @@ if (-not $SkipAndroid) {
   Remove-Item $apk -ErrorAction SilentlyContinue
 
   Set-Location "$root\src-tauri\gen\android"
-  .\gradlew.bat assembleUniversalDebug -x rustBuildUniversalDebug --no-daemon -q
+  # Written out twice rather than splatted. Splatting an array into gradlew.bat
+  # put a bare "-" on the command line, which gradle read as a task name and
+  # refused; two literal lines cannot do that.
+  if ($Split) {
+    .\gradlew.bat assembleUniversalDebug -PlanternSplit=true -x rustBuildUniversalDebug --no-daemon -q
+  } else {
+    .\gradlew.bat assembleUniversalDebug -x rustBuildUniversalDebug --no-daemon -q
+  }
   if ($LASTEXITCODE -ne 0) { Write-Error "gradle build failed"; exit 1 }
 
   Write-Host "  APK  $([math]::Round((Get-Item $apk).Length / 1MB, 1)) MB  $apk"
+  if ($Split) { Save-SplitApks "$root\src-tauri\gen\android" "LANTern-phone" }
 
   if ($Tv) {
     # The same application and the same native libraries, under its own name
@@ -216,12 +261,17 @@ if (-not $SkipAndroid) {
     Copy-Item $apk $phoneApk -Force
 
     Remove-Item $apk -ErrorAction SilentlyContinue
-    .\gradlew.bat assembleUniversalDebug -PlanternTv=true -x rustBuildUniversalDebug --no-daemon -q
+    if ($Split) {
+      .\gradlew.bat assembleUniversalDebug -PlanternTv=true -PlanternSplit=true -x rustBuildUniversalDebug --no-daemon -q
+    } else {
+      .\gradlew.bat assembleUniversalDebug -PlanternTv=true -x rustBuildUniversalDebug --no-daemon -q
+    }
     if ($LASTEXITCODE -ne 0) { Write-Error "LANTV build failed"; exit 1 }
 
     $tvApk = "$root\src-tauri\gen\android\LANTV.apk"
     Copy-Item $apk $tvApk -Force
     Write-Host "  LANTV  $([math]::Round((Get-Item $tvApk).Length / 1MB, 1)) MB  $tvApk"
+    if ($Split) { Save-SplitApks "$root\src-tauri\gen\android" "LANTV" }
 
     # Leave the phone APK where the rest of the script expects it.
     Copy-Item $phoneApk $apk -Force
