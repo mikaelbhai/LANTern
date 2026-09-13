@@ -214,6 +214,17 @@ export const api = {
      */
     offer: (peerId: string, paths: string[]) => call<Transfer[]>('files_offer', { peerId, paths }),
     /**
+     * Turns whatever a picker returned into a file this device can send.
+     *
+     * A no-op for a desktop path. On Android it copies the content URI into
+     * the app's own storage, because that is the only way to get a path.
+     */
+    stage: (source: string) =>
+      call<{ path: string; name: string; size: number; copied: boolean }>('files_stage', {
+        source,
+      }),
+    clearOutbox: () => call<void>('files_clear_outbox'),
+    /**
      * Starts pulling an offered file, resuming from whatever is on disk.
      *
      * `dir` is where it should land. Omitted means the usual folder.

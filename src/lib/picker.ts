@@ -93,9 +93,14 @@ export async function pickFiles(accept?: string): Promise<PickedFolder | null> {
 
 /**
  * Android's file picker is the Storage Access Framework, which hands back
- * `content://` URIs rather than filesystem paths. The Rust server opens paths,
- * so there is nothing it could serve from one. A phone therefore joins as a
- * consumer — it watches and downloads, it does not publish.
+ * `content://` URIs rather than filesystem paths, and the Rust server opens
+ * paths. For *publishing a folder* there is nothing to be done about that: a
+ * folder of content URIs is not something that can be served. A phone
+ * therefore joins the library as a consumer — it watches and downloads.
+ *
+ * Sending individual files is a different matter and does work: each one is
+ * copied into the app's own storage first, where it has a path like anything
+ * else. See `pickFilesToSend`.
  */
 export const isAndroid = (): boolean =>
   typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
@@ -125,14 +130,33 @@ export interface StagedFile {
  * server opens files by path.
  */
 export async function pickFilesToSend(): Promise<StagedFile[]> {
-  if (isTauri() && !isAndroid()) {
+  if (isTauri()) {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const selected = await open({ directory: false, multiple: true }).catch(() => null);
-    const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
-    if (!paths.length) return [];
+    const picked = Array.isArray(selected) ? selected : selected ? [selected] : [];
+    if (!picked.length) return [];
+
     const { api } = await import('./bridge');
-    const stats = await api.files.stat(paths).catch(() => []);
-    return stats.map((f) => ({ name: f.name, size: f.size, path: f.path }));
+
+    if (!isAndroid()) {
+      const stats = await api.files.stat(picked).catch(() => []);
+      return stats.map((f) => ({ name: f.name, size: f.size, path: f.path }));
+    }
+
+    // Android's picker hands back `content://` URIs naming files that belong
+    // to other applications. They cannot be opened by path, and the sender's
+    // HTTP server opens files by path — so each one is copied into this app's
+    // own storage first, which is the only thing that can read them.
+    //
+    // Before this, a phone could pick files and then be told there was nothing
+    // to send, because every entry arrived without a path and the send step
+    // quietly dropped all of them.
+    const staged: StagedFile[] = [];
+    for (const source of picked) {
+      const file = await api.files.stage(source).catch(() => null);
+      if (file) staged.push({ name: file.name, size: file.size, path: file.path });
+    }
+    return staged;
   }
 
   return new Promise((resolve) => {

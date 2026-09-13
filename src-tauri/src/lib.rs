@@ -184,6 +184,8 @@ pub fn run() {
             commands::control_send,
             commands::control_screen_url,
             commands::control_ask_screen,
+            commands::files_stage,
+            commands::files_clear_outbox,
             commands::autoshare_get,
             commands::autoshare_set,
             commands::control_status,

@@ -861,7 +861,19 @@ function CollectionCard({
   collection: Collection;
   onOpen: () => void;
 }) {
-  const cover = collection.items[0];
+  // The first member that has a picture, rather than simply the first.
+  //
+  // A collection card was passing only a seed, so it drew the generated
+  // gradient while every episode inside it showed a real frame — the one card
+  // standing for fifteen things was the only one with nothing to look at.
+  //
+  // Episode one is the natural choice and is often the one with artwork beside
+  // it; when it is not, anything in the set is a better cover than a gradient,
+  // and a frame from episode two still says what the programme is.
+  const cover =
+    collection.items.find((i) => i.posterUrl) ??
+    collection.items.find((i) => i.streamUrl) ??
+    collection.items[0];
   return (
     <motion.div
       whileHover={{ scale: 1.05, y: -4 }}
@@ -875,6 +887,8 @@ function CollectionCard({
         title={collection.title}
         subtitle={describeCollection(collection)}
         seed={cover?.id ?? collection.key}
+        posterUrl={cover?.posterUrl}
+        streamUrl={cover?.streamUrl}
         className="aspect-video"
       />
       <span className="absolute top-1.5 right-1.5">

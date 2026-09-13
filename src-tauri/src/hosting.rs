@@ -100,13 +100,30 @@ async fn serve_transfer(
     let Some(offered) = offered else {
         return (StatusCode::NOT_FOUND, "No such transfer").into_response();
     };
-    if !offered.path.is_file() {
-        return (StatusCode::GONE, "File is no longer available").into_response();
-    }
     let range = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    // A file picked on a phone comes as an open descriptor, not a path.
+    // Duplicating it gives this request its own read position, so two range
+    // requests cannot pull each other's offsets around.
+    if let Some(handle) = offered.handle.as_ref() {
+        let Ok(dup) = handle.try_clone() else {
+            return (StatusCode::GONE, "File is no longer available").into_response();
+        };
+        return send_open_file(
+            tokio::fs::File::from_std(dup),
+            &offered.name,
+            range.as_deref(),
+            None,
+        )
+        .await;
+    }
+
+    if !offered.path.is_file() {
+        return (StatusCode::GONE, "File is no longer available").into_response();
+    }
     send_file(&state, "", &offered.path, range.as_deref()).await
 }
 
@@ -544,11 +561,29 @@ async fn send_file(state: &AppState, slug: &str, file: &Path, range: Option<&str
     let Ok(handle) = tokio::fs::File::open(file).await else {
         return not_found("Not found");
     };
+    send_open_file(handle, &file.to_string_lossy(), range, Some((state, slug))).await
+}
+
+/// Streams a file that is already open.
+///
+/// Split out because a file picked on a phone can only be reached through the
+/// descriptor Android handed over: its path re-opens the original, which this
+/// application has no permission for. Everything past opening it — the range
+/// arithmetic, the chunking — is the same either way, and having one copy of
+/// that is the point.
+async fn send_open_file(
+    handle: tokio::fs::File,
+    name: &str,
+    range: Option<&str>,
+    // Which published share to count this against, when it belongs to one. A
+    // one-off transfer belongs to none.
+    counts_towards: Option<(&AppState, &str)>,
+) -> Response {
     let Ok(meta) = handle.metadata().await else {
         return not_found("Not found");
     };
     let total = meta.len();
-    let mime = mime_for(file);
+    let mime = mime_for(Path::new(name));
 
     let (start, end) = match range.and_then(|r| parse_range(r, total)) {
         Some(pair) => pair,
@@ -583,7 +618,9 @@ async fn send_file(state: &AppState, slug: &str, file: &Path, range: Option<&str
         tokio::io::AsyncReadExt::take(handle, length),
         512 * 1024,
     );
-    record_hit(state, slug, length);
+    if let Some((state, slug)) = counts_towards {
+        record_hit(state, slug, length);
+    }
 
     let mut builder = Response::builder()
         .status(if partial {

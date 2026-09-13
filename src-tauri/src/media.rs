@@ -467,33 +467,178 @@ fn parse_title(rel: &str) -> Parsed {
     }
 }
 
-/// Finds an `s01e02` / `S1E2` marker and where it starts.
-fn find_episode_marker(stem: &str) -> Option<(u32, u32, usize)> {
+/// Where a filename starts saying which episode it is, and which one.
+///
+/// Returns the season, the episode, and the byte at which the episode part
+/// begins — everything before that is the show's name.
+///
+/// Release groups write this half a dozen ways and a library that only knows
+/// one of them is a library that shows nine copies of the same programme as
+/// nine separate films, which is exactly what it did:
+///
+/// ```text
+///   Show.S03E12.1080p            the scene convention
+///   Show Season 3 Episode 12     what a download site writes
+///   Show Episode 9 In HD ...     the same, with no season
+///   Show 3x12                    the older convention
+///   Show - 12                    anime, and the dangerous one
+/// ```
+///
+/// The last is deliberately not matched. "Deadpool - 2016" and "Show - 1080p"
+/// are the same shape, and turning a film into episode 2016 of itself is a
+/// worse failure than leaving one anime file ungrouped: a wrong grouping hides
+/// the film inside a series nobody will look in.
+///
+/// Where several markers appear, the earliest wins, because everything before
+/// it is the name. "Season 3 Episode 12" has to be read as one thing, or the
+/// show ends up called "Mushoku Tensei Season 3".
+pub fn find_episode_marker(stem: &str) -> Option<(u32, u32, usize)> {
     let lower = stem.to_ascii_lowercase();
-    let bytes = lower.as_bytes();
 
+    let mut best: Option<(u32, u32, usize)> = None;
+    let mut consider = |found: Option<(u32, u32, usize)>| {
+        if let Some((s, e, at)) = found {
+            if best.is_none_or(|(_, _, prev)| at < prev) {
+                best = Some((s, e, at));
+            }
+        }
+    };
+
+    consider(scene_marker(&lower));
+    consider(worded_marker(&lower));
+    consider(cross_marker(&lower));
+
+    best
+}
+
+/// `S03E12`, and `s3e12`.
+fn scene_marker(lower: &str) -> Option<(u32, u32, usize)> {
+    let bytes = lower.as_bytes();
     for (i, _) in lower.match_indices('s') {
-        let mut j = i + 1;
-        let season_start = j;
-        while j < bytes.len() && bytes[j].is_ascii_digit() {
-            j += 1;
-        }
-        if j == season_start || j >= bytes.len() || bytes[j] != b'e' {
+        // Must not be the tail of a word: "episodes12" is not a season.
+        if i > 0 && (bytes[i - 1] as char).is_ascii_alphanumeric() {
             continue;
         }
-        let season: u32 = lower[season_start..j].parse().ok()?;
-        j += 1;
-        let ep_start = j;
-        while j < bytes.len() && bytes[j].is_ascii_digit() {
-            j += 1;
-        }
-        if j == ep_start {
+        // `continue`, not `?`. The first "s" in "Show" has no digits after it,
+        // and bailing out of the whole search there meant every scene-named
+        // file whose title happened to contain an s was never matched.
+        let Some((season, after)) = number_at(lower, i + 1) else {
+            continue;
+        };
+        if after >= bytes.len() || bytes[after] != b'e' {
             continue;
         }
-        let episode: u32 = lower[ep_start..j].parse().ok()?;
+        let Some((episode, _)) = number_at(lower, after + 1) else {
+            continue;
+        };
         return Some((season, episode, i));
     }
     None
+}
+
+/// `Season 3 Episode 12`, `Episode 9`, `Ep. 4`.
+///
+/// A season with no episode after it is not a marker: "Season 2" alone names
+/// a folder of a programme, not one instalment of it, and treating it as
+/// episode 1 would collapse a whole season into a single entry.
+fn worded_marker(lower: &str) -> Option<(u32, u32, usize)> {
+    let season_at = find_word(lower, "season");
+    let season = season_at.and_then(|at| number_after(lower, at + "season".len()));
+
+    for word in ["episode", "ep"] {
+        let Some(at) = find_word(lower, word) else {
+            continue;
+        };
+        let Some(episode) = number_after(lower, at + word.len()) else {
+            continue;
+        };
+        // The name ends wherever the description of the episode starts, which
+        // is the season if one was written before it.
+        let start = match (season_at, season) {
+            (Some(s_at), Some(_)) if s_at < at => s_at,
+            _ => at,
+        };
+        return Some((season.unwrap_or(1), episode, start));
+    }
+    None
+}
+
+/// `3x12`, the convention before the scene settled on S03E12.
+fn cross_marker(lower: &str) -> Option<(u32, u32, usize)> {
+    let bytes = lower.as_bytes();
+    for (i, _) in lower.match_indices('x') {
+        if i == 0 || i + 1 >= bytes.len() {
+            continue;
+        }
+        // Walk back over the season digits.
+        let mut start = i;
+        while start > 0 && bytes[start - 1].is_ascii_digit() {
+            start -= 1;
+        }
+        if start == i {
+            continue;
+        }
+        // "1920x1080" is a resolution, not a season. A season in three digits
+        // does not happen; a resolution always is.
+        if i - start > 2 {
+            continue;
+        }
+        if start > 0 && (bytes[start - 1] as char).is_ascii_alphanumeric() {
+            continue;
+        }
+        let Ok(season) = lower[start..i].parse::<u32>() else {
+            continue;
+        };
+        let Some((episode, after)) = number_at(lower, i + 1) else {
+            continue;
+        };
+        if after - (i + 1) > 3 {
+            continue;
+        }
+        return Some((season, episode, start));
+    }
+    None
+}
+
+/// The word, as a whole word rather than a fragment of another.
+fn find_word(haystack: &str, word: &str) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = haystack[from..].find(word) {
+        let at = from + rel;
+        let before_ok = at == 0 || !(bytes[at - 1] as char).is_ascii_alphanumeric();
+        let end = at + word.len();
+        // "ep" must not match inside "epic", but "ep." and "ep 4" are fine.
+        let after_ok = end >= bytes.len() || !(bytes[end] as char).is_ascii_alphabetic();
+        if before_ok && after_ok {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// The first number after some separators, e.g. the 12 in `episode - 12`.
+fn number_after(lower: &str, from: usize) -> Option<u32> {
+    let bytes = lower.as_bytes();
+    let mut i = from;
+    while i < bytes.len() && matches!(bytes[i], b' ' | b'.' | b'-' | b'_' | b':' | b'#') {
+        i += 1;
+    }
+    number_at(lower, i).map(|(n, _)| n)
+}
+
+/// The number starting exactly at `from`, and where it ends.
+fn number_at(lower: &str, from: usize) -> Option<(u32, usize)> {
+    let bytes = lower.as_bytes();
+    let mut end = from;
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end == from || end - from > 4 {
+        return None;
+    }
+    lower[from..end].parse().ok().map(|n| (n, end))
 }
 
 /// Turns `Some.Show.Name-1080p_x264` into `Some Show Name`.
@@ -796,5 +941,133 @@ mod tests {
     fn encodes_paths_that_need_it() {
         assert_eq!(percent_encode("a file.mp4"), "a%20file.mp4");
         assert_eq!(percent_encode("clip.mp4"), "clip.mp4");
+    }
+}
+
+#[cfg(test)]
+mod episode_tests {
+    use super::{find_episode_marker, parse_title};
+
+    fn marker(name: &str) -> Option<(u32, u32)> {
+        find_episode_marker(name).map(|(s, e, _)| (s, e))
+    }
+
+    #[test]
+    fn the_scene_convention() {
+        assert_eq!(marker("Show.S03E12.1080p.WEB"), Some((3, 12)));
+        assert_eq!(marker("show s1e2"), Some((1, 2)));
+        assert_eq!(marker("Show S01E01"), Some((1, 1)));
+    }
+
+    /// What download sites write, and what this library was full of.
+    #[test]
+    fn the_worded_convention() {
+        assert_eq!(marker("Jaadugar A Witch In Mongolia Episode 9 In HD Online For Free"), Some((1, 9)));
+        assert_eq!(marker("Mushoku Tensei Season 3 Episode 12"), Some((3, 12)));
+        assert_eq!(marker("Some Show Ep 4"), Some((1, 4)));
+        assert_eq!(marker("Some Show Ep. 4"), Some((1, 4)));
+        assert_eq!(marker("Some Show - Episode 07"), Some((1, 7)));
+    }
+
+    #[test]
+    fn the_older_convention() {
+        assert_eq!(marker("Show 3x12"), Some((3, 12)));
+        assert_eq!(marker("Show - 1x05 - Pilot"), Some((1, 5)));
+    }
+
+    /// A film must never become an episode. Hiding a film inside a series
+    /// nobody thinks to open is worse than leaving it ungrouped.
+    #[test]
+    fn films_are_left_alone() {
+        for film in [
+            "Deadpool 2 (2016) 1080p",
+            "Guardians of the Galaxy Vol 2",
+            "The Batman (2022) 2160p HDR",
+            "Flow 2024 1080p WEB-DL HEVC x265 BONE",
+            "Blade Runner 2049",
+            "Frankenstein",
+        ] {
+            assert_eq!(marker(film), None, "{film} was read as an episode");
+        }
+    }
+
+    /// A resolution is two numbers with an x between them, and so is an old
+    /// episode marker. The difference is how many digits.
+    #[test]
+    fn a_resolution_is_not_an_episode() {
+        assert_eq!(marker("Show 1920x1080"), None);
+        assert_eq!(marker("Show 3840x2160"), None);
+        assert_eq!(marker("Show 720x480"), None);
+    }
+
+    #[test]
+    fn a_season_alone_is_not_an_episode() {
+        // A folder named for a season is not one instalment of it, and
+        // reading it as episode 1 would collapse the season into one entry.
+        assert_eq!(marker("Smiling Friends Season 2"), None);
+        assert_eq!(marker("Season 3"), None);
+    }
+
+    #[test]
+    fn words_that_merely_contain_the_letters() {
+        assert_eq!(marker("Epic Adventure"), None, "epic is not an episode");
+        assert_eq!(marker("The Serpent"), None);
+        assert_eq!(marker("Deep Space"), None);
+    }
+
+    /// The whole point: the name stops where the episode marker starts.
+    #[test]
+    fn the_series_name_loses_the_junk_after_it() {
+        let p = parse_title("Jaadugar A Witch In Mongolia Episode 9 In HD Online For Free Animenosub.mkv");
+        assert_eq!(p.kind, "episode");
+        assert_eq!(p.series.as_deref(), Some("Jaadugar A Witch In Mongolia"));
+        assert_eq!(p.episode, Some(9));
+        assert_eq!(p.season, Some(1));
+    }
+
+    /// "Season 3 Episode 12" has to be read as one marker, or the programme
+    /// ends up called "Mushoku Tensei ... Season 3" and each season becomes
+    /// its own series.
+    #[test]
+    fn a_season_and_episode_together_are_one_marker() {
+        let p = parse_title("Mushoku Tensei Jobless Reincarnation Season 3 Episode 12.mkv");
+        assert_eq!(p.series.as_deref(), Some("Mushoku Tensei Jobless Reincarnation"));
+        assert_eq!(p.season, Some(3));
+        assert_eq!(p.episode, Some(12));
+    }
+
+    /// Every episode of one programme must produce the *same* series name, or
+    /// they scatter into separate collections.
+    #[test]
+    fn every_episode_agrees_on_the_name() {
+        let names: Vec<String> = (1..=12)
+            .map(|n| {
+                parse_title(&format!(
+                    "Jaadugar A Witch In Mongolia Episode {n} In HD Online For Free Animenosub.mkv"
+                ))
+                .series
+                .unwrap_or_default()
+            })
+            .collect();
+        let first = &names[0];
+        assert!(
+            names.iter().all(|n| n == first),
+            "the twelve episodes produced {} different names: {names:?}",
+            names.iter().collect::<std::collections::HashSet<_>>().len(),
+        );
+    }
+
+    /// And they must order 1, 2, 3 rather than 1, 10, 11, 12, 2.
+    #[test]
+    fn episodes_carry_a_number_to_sort_by() {
+        let mut found: Vec<u32> = [1u32, 10, 11, 12, 2]
+            .iter()
+            .filter_map(|n| {
+                parse_title(&format!("Jaadugar A Witch In Mongolia Episode {n} In HD.mkv")).episode
+            })
+            .collect();
+        assert_eq!(found.len(), 5, "an episode number went missing");
+        found.sort_unstable();
+        assert_eq!(found, vec![1, 2, 10, 11, 12]);
     }
 }

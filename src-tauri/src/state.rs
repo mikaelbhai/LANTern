@@ -82,6 +82,15 @@ pub struct Inner {
     /// Only knowable while a device is awake, which is exactly when nobody
     /// needs it — so it is written down every time a peer is seen.
     pub macs: std::collections::HashMap<String, String>,
+    /// Files picked on a phone and waiting to be sent.
+    ///
+    /// Held open rather than copied. Android names a file with a `content://`
+    /// URI that cannot be opened by path, but it will hand over a descriptor -
+    /// and on Linux a descriptor is addressable as `/proc/self/fd/N`, which
+    /// the transfer server can open like anything else. Closing the file would
+    /// make that path point at nothing, so it lives here until the send
+    /// dialog is done with it.
+    pub staged: std::collections::HashMap<std::path::PathBuf, crate::transfers::Staged>,
 }
 
 #[derive(Clone)]
@@ -133,6 +142,7 @@ impl AppState {
             #[cfg(target_os = "windows")]
             injector: None,
             macs: std::collections::HashMap::new(),
+            staged: std::collections::HashMap::new(),
         })))
     }
 

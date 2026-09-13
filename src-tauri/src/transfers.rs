@@ -30,6 +30,30 @@ use crate::state::AppState;
 pub struct Outgoing {
     pub path: PathBuf,
     pub transfer_id: String,
+    /// An already-open file, when the path is not something that can be
+    /// opened again.
+    ///
+    /// Android's picker names files with `content://` URIs belonging to other
+    /// applications. Android will hand over a descriptor for one, but the
+    /// descriptor is all there is: `/proc/self/fd/N` looks like a path and is
+    /// not one, because opening it re-opens the file it points at, through
+    /// the permissions this application does not have. That is why a file
+    /// picked on a phone arrived called "443" and then failed.
+    ///
+    /// So the open file travels with the offer, and is read from directly.
+    pub handle: Option<Arc<std::fs::File>>,
+    /// What the far side should call it.
+    ///
+    /// Carried because the path cannot always say: `/proc/self/fd/443` has a
+    /// file name, and it is "443".
+    pub name: String,
+}
+
+/// A file a phone picked and is holding open, waiting to be sent.
+#[derive(Clone)]
+pub struct Staged {
+    pub file: Arc<std::fs::File>,
+    pub name: String,
 }
 
 /// Tokens currently serving a file, keyed by the token in the URL.
@@ -133,17 +157,29 @@ pub fn offer(
     let mut created = Vec::new();
 
     for path in paths {
-        let Ok(meta) = std::fs::metadata(&path) else {
+        // A file staged from a phone's picker is already open, and knows what
+        // it should be called. Its path is a descriptor and can say neither.
+        let staged = state.with(|s| s.staged.get(&path).cloned());
+
+        let size_and_name = match &staged {
+            Some(entry) => entry
+                .file
+                .metadata()
+                .ok()
+                .map(|m| (m.len(), entry.name.clone())),
+            None => std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| {
+                (
+                    m.len(),
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file")
+                        .to_string(),
+                )
+            }),
+        };
+        let Some((size, name)) = size_and_name else {
             continue;
         };
-        if !meta.is_file() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("file")
-            .to_string();
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let token = uuid::Uuid::new_v4().simple().to_string();
         let mime = guess_mime(&path);
@@ -154,6 +190,8 @@ pub fn offer(
                 Outgoing {
                     path: path.clone(),
                     transfer_id: transfer_id.clone(),
+                    handle: staged.as_ref().map(|e| e.file.clone()),
+                    name: name.clone(),
                 },
             )
         });
@@ -161,7 +199,7 @@ pub fn offer(
         let transfer = Transfer {
             id: transfer_id.clone(),
             name: name.clone(),
-            size: meta.len(),
+            size,
             sent: 0,
             peer_id: peer_id.to_string(),
             direction: "out".into(),
@@ -186,7 +224,7 @@ pub fn offer(
                     "offer": FileOffer {
                         transfer_id: transfer_id.clone(),
                         name,
-                        size: meta.len(),
+                        size,
                         mime,
                         url: format!("http://{my_ip}:{host_port}/transfer/{token}"),
                         bundle_id: bundle_id.clone(),
@@ -588,5 +626,131 @@ mod tests {
         assert_eq!(guess_mime(Path::new("a/b.PNG")), "image/png");
         assert_eq!(guess_mime(Path::new("a/b.unknown")), "application/octet-stream");
         assert_eq!(guess_mime(Path::new("noext")), "application/octet-stream");
+    }
+}
+
+/// A sensible filename for something named by a `content://` URI.
+///
+/// Android's picker returns URIs whose last segment is usually an opaque row
+/// id — `content://media/external/images/media/1000000174` — so it is only
+/// worth using when it actually looks like a name. Everything else falls back
+/// to something plain, because a file arriving on the far side called
+/// "1000000174" is worse than one called "file".
+///
+/// The name matters more here than it looks: it is what the receiving device
+/// writes to disk, and it is the only description of the file the person on
+/// that end ever sees.
+pub fn name_from_uri(uri: &str) -> String {
+    let last = uri
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        // A URI may carry a query or fragment; neither belongs in a filename.
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("");
+
+    let decoded = percent_decode(last);
+    let trimmed = decoded.trim();
+
+    // A name needs an extension to be worth preferring over nothing: it is
+    // what tells the far side, and its operating system, what the file is.
+    let looks_named = trimmed.contains('.')
+        && !trimmed.starts_with('.')
+        && trimmed.chars().any(|c| c.is_ascii_alphabetic());
+
+    if !looks_named {
+        return "file".into();
+    }
+
+    // Anything that could climb out of the download directory on the far side.
+    trimmed
+        .replace(['/', '\\', ':'], "_")
+        .replace("..", "_")
+        .chars()
+        .take(120)
+        .collect()
+}
+
+/// Turns `%20` and friends back into characters.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::name_from_uri;
+
+    #[test]
+    fn a_real_name_is_kept() {
+        assert_eq!(name_from_uri("content://com.app/docs/holiday.jpg"), "holiday.jpg");
+        assert_eq!(name_from_uri("file:///storage/emulated/0/notes.txt"), "notes.txt");
+    }
+
+    #[test]
+    fn spaces_and_escapes_come_back() {
+        assert_eq!(
+            name_from_uri("content://com.app/My%20Holiday%20Photo.jpg"),
+            "My Holiday Photo.jpg",
+        );
+    }
+
+    #[test]
+    fn an_opaque_row_id_is_not_a_name() {
+        // What MediaStore actually returns, and what this exists to catch: a
+        // file arriving called "1000000174" tells the far side nothing.
+        assert_eq!(name_from_uri("content://media/external/images/media/1000000174"), "file");
+        assert_eq!(name_from_uri("content://com.android.providers.media.documents/document/image%3A42"), "file");
+    }
+
+    #[test]
+    fn a_query_string_is_not_part_of_the_name() {
+        assert_eq!(name_from_uri("content://x/report.pdf?take=1"), "report.pdf");
+        assert_eq!(name_from_uri("content://x/report.pdf#page2"), "report.pdf");
+    }
+
+    #[test]
+    fn nothing_can_climb_out_of_the_download_folder() {
+        // The far side writes this name to disk, so a name that walks up out
+        // of the directory it was meant for is the one thing it must not be.
+        for hostile in [
+            "content://x/..%2F..%2Fetc%2Fpasswd",
+            "content://x/..\\..\\windows\\system32\\a.dll",
+            "content://x/a%2F..%2F..%2Fb.txt",
+        ] {
+            let name = name_from_uri(hostile);
+            assert!(!name.contains(".."), "{hostile} -> {name}");
+            assert!(!name.contains('/'), "{hostile} -> {name}");
+            assert!(!name.contains('\\'), "{hostile} -> {name}");
+        }
+    }
+
+    #[test]
+    fn odd_input_does_not_panic() {
+        for odd in ["", "content://", "/", "...", ".hidden", "%", "%zz", "%2"] {
+            let name = name_from_uri(odd);
+            assert!(!name.is_empty(), "{odd:?} gave nothing");
+        }
+    }
+
+    #[test]
+    fn a_very_long_name_is_cut_short() {
+        let long = format!("content://x/{}.jpg", "a".repeat(500));
+        assert!(name_from_uri(&long).len() <= 120);
     }
 }

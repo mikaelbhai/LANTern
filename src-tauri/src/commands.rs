@@ -3236,3 +3236,122 @@ pub fn autoshare_set(_on: bool) -> Res<()> {
         Err("only Windows can share a screen".into())
     }
 }
+
+/* ------------------------------------------------ sending a file from a phone */
+
+/// Turns something a picker returned into a file this device can send.
+///
+/// Desktop pickers hand back a real path and there is nothing to do. Android's
+/// hands back a `content://` URI, which names a file belonging to another
+/// application and cannot be opened by path — and the sender's HTTP server
+/// opens files by path. Without this a phone could pick files and then be told
+/// there was nothing to send, which is exactly what it did.
+///
+/// Nothing is copied. The first attempt at this read the whole file into
+/// memory and wrote it out again, which answers the question "what if the file
+/// is bigger than the free space?" with "the app is killed before it finds
+/// out" — the read happened first, and the size check after it, so the limit
+/// prevented nothing.
+///
+/// What happens instead: Android hands over a file descriptor for the URI, and
+/// on Linux an open descriptor is addressable as a path, `/proc/self/fd/N`.
+/// So the existing server opens that and streams it exactly as it would any
+/// other file. No copy, no second copy of the file on a phone that had no room
+/// for one, no ceiling on the size, and the length is known from the
+/// descriptor without reading a byte.
+///
+/// The descriptor has to stay open for as long as the offer does, which is why
+/// the file is parked in state rather than dropped here.
+#[tauri::command]
+pub async fn files_stage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: String,
+) -> Res<serde_json::Value> {
+    // A real path costs nothing, and is the desktop case.
+    let direct = std::path::Path::new(&source);
+    if direct.is_file() {
+        let size = std::fs::metadata(direct).map(|m| m.len()).unwrap_or(0);
+        return Ok(serde_json::json!({
+            "path": source,
+            "name": direct.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+            "size": size,
+        }));
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        use std::os::fd::AsRawFd;
+        use tauri_plugin_fs::{FsExt, OpenOptions};
+
+        let target: tauri_plugin_fs::FilePath = source
+            .parse()
+            .map_err(|_| format!("{source} is not a file this device can read"))?;
+
+        let mut opts = OpenOptions::new();
+        opts.read(true);
+        let file = app
+            .fs()
+            .open(target, opts)
+            .map_err(|e| format!("could not open that file: {e}"))?;
+
+        let meta = file
+            .metadata()
+            .map_err(|e| format!("could not measure that file: {e}"))?;
+
+        // A provider is allowed to hand back a pipe rather than a file, and a
+        // pipe cannot be seeked - which the transfer server needs for resuming
+        // and for range requests. Refusing plainly beats a transfer that
+        // half-works.
+        if !meta.is_file() {
+            return Err(
+                "that file is being streamed by another app and cannot be sent directly. \
+                 Save it to the phone first."
+                    .into(),
+            );
+        }
+
+        // A key rather than a path. It looks like one so that everything
+        // downstream can go on passing a PathBuf around, but nothing ever
+        // opens it: `/proc/self/fd/N` re-opens the file it points at, through
+        // permissions this application does not have, which is why a file
+        // picked on a phone arrived called "443" and then failed. The open
+        // descriptor beside it is what actually gets read.
+        let key = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+        let size = meta.len();
+        let name = crate::transfers::name_from_uri(&source);
+
+        state.with(|s| {
+            s.staged.insert(
+                key.clone(),
+                crate::transfers::Staged {
+                    file: std::sync::Arc::new(file),
+                    name: name.clone(),
+                },
+            )
+        });
+
+        return Ok(serde_json::json!({
+            "path": key.to_string_lossy(),
+            "name": name,
+            "size": size,
+        }));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (&app, &state);
+        Err(format!("{source} is not a file"))
+    }
+}
+
+/// Closes the descriptors held open for sending.
+///
+/// Called when the send dialog is dismissed. Each one is a file handle against
+/// another application's file, and a phone that picked a hundred things and
+/// sent none should not still be holding them.
+#[tauri::command]
+pub fn files_clear_outbox(state: State<'_, AppState>) -> Res<()> {
+    state.with(|s| s.staged.clear());
+    Ok(())
+}
