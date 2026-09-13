@@ -244,8 +244,27 @@ export async function answerCall(peerId: string, msg: SignalMessage): Promise<vo
   const session = sessions.get(peerId);
   if (!session || !msg.sdp) return;
 
+  // Answering twice is not an error worth showing anybody.
+  //
+  // `createAnswer` is only legal while the connection is holding an offer it
+  // has not replied to. Answer once and it moves to `stable`; answer again and
+  // it throws "cannot create an answer in a state other than have-remote-offer",
+  // which surfaced as "Could not start the call" on a call that was in fact
+  // already connecting.
+  //
+  // Two presses is easy to arrange: the window and the corner popup both offer
+  // to answer, and getting the microphone in between takes long enough to fit
+  // a second one. So the second press finds the work already done and says so
+  // by returning, rather than by failing.
+  if (session.pc.signalingState !== 'have-remote-offer') return;
+
   const stream = await ensureLocalMedia(msg.kind);
   attachLocalTracks(session, stream);
+
+  // Checked again on the far side of the await. Fetching the microphone can
+  // take a second, can put a permission dialog on screen, and the state can
+  // have moved underneath in that time.
+  if (session.pc.signalingState !== 'have-remote-offer') return;
 
   const answer = await session.pc.createAnswer();
   await session.pc.setLocalDescription(answer);

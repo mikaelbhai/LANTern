@@ -1397,6 +1397,13 @@ export const useStore = create<State>((set, get) => {
       const pending = call && pendingOffers.get(call.id);
       if (!call || !pending) return;
 
+      // Claimed straight away, not once the answer has gone out.
+      //
+      // Deleting it at the end left a window the width of a microphone
+      // permission prompt in which a second press - the corner popup and the
+      // window both offer one - would answer the same call again.
+      pendingOffers.delete(call.id);
+
       // Same prompt on this side of the call, and a worse moment to meet it
       // unexpectedly: the phone is already ringing.
       const wanted: MediaWanted = call.kind === 'video' ? 'camera' : 'microphone';
@@ -1408,7 +1415,6 @@ export const useStore = create<State>((set, get) => {
           return rtc.answerCall(pending.from, pending);
         })
         .then(() => {
-          pendingOffers.delete(call.id);
           set((s) =>
             s.call?.id === call.id
               ? { call: { ...s.call, state: 'active', startedAt: Date.now() } }
@@ -1417,7 +1423,12 @@ export const useStore = create<State>((set, get) => {
           sfx.callConnect();
         })
         .catch((err: Error) => {
-          if (err.message === 'cancelled') return;
+          // Backing out of the primer leaves the call ringing and answerable,
+          // so the offer this claimed on the way in has to go back.
+          if (err.message === 'cancelled') {
+            pendingOffers.set(call.id, pending);
+            return;
+          }
           reportCallFailure(get, err, call.kind, 'The microphone or camera was unavailable.');
           get().endCall();
         });

@@ -526,14 +526,26 @@ fn handle_control(app: &AppHandle, state: &crate::state::AppState, envelope: &En
             let decision = state.with(|s| s.control.request(&from));
             match decision {
                 Request::Granted => {
-                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    // Granted without asking, because this device is on the
+                    // always-allow list. The secret for the screen goes with
+                    // it, exactly as it does when somebody presses the button.
+                    let (links, me, token, port) = state.with(|s| {
+                        (
+                            s.links.clone(),
+                            s.device_id.clone(),
+                            s.control.token().to_string(),
+                            s.net.host_port,
+                        )
+                    });
                     links.send(
                         &from,
                         &Envelope {
                             v: 1,
                             from: me,
                             kind: "control".into(),
-                            payload: serde_json::json!({ "op": "granted" }),
+                            payload: serde_json::json!({
+                                "op": "granted", "token": token, "port": port,
+                            }),
                         },
                     );
                 }

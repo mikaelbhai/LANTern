@@ -104,16 +104,44 @@ pub struct Control {
     allowed: std::collections::HashSet<String>,
     /// A device that has asked and not yet been answered.
     pending: Option<String>,
+    /// A secret minted with each grant, for the picture of the screen.
+    ///
+    /// Input arrives over the peer link, which already proves who sent it. The
+    /// screen does not: it is fetched with an ordinary `<img>`, and an image
+    /// tag cannot carry a header to identify itself with. Gating that on the
+    /// device id would gate it on something mDNS broadcasts to the whole
+    /// network — anyone could name the controller and watch along.
+    ///
+    /// So each grant mints a fresh secret, it travels back over the link that
+    /// is authenticated, and it dies with the session.
+    token: String,
 }
 
 impl Control {
     /// Hands control to one device, taking it from whoever had it.
     pub fn grant(&mut self, device_id: &str) {
         self.granted_to = Some(device_id.to_string());
+        self.token = uuid::Uuid::new_v4().to_string();
     }
 
     pub fn revoke(&mut self) {
         self.granted_to = None;
+        // Cleared, not merely orphaned. A token that outlived its session
+        // would still open the screen.
+        self.token.clear();
+    }
+
+    /// The secret for this session, empty when there is no session.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Whether this secret is the live one.
+    ///
+    /// An empty token never matches, so a request that simply omits it cannot
+    /// pass by matching the empty default.
+    pub fn allows_token(&self, token: &str) -> bool {
+        !self.token.is_empty() && self.granted_to.is_some() && self.token == token
     }
 
     pub fn holder(&self) -> Option<&str> {
@@ -140,7 +168,7 @@ impl Control {
             self.pending = None;
         }
         if self.allows(device_id) {
-            self.granted_to = None;
+            self.revoke();
             return true;
         }
         false
@@ -558,6 +586,51 @@ mod tests {
         // And revoking again is not an error.
         control.revoke();
         assert!(control.holder().is_none());
+    }
+
+    #[test]
+    fn a_grant_mints_a_secret_for_the_screen() {
+        let mut control = Control::default();
+        assert_eq!(control.token(), "", "a secret existed before any grant");
+        assert!(!control.allows_token(""), "the empty secret was accepted");
+
+        control.grant("phone");
+        let first = control.token().to_string();
+        assert!(!first.is_empty());
+        assert!(control.allows_token(&first));
+        assert!(!control.allows_token("something-else"));
+    }
+
+    #[test]
+    fn and_a_new_grant_mints_a_new_one() {
+        let mut control = Control::default();
+        control.grant("phone");
+        let first = control.token().to_string();
+        control.grant("tablet");
+        assert_ne!(control.token(), first, "the secret was reused");
+        assert!(!control.allows_token(&first), "the old secret still worked");
+    }
+
+    #[test]
+    fn revoking_kills_the_secret_too() {
+        let mut control = Control::default();
+        control.grant("phone");
+        let token = control.token().to_string();
+        control.revoke();
+        assert!(
+            !control.allows_token(&token),
+            "the screen was still readable after control ended",
+        );
+        assert_eq!(control.token(), "");
+    }
+
+    #[test]
+    fn and_so_does_the_link_dropping() {
+        let mut control = Control::default();
+        control.grant("phone");
+        let token = control.token().to_string();
+        control.drop_peer("phone");
+        assert!(!control.allows_token(&token), "the screen outlived the link");
     }
 
     #[test]

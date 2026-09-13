@@ -407,6 +407,9 @@ export const api = {
       call<void>('control_answer', { peerId, allow, remember }),
     end: () => call<void>('control_end'),
     send: (peerId: string, events: unknown[]) => call<void>('control_send', { peerId, events }),
+    /** Where to fetch that peer's screen, once it has granted control. */
+    screenUrl: (peerId: string, token: string) =>
+      call<string>('control_screen_url', { peerId, token }),
     status: () => call<ControlStatus>('control_status'),
     forget: (peerId: string) => call<void>('control_forget', { peerId }),
   },

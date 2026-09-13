@@ -2932,13 +2932,17 @@ pub fn control_answer(
 
     let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
     let op = if granted { "granted" } else { "denied" };
+    // The secret for the screen, and the port it is served on, travel with the
+    // grant. This link is authenticated, which is what makes it the right
+    // place to hand over a secret.
+    let (token, port) = state.with(|s| (s.control.token().to_string(), s.net.host_port));
     links.send(
         &peer_id,
         &Envelope {
             v: 1,
             from: me,
             kind: "control".into(),
-            payload: serde_json::json!({ "op": op }),
+            payload: serde_json::json!({ "op": op, "token": token, "port": port }),
         },
     );
 
@@ -3112,6 +3116,24 @@ fn remember_macs(state: &AppState) {
             }
         });
     }
+}
+
+/// Where to fetch a peer's screen from, once it has granted control.
+///
+/// The address is found the same way the library finds one - by asking every
+/// address that device advertises and keeping whichever answers - because the
+/// one it picked for itself is not necessarily the one that works from here.
+#[tauri::command]
+pub async fn control_screen_url(
+    state: State<'_, AppState>,
+    peer_id: String,
+    token: String,
+) -> Res<String> {
+    let owned = (*state).clone();
+    let Some((host, port)) = crate::library::reachable_address(&owned, &peer_id).await else {
+        return Err("that device is not reachable".into());
+    };
+    Ok(format!("http://{host}:{port}/control/screen?t={token}"))
 }
 
 /// Every device this machine could try to wake, with the address to use.

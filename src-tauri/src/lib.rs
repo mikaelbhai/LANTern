@@ -16,6 +16,7 @@ pub mod hosting;
 mod library;
 mod identity;
 mod input;
+mod screencap;
 mod wol;
 mod media;
 mod model;
@@ -179,6 +180,7 @@ pub fn run() {
             commands::control_answer,
             commands::control_end,
             commands::control_send,
+            commands::control_screen_url,
             commands::control_status,
             commands::control_forget,
             commands::wake_device,

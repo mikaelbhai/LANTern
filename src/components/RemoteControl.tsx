@@ -57,6 +57,9 @@ export function RemoteControl({
   onClose: () => void;
 }) {
   const [surface, setSurface] = React.useState<Surface>('pad');
+  // The picture of their screen. Null until they grant control, because the
+  // secret that opens it is minted by the grant.
+  const [screen, setScreen] = React.useState<string | null>(null);
 
   // Everything held down at the far end, so it can all be let go of.
   const held = React.useRef(new Held());
@@ -114,13 +117,28 @@ export function RemoteControl({
   // everything held is now held by nobody.
   React.useEffect(
     () =>
-      on('control:message', (msg: { op?: string; from?: string }) => {
-        if (msg.from !== peerId) return;
-        if (msg.op === 'ended' || msg.op === 'denied') {
-          held.current.releaseAll();
-          onClose();
-        }
-      }),
+      on(
+        'control:message',
+        (msg: { op?: string; from?: string; token?: string }) => {
+          if (msg.from !== peerId) return;
+          if (msg.op === 'granted' && msg.token) {
+            // Their address is asked for rather than assumed: the one a device
+            // picked for itself is not necessarily the one that works here.
+            void api.control
+              .screenUrl(peerId, msg.token)
+              .then(setScreen)
+              .catch(() => setScreen(null));
+            // Touch is the mode that makes sense once there is a picture to
+            // point at, so it becomes the one on screen.
+            setSurface('touch');
+          }
+          if (msg.op === 'ended' || msg.op === 'denied') {
+            held.current.releaseAll();
+            setScreen(null);
+            onClose();
+          }
+        },
+      ),
     [peerId, onClose],
   );
 
@@ -149,10 +167,30 @@ export function RemoteControl({
         </button>
       </div>
 
-      <div className="flex-1 min-h-0">
+      {/*
+        Their screen, as an ordinary image.
+
+        A multipart JPEG stream, which an img tag has understood since before
+        browsers understood video - no player, no codec, no negotiation. It is
+        not good video and is not trying to be: ten frames a second of a
+        scaled desktop is enough to find a window and press a button, and
+        anything smoother would mean negotiating a peer connection, which
+        means the operating system's share picker, which needs somebody
+        standing at the machine nobody is standing at.
+      */}
+      {screen && (
+        <Screen
+          src={screen}
+          push={push}
+          held={held.current}
+          pointing={surface === 'touch'}
+        />
+      )}
+
+      <div className={cn('min-h-0', screen ? 'shrink-0' : 'flex-1')}>
         {surface === 'pad' && <Pad held={held.current} push={push} />}
         {surface === 'trackpad' && <Trackpad push={push} held={held.current} />}
-        {surface === 'touch' && <TouchPad push={push} held={held.current} />}
+        {surface === 'touch' && !screen && <TouchPad push={push} held={held.current} />}
       </div>
     </div>
   );
@@ -403,6 +441,85 @@ function ClickRow({
           ⏎
         </button>
       </form>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------- the picture */
+
+/**
+ * Their screen, and tapping on it.
+ *
+ * A tap lands where you put your finger, which is the only arrangement that
+ * makes sense when you can see the thing you are aiming at. The surface is a
+ * fraction of the far screen rather than pixels of it, because the two devices
+ * do not share a resolution and neither knows the other's.
+ *
+ * Dragging with a finger down is a drag over there: press, move, release,
+ * exactly as it reads. That is also what makes a scrollbar or a window title
+ * work without a separate mode for it.
+ */
+function Screen({
+  src,
+  push,
+  held,
+  pointing,
+}: {
+  src: string;
+  push: (...e: (RemoteEvent | null)[]) => void;
+  held: Held;
+  pointing: boolean;
+}) {
+  const picture = React.useRef<HTMLImageElement>(null);
+  const [broken, setBroken] = React.useState(false);
+
+  const pointAt = (e: React.PointerEvent) => {
+    const box = picture.current?.getBoundingClientRect();
+    if (!box) return null;
+    return touchPoint({ x: e.clientX, y: e.clientY }, box);
+  };
+
+  return (
+    <div className="relative flex-1 min-h-0 bg-black grid place-items-center overflow-hidden">
+      <img
+        ref={picture}
+        src={src}
+        alt="The screen of the device you are controlling"
+        className="max-h-full max-w-full object-contain touch-none select-none"
+        draggable={false}
+        onError={() => setBroken(true)}
+        onLoad={() => setBroken(false)}
+        // Only when Touch is the chosen surface. With the pad on screen a
+        // stray thumb on the picture should not click something over there.
+        onPointerDown={
+          pointing
+            ? (e) => {
+                e.preventDefault();
+                push(pointAt(e), held.button('left', true));
+                keepGesture(e);
+              }
+            : undefined
+        }
+        onPointerMove={
+          pointing
+            ? (e) => {
+                if (e.buttons === 0) return;
+                push(pointAt(e));
+              }
+            : undefined
+        }
+        onPointerUp={pointing ? () => push(held.button('left', false)) : undefined}
+        onPointerCancel={pointing ? () => push(held.button('left', false)) : undefined}
+      />
+      {broken && (
+        <div className="absolute inset-0 grid place-items-center bg-base/90 px-6 text-center">
+          <p className="text-2xs text-muted leading-relaxed">
+            That device stopped sending its screen. It may have ended the session, or it
+            may not be a machine that can share one — only Windows can, for now. The pad
+            and trackpad still work.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

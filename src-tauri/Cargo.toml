@@ -56,6 +56,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 sha2 = "0.10"
 futures-util = "0.3"
 tauri-plugin-clipboard-manager = "2"
+async-stream = "0.3.6"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -88,3 +89,14 @@ strip = true
 # window already says so rather than offering a control that does nothing.
 [target.'cfg(windows)'.dependencies]
 enigo = "0.2"
+
+# Taking a picture of this screen, for a phone that is driving it.
+#
+# Not WebRTC, which is what the calls use. Screen sharing there goes through
+# getDisplayMedia, and that opens the operating system's own "which window?"
+# picker - which needs somebody standing at the machine to answer it, and the
+# entire point of remote control is that nobody is. The grant this device
+# already gave is the consent; asking twice, in a dialog only the absent
+# person can see, is asking nobody.
+xcap = { version = "0.9", default-features = false }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }

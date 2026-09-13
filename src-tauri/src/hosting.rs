@@ -29,6 +29,10 @@ pub fn router(state: AppState) -> Router {
         // A peer's profile picture, fetched like any other file this device
         // publishes rather than pushed down the signalling link.
         .route("/avatar.png", get(serve_avatar))
+        // This machine's screen, for the device driving it. Registered before
+        // the slug routes so no published folder can shadow it.
+        .route("/control/screen", get(serve_screen))
+        .route("/control/size", get(serve_screen_size))
         .route("/:slug", get(serve_root))
         .route("/:slug/*path", get(serve_path))
         .with_state(Arc::new(state))
@@ -1103,4 +1107,136 @@ mod tests {
             "built a url to port 80: {response}"
         );
     }
+}
+
+/* ------------------------------------------------------ the screen, as video */
+
+/// The boundary between two frames of the multipart stream.
+#[cfg(target_os = "windows")]
+const FRAME_BOUNDARY: &str = "lanternframe";
+
+/// This machine's screen, as an endless multipart JPEG stream.
+///
+/// Served over the same HTTP server as everything else, and readable by an
+/// ordinary `<img>` tag: browsers have understood `multipart/x-mixed-replace`
+/// since before they understood video, and it needs no player, no codec and
+/// no negotiation. On a phone across the room that is worth more than
+/// efficiency.
+///
+/// Only the device currently holding control may read it. A live picture of
+/// somebody's desktop is at least as sensitive as the keyboard, so it is
+/// behind the same single gate and not a second, weaker one — and the gate is
+/// re-checked on every frame, so revoking control stops the picture rather
+/// than leaving the last viewer watching.
+#[cfg(target_os = "windows")]
+async fn serve_screen(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    // In the query string because an <img> cannot carry a header, and this is
+    // read by an <img>. The secret is minted per grant and travels back over
+    // the authenticated peer link, so it is not guessable the way a device id
+    // broadcast over mDNS would be.
+    let token = params.get("t").cloned().unwrap_or_default();
+    if !state.with(|s| s.control.allows_token(&token)) {
+        return (StatusCode::FORBIDDEN, "not controlling this device").into_response();
+    }
+
+    // Whatever was asked for, clamped rather than refused. Asking for more
+    // than the machine can produce simply means it runs flat out, which is
+    // what somebody asking for sixty wants when sixty is not on offer.
+    let gap = crate::screencap::frame_gap_ms(
+        params.get("fps").and_then(|v| v.parse().ok()).unwrap_or(10),
+    );
+    let width: u32 = params
+        .get("w")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(crate::screencap::MAX_WIDTH);
+
+    let frames = async_stream::stream! {
+        loop {
+            // Re-checked every frame. Control ending has to stop the picture,
+            // not merely stop the input.
+            if !state.with(|s| s.control.allows_token(&token)) {
+                break;
+            }
+
+            let started = std::time::Instant::now();
+            let shot =
+                tokio::task::spawn_blocking(move || crate::screencap::capture_jpeg_at(width))
+                    .await;
+
+            let Ok(Ok((jpeg, _, _))) = shot else {
+                break;
+            };
+
+            let mut chunk = Vec::with_capacity(jpeg.len() + 128);
+            chunk.extend_from_slice(
+                format!(
+                    "--{FRAME_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
+                    jpeg.len(),
+                )
+                .as_bytes(),
+            );
+            chunk.extend_from_slice(&jpeg);
+            chunk.extend_from_slice(b"\r\n");
+
+            yield Ok::<_, std::io::Error>(axum::body::Bytes::from(chunk));
+
+            // Capturing is the expensive half and it runs on a machine
+            // somebody else may be using. Sleeping only for what is left of
+            // the budget keeps the rate steady without ever busy-looping.
+            let spent = started.elapsed();
+            let budget = std::time::Duration::from_millis(gap);
+            if spent < budget {
+                tokio::time::sleep(budget - spent).await;
+            }
+        }
+    };
+
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(
+                    "multipart/x-mixed-replace; boundary=lanternframe",
+                ),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*")),
+        ],
+        Body::from_stream(frames),
+    )
+        .into_response()
+}
+
+/// The size of the screen being streamed, so a tap can be aimed at it.
+#[cfg(target_os = "windows")]
+async fn serve_screen_size(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let token = params.get("t").cloned().unwrap_or_default();
+    if !state.with(|s| s.control.allows_token(&token)) {
+        return (StatusCode::FORBIDDEN, "not controlling this device").into_response();
+    }
+    match crate::screencap::screen_size() {
+        Some((w, h)) => (
+            [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+            format!("{{\"width\":{w},\"height\":{h}}}"),
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "no screen").into_response(),
+    }
+}
+
+/// Everywhere that cannot be looked at, saying so rather than hanging.
+#[cfg(not(target_os = "windows"))]
+async fn serve_screen(Query(_params): Query<HashMap<String, String>>) -> Response {
+    (StatusCode::NOT_IMPLEMENTED, "this device cannot share its screen").into_response()
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn serve_screen_size(Query(_params): Query<HashMap<String, String>>) -> Response {
+    (StatusCode::NOT_IMPLEMENTED, "this device cannot share its screen").into_response()
 }
