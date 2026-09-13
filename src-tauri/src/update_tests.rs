@@ -14,9 +14,9 @@ use crate::commands::fetch_update;
 
 /// The smallest asset on a release that is not going anywhere.
 const ASSET: &str =
-    "https://github.com/mikaelbhai/LANTern/releases/download/v1.1.8/LANTern_1.1.8_x64-setup.exe";
-const DIGEST: &str = "sha256:588ac2ed8b922b54113c38066ef3d892e9a063240f731243b4c583af47b1b2c0";
-const SIZE: u64 = 4_084_550;
+    "https://github.com/mikaelbhai/LANTern/releases/download/v1.1.9/LANTern_1.1.9_x64-setup.exe";
+const DIGEST: &str = "sha256:a7b94a1014421dbbed6d2268b480be3d3aca58842b9c89699c799d92a27615a4";
+const SIZE: u64 = 4_120_502;
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("lantern-update-tests");
@@ -72,7 +72,7 @@ async fn a_wrong_digest_leaves_nothing_behind() {
 #[ignore = "reaches the network"]
 async fn a_missing_asset_is_reported() {
     let dest = scratch("missing.exe");
-    let gone = "https://github.com/mikaelbhai/LANTern/releases/download/v1.1.8/no-such-file.exe";
+    let gone = "https://github.com/mikaelbhai/LANTern/releases/download/v1.1.9/no-such-file.exe";
     let result = fetch_update(gone, &dest, None, |_, _| {}).await;
     assert!(result.is_err(), "a missing asset looked like a success");
     let _ = std::fs::remove_file(&dest);
