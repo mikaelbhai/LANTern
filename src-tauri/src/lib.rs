@@ -18,6 +18,7 @@ pub mod hosting;
 mod library;
 mod identity;
 mod input;
+mod rating;
 mod screencap;
 mod wol;
 mod media;
