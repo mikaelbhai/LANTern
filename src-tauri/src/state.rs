@@ -75,7 +75,7 @@ pub struct Inner {
     /// Held open while a device is driving this one, so a finger dragging at
     /// sixty events a second does not reopen the platform's input device
     /// sixty times.
-    #[cfg(desktop)]
+    #[cfg(target_os = "windows")]
     pub injector: Option<crate::input::Injector>,
     /// Hardware addresses seen for peers, kept so a sleeping one can be woken.
     ///
@@ -130,7 +130,7 @@ impl AppState {
             host_error: None,
             blocked: std::collections::HashSet::new(),
             control: crate::input::Control::default(),
-            #[cfg(desktop)]
+            #[cfg(target_os = "windows")]
             injector: None,
             macs: std::collections::HashMap::new(),
         })))

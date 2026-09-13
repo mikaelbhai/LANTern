@@ -232,10 +232,10 @@ pub enum Request {
 
 /* --------------------------------------------------------- pressing things */
 
-#[cfg(desktop)]
+#[cfg(target_os = "windows")]
 pub use desktop::{apply, Injector};
 
-#[cfg(desktop)]
+#[cfg(target_os = "windows")]
 mod desktop {
     use super::{is_sane, RemoteEvent};
     use enigo::{
@@ -576,7 +576,7 @@ mod tests {
         assert!(control.holder().is_none());
     }
 
-    #[cfg(desktop)]
+    #[cfg(target_os = "windows")]
     #[test]
     fn the_keys_a_phone_sends_are_all_understood() {
         use super::desktop::key_for;
@@ -597,7 +597,7 @@ mod tests {
     /// milliseconds, which is rude in the middle of somebody's work. But
     /// "the crate compiles" is not evidence that a key press reaches the
     /// operating system, and this is the only thing that is.
-    #[cfg(desktop)]
+    #[cfg(target_os = "windows")]
     #[test]
     #[ignore = "moves the real pointer"]
     fn the_pointer_actually_moves() {
@@ -623,7 +623,7 @@ mod tests {
         );
     }
 
-    #[cfg(desktop)]
+    #[cfg(target_os = "windows")]
     #[test]
     fn and_a_name_that_is_not_a_key_is_refused() {
         use super::desktop::key_for;

@@ -64,10 +64,7 @@ tauri-plugin-autostart = "2"
 # bind the ports and showed an empty peer list for ever. This focuses the
 # window that is already running instead.
 tauri-plugin-single-instance = "2"
-# Moving the pointer and pressing keys on this machine, for a phone acting as
-# a trackpad or a controller. Desktop only, and deliberately so: there is no
-# such thing on Android, and the crate does not build for it.
-enigo = "0.2"
+
 
 [features]
 # Used by the Tauri CLI when producing a release bundle.
@@ -79,3 +76,15 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Moving the pointer and pressing keys on this machine, for a phone acting as
+# a trackpad or a controller.
+#
+# Windows only. Not because the crate is unavailable elsewhere, but because on
+# macOS its handle holds a CGEventSource that is not Send, so it cannot sit in
+# the shared state every other part of this application lives in. Making it
+# work there means keeping it on one thread and posting to it, which is real
+# work for a platform this feature does not yet claim to support - and the
+# window already says so rather than offering a control that does nothing.
+[target.'cfg(windows)'.dependencies]
+enigo = "0.2"

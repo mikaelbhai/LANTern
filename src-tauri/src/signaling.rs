@@ -197,7 +197,7 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // input stopped arriving whenever the app was minimised - which
             // is exactly when somebody is driving it from another room.
             if envelope.kind == "input" {
-                #[cfg(desktop)]
+                #[cfg(target_os = "windows")]
                 {
                     let events: Vec<crate::input::RemoteEvent> = envelope
                         .payload
@@ -555,7 +555,7 @@ fn handle_control(app: &AppHandle, state: &crate::state::AppState, envelope: &En
         "ended" => {
             state.with(|s| {
                 s.control.drop_peer(&from);
-                #[cfg(desktop)]
+                #[cfg(target_os = "windows")]
                 {
                     if let Some(injector) = s.injector.as_mut() {
                         injector.release_all();

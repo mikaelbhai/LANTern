@@ -2957,7 +2957,7 @@ pub fn control_end(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
     let (links, me, holder) = state.with(|s| {
         let holder = s.control.holder().map(str::to_string);
         s.control.revoke();
-        #[cfg(desktop)]
+        #[cfg(target_os = "windows")]
         {
             if let Some(injector) = s.injector.as_mut() {
                 injector.release_all();
@@ -3145,7 +3145,7 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
 /// this - the prompt, the whitelist, the banner - is how the grant is decided;
 /// this is the single place that acts on it, so there is exactly one thing to
 /// read to know whether input can reach the machine.
-#[cfg(desktop)]
+#[cfg(target_os = "windows")]
 pub fn control_apply(state: &AppState, from: &str, events: Vec<crate::input::RemoteEvent>) {
     if !state.with(|s| s.control.allows(from)) {
         return;
