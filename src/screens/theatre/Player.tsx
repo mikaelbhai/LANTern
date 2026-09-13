@@ -16,6 +16,8 @@ import {
   VolumeX,
   WifiOff,
   Languages,
+  Crop,
+  Scan,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
 import { api } from '../../lib/bridge';
@@ -30,6 +32,15 @@ import {
   type SubtitleStyle,
 } from './Subtitles';
 import { useLocalStorage } from '../../lib/hooks';
+import {
+  boxFor,
+  croppedAway,
+  fitLabel,
+  loadFit,
+  otherFit,
+  saveFit,
+  type Fit,
+} from '../../lib/aspect';
 
 const HIDE_AFTER_MS = 2800;
 
@@ -93,6 +104,20 @@ export function Player({
   );
   const [tracksOpen, setTracksOpen] = React.useState(false);
   const [audioOpen, setAudioOpen] = React.useState(false);
+  // How the picture meets the frame. Kept across titles the way every other
+  // player keeps it: somebody who chose Crop because their monitor and their
+  // films disagree means it for the next film too.
+  const [fit, setFitState] = React.useState<Fit>(loadFit);
+  const setFit = React.useCallback((next: Fit) => {
+    setFitState(next);
+    saveFit(next);
+  }, []);
+  // The frame the picture is fitted into, and the picture's own size. Both
+  // are measured rather than assumed — a forced ratio needs neither, but
+  // everything else needs both.
+  const [frame, setFrame] = React.useState({ w: 0, h: 0 });
+  const [natural, setNatural] = React.useState({ w: 0, h: 0 });
+  const stageRef = React.useRef<HTMLDivElement>(null);
   const [subStyle, setSubStyle] = useLocalStorage<SubtitleStyle>(
     'lantern.subtitleStyle',
     'classic',
@@ -325,6 +350,9 @@ export function Player({
         case 'f':
           void toggleFullscreen();
           break;
+        case 'a':
+          setFit(otherFit(fit));
+          break;
         case 'Escape':
           if (!document.fullscreenElement) onClose();
           break;
@@ -404,6 +432,38 @@ export function Player({
     };
   }, []);
 
+  // The frame changes on resize, on entering fullscreen, and when a phone is
+  // turned sideways. An observer catches all three; a resize listener would
+  // miss the ones that do not change the window.
+  React.useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const measure = () => {
+      const rect = stage.getBoundingClientRect();
+      setFrame({ w: rect.width, h: rect.height });
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [unreachable]);
+
+  // Forgotten when the file changes, so a 4:3 episode following a scope film
+  // does not spend its first frames in the shape of the one before it.
+  React.useEffect(() => {
+    setNatural({ w: 0, h: 0 });
+  }, [source]);
+
+  const box = boxFor(fit, frame, natural);
+  // What Crop would cut, or what Fit is leaving as bars — the same number
+  // either way. Shown on the button because "Crop" says what it does and not
+  // what it costs, and the cost is the entire question.
+  const lost = Math.round(croppedAway(frame, natural) * 100);
+
   const pct = duration ? (time / duration) * 100 : 0;
   const bufferedPct = duration ? (buffered / duration) * 100 : 0;
   const nearEnd = duration > 0 && duration - time < 40 && duration - time > 0;
@@ -426,7 +486,12 @@ export function Player({
       style={{ cursor: chrome ? 'default' : 'none' }}
     >
       {/* stage */}
-      <div className="absolute inset-0 grid place-items-center">
+      {/*
+        Overflow is hidden because Fill deliberately makes the picture larger
+        than the frame. Without this the crop spills over the controls and out
+        of the window instead of being a crop at all.
+      */}
+      <div ref={stageRef} className="absolute inset-0 grid place-items-center overflow-hidden">
         {unreachable ? (
           <div className="relative h-full w-full">
             <Artwork
@@ -453,11 +518,17 @@ export function Player({
           <video
             ref={videoRef}
             src={source}
-            className="h-full w-full object-contain bg-black"
+            className="bg-black"
+            // Sized rather than classed. `object-fit: cover` would crop, but
+            // it crops to the element, so the element still has to be the
+            // right size first - and once it is the right size there is
+            // nothing left for object-fit to do.
+            style={{ width: box.width, height: box.height }}
             autoPlay
             playsInline
             onLoadedMetadata={(e) => {
               const el = e.currentTarget;
+              setNatural({ w: el.videoWidth, h: el.videoHeight });
               // A remuxed stream is fragmented MP4 with no index, so it
               // reports a duration of a few seconds — the length of what has
               // been generated so far, not the film. The library already
@@ -675,6 +746,37 @@ export function Player({
                 </span>
 
                 <div className="ml-auto flex items-center gap-3">
+                  {/*
+                    A toggle rather than a menu, because there are two states
+                    and a menu to choose between two things is a menu too many.
+                    The label names what pressing it will do, not what is
+                    already true, so nobody has to work out which way it reads.
+                  */}
+                  <button
+                    onClick={() => setFit(otherFit(fit))}
+                    className={cn(
+                      'flex items-center gap-1.5 text-[11px] hover:text-white',
+                      fit === 'crop' ? 'text-gold' : 'text-white/80',
+                    )}
+                    title={
+                      lost > 0
+                        ? fit === 'fit'
+                          ? `Crop to fill the screen — loses ${lost}% of the picture (a)`
+                          : `Fit the whole picture — ${lost}% of the screen becomes bars (a)`
+                        : 'This film already matches the screen (a)'
+                    }
+                    aria-label={fit === 'fit' ? 'Crop to fill the screen' : 'Fit the whole picture'}
+                  >
+                    {fit === 'fit' ? <Crop size={15} /> : <Scan size={15} />}
+                    {fit === 'fit' ? 'Crop' : 'Fit'}
+                    {/*
+                      Only worth saying when there is something to lose. On a
+                      film that already matches the screen the button does
+                      nothing visible, and a percentage of nothing beside it
+                      would just be noise.
+                    */}
+                    {lost > 0 && <span className="text-white/50">{lost}%</span>}
+                  </button>
                   {audioTracks.length > 1 && (
                     <div className="relative">
                       <button
