@@ -38,6 +38,7 @@ import { api, on } from '../lib/bridge';
 import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
+import type { ControlStatus } from '../lib/types';
 
 type Tab =
   | 'profile'
@@ -711,6 +712,91 @@ function SystemTab() {
   );
 }
 
+/**
+ * Who may drive this machine, and how freely.
+ *
+ * The two most consequential settings in the application live here, so they
+ * say what they cost rather than what they enable. One is standing permission
+ * for another device to type into whatever has focus; the other hands over a
+ * live picture of the screen with nothing on screen to stop it.
+ */
+function ControlGroup() {
+  const [status, setStatus] = React.useState<ControlStatus | null>(null);
+  const [autoShare, setAutoShare] = React.useState(false);
+  const peers = useStore((st) => st.peers);
+
+  const load = React.useCallback(() => {
+    void api.control
+      .status()
+      .then((s) => setStatus(s && typeof s === 'object' ? s : null))
+      .catch(() => setStatus(null));
+    void api.control
+      .autoShareGet()
+      .then(setAutoShare)
+      .catch(() => setAutoShare(false));
+  }, []);
+  React.useEffect(load, [load]);
+
+  // Nothing to say on a device that cannot be driven.
+  if (!status?.supported) return null;
+
+  const nameFor = (id: string) =>
+    Object.values(peers).find((p) => p.deviceId === id)?.name ?? id;
+
+  return (
+    <Group title="Being controlled from another device">
+      <p className="px-3 pt-1 pb-2 text-2xs text-muted leading-relaxed">
+        A device driving this one moves the pointer and presses keys in whatever is on
+        screen, not only in LANTern. It always asks first, and a bar across the top says
+        so for as long as it lasts.
+      </p>
+
+      {status.allowed.length > 0 ? (
+        <div className="px-3 pb-2">
+          <p className="text-2xs text-muted mb-1.5">
+            These never have to ask again:
+          </p>
+          <ul className="flex flex-col gap-1">
+            {status.allowed.map((id) => (
+              <li key={id} className="flex items-center gap-2">
+                <span className="text-xs truncate flex-1">{nameFor(id)}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void api.control.forget(id).then(load)}
+                >
+                  Take it back
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="px-3 pb-2 text-2xs text-muted">
+          No device has standing permission. Every request is asked.
+        </p>
+      )}
+
+      <Row
+        label="Hand over the screen without asking"
+        hint={
+          autoShare
+            ? 'On. Windows will not show its share picker. Takes effect at the next launch.'
+            : 'Windows asks which screen to share each time control starts. Turning this off means it does not — only for devices you have already allowed to control this one.'
+        }
+      >
+        <Toggle
+          checked={autoShare}
+          onChange={(v) => {
+            setAutoShare(v);
+            void api.control.autoShareSet(v);
+          }}
+        />
+      </Row>
+    </Group>
+  );
+}
+
 function PrivacyTab() {
   const s = useStore((st) => st.settings.privacy);
   const set = useStore((st) => st.setSettings);
@@ -736,6 +822,7 @@ function PrivacyTab() {
 
   return (
     <>
+      <ControlGroup />
       <Group title="Who may reach this device">
         <p className="px-3 pt-1 pb-2 text-2xs text-muted leading-relaxed">
           Anyone on your network can see this device and ask to send it something —

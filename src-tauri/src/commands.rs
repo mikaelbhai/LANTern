@@ -2987,6 +2987,27 @@ pub fn control_end(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
     Ok(())
 }
 
+/// Asks the device being controlled to send its screen over WebRTC.
+///
+/// Separate from taking control, because the two have different costs. Control
+/// is a grant somebody makes once; the good picture needs the operating
+/// system's share picker answered at that machine, unless they have turned
+/// that off. So it is asked for when wanted rather than bundled in.
+#[tauri::command]
+pub fn control_ask_screen(state: State<'_, AppState>, peer_id: String) -> Res<()> {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "control".into(),
+            payload: serde_json::json!({ "op": "screen" }),
+        },
+    );
+    Ok(())
+}
+
 /// Sends a batch of input events to the device being controlled.
 ///
 /// A batch rather than one at a time: a finger produces sixty events a second
@@ -3184,4 +3205,34 @@ pub fn control_apply(state: &AppState, from: &str, events: Vec<crate::input::Rem
             }
         }
     });
+}
+
+/// Whether this machine hands over its screen without showing the picker.
+#[tauri::command]
+pub fn autoshare_get() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        crate::autoshare::is_enabled()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+/// Turns that on or off.
+///
+/// Takes effect at the next launch, because a browser's switches are fixed
+/// when the browser starts. Said plainly where it is offered rather than left
+/// to be discovered.
+#[tauri::command]
+pub fn autoshare_set(_on: bool) -> Res<()> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::autoshare::set_enabled(_on)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("only Windows can share a screen".into())
+    }
 }

@@ -25,7 +25,17 @@ export interface SignalMessage {
   from: string;
   callId: string;
   kind: CallKind;
-  type: 'offer' | 'answer' | 'ice' | 'hangup' | 'decline';
+  type:
+    | 'offer'
+    | 'answer'
+    | 'ice'
+    | 'hangup'
+    | 'decline'
+    // A screen, on its own connection so it neither needs a call nor
+    // disturbs one already running.
+    | 'screen-offer'
+    | 'screen-answer'
+    | 'screen-ice';
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
 }
@@ -568,6 +578,44 @@ async function handle(msg: SignalMessage) {
       return;
     }
 
+    case 'screen-offer': {
+      if (!msg.sdp) return;
+      const session = screenSessions.get(peerId) ?? createScreenSession(peerId);
+      // Only ever received, never sent back: the side being controlled shares,
+      // the side controlling watches.
+      await session.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      await drainPending(session);
+      const answer = await session.pc.createAnswer();
+      await session.pc.setLocalDescription(answer);
+      await send(peerId, {
+        callId: session.callId,
+        kind: 'video',
+        type: 'screen-answer',
+        sdp: answer,
+      });
+      return;
+    }
+
+    case 'screen-answer': {
+      const session = screenSessions.get(peerId);
+      if (!session || !msg.sdp) return;
+      if (session.pc.signalingState !== 'have-local-offer') return;
+      await session.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+      await drainPending(session);
+      return;
+    }
+
+    case 'screen-ice': {
+      const session = screenSessions.get(peerId);
+      if (!session || !msg.candidate) return;
+      if (!session.pc.remoteDescription) {
+        session.pending.push(msg.candidate);
+        return;
+      }
+      await session.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
+      return;
+    }
+
     case 'ice': {
       const session = sessions.get(peerId);
       if (!session || !msg.candidate) return;
@@ -598,3 +646,155 @@ async function drainPending(session: Session) {
     await session.pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
   }
 }
+
+/* ------------------------------------------------ the screen, properly */
+
+/**
+ * Sending this screen to somebody driving it.
+ *
+ * Separate from calls, and separate from the JPEG stream the HTTP server
+ * offers, because it answers a question neither of those does: 1080p at sixty
+ * frames with a tenth of a second of lag.
+ *
+ * The JPEG stream cannot get there and the arithmetic is not close. A whole
+ * picture every frame is 165 KB at 1080p, which is 77 Mbit/s at sixty — more
+ * than the wi-fi carries — and the machine can only produce about eleven of
+ * them a second anyway. A video codec sends the difference between frames
+ * instead, which for a desktop that is mostly still is almost nothing, and the
+ * hardware encoder does it without troubling the processor. The same picture
+ * costs around ten megabits.
+ *
+ * All of that already exists in the webview. What it costs is the operating
+ * system's share picker, which somebody has to answer at the machine being
+ * shared — so this is the deliberate path, and the JPEG stream stays as the
+ * one that needs nobody.
+ *
+ * Its own connection rather than the call's: sharing a screen should not
+ * require being in a call, and a call already in progress should not have its
+ * camera track hijacked by somebody taking control.
+ */
+const screenSessions = new Map<string, Session>();
+const screenHandlers = new Set<RemoteHandler>();
+
+export function onScreenStream(fn: RemoteHandler): () => void {
+  screenHandlers.add(fn);
+  return () => screenHandlers.delete(fn);
+}
+
+function createScreenSession(peerId: string): Session {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const remote = new MediaStream();
+  const session: Session = { callId: `screen:${peerId}`, kind: 'video', pc, pending: [], remote };
+  screenSessions.set(peerId, session);
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      void send(peerId, {
+        callId: session.callId,
+        kind: 'video',
+        type: 'screen-ice',
+        candidate: e.candidate.toJSON(),
+      });
+    }
+  };
+
+  pc.ontrack = (e) => {
+    for (const track of e.streams[0]?.getTracks() ?? [e.track]) {
+      if (!remote.getTracks().some((t) => t.id === track.id)) remote.addTrack(track);
+    }
+    screenHandlers.forEach((fn) => fn(peerId, remote));
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'connected') void tuneScreenForLan(pc);
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      stopScreenTo(peerId);
+    }
+  };
+
+  return session;
+}
+
+/**
+ * Lets the encoder use the network it is actually on.
+ *
+ * The defaults assume the public internet and cap video around one or two
+ * megabits, which on a desktop share is the difference between reading text
+ * and guessing at it. `maintain-resolution` matters as much: the default trade
+ * is to shrink the picture to protect the frame rate, and a shrunken desktop
+ * is useless whatever rate it arrives at.
+ */
+async function tuneScreenForLan(pc: RTCPeerConnection): Promise<void> {
+  for (const sender of pc.getSenders()) {
+    if (sender.track?.kind !== 'video') continue;
+    const params = sender.getParameters();
+    if (!params.encodings?.length) params.encodings = [{}];
+    for (const encoding of params.encodings) {
+      encoding.maxBitrate = 20_000_000;
+      encoding.maxFramerate = 60;
+      encoding.scaleResolutionDownBy = 1;
+    }
+    params.degradationPreference = 'maintain-resolution';
+    await sender.setParameters(params).catch(() => {});
+  }
+}
+
+/**
+ * Offers this screen to a peer.
+ *
+ * The picker appears here, at the machine being shared, and there is no way
+ * around it from inside the page: a web application cannot capture a screen
+ * nobody agreed to hand over. Returns false when it is dismissed.
+ */
+export async function shareScreenWith(peerId: string): Promise<boolean> {
+  const display = await navigator.mediaDevices
+    .getDisplayMedia({
+      video: { frameRate: { ideal: 60, max: 60 }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    })
+    .catch(() => null);
+  if (!display) return false;
+
+  const track = display.getVideoTracks()[0];
+  if (!track) return false;
+
+  // Stopping the share from the browser's own "stop sharing" bar has to end
+  // the session too, or the far side watches a frozen picture.
+  track.addEventListener('ended', () => stopScreenTo(peerId));
+
+  const session = screenSessions.get(peerId) ?? createScreenSession(peerId);
+  session.pc.addTrack(track, display);
+  // Held so it can be stopped later; a capture left running keeps the
+  // recording indicator lit long after anyone is watching.
+  screenShares.set(peerId, display);
+
+  const offer = await session.pc.createOffer();
+  await session.pc.setLocalDescription(offer);
+  const delivered = await send(peerId, {
+    callId: session.callId,
+    kind: 'video',
+    type: 'screen-offer',
+    sdp: offer,
+  });
+  if (!delivered) {
+    stopScreenTo(peerId);
+    return false;
+  }
+  return true;
+}
+
+const screenShares = new Map<string, MediaStream>();
+
+/** Stops sending this screen to one peer, and frees the capture. */
+export function stopScreenTo(peerId: string): void {
+  screenShares.get(peerId)?.getTracks().forEach((t) => t.stop());
+  screenShares.delete(peerId);
+  const session = screenSessions.get(peerId);
+  if (session) {
+    session.pc.close();
+    screenSessions.delete(peerId);
+  }
+}
+
+/** True while this device is sending its screen to somebody. */
+export const isSharingScreenWith = (peerId: string): boolean => screenShares.has(peerId);

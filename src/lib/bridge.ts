@@ -410,6 +410,16 @@ export const api = {
     /** Where to fetch that peer's screen, once it has granted control. */
     screenUrl: (peerId: string, token: string) =>
       call<string>('control_screen_url', { peerId, token }),
+    /** Asks them to send their screen as video rather than as still frames. */
+    askScreen: (peerId: string) => call<void>('control_ask_screen', { peerId }),
+    /**
+     * Whether this machine hands over its screen with no picker.
+     *
+     * Takes effect at the next launch: a browser's switches are fixed when
+     * the browser starts.
+     */
+    autoShareGet: () => call<boolean>('autoshare_get'),
+    autoShareSet: (on: boolean) => call<void>('autoshare_set', { on }),
     status: () => call<ControlStatus>('control_status'),
     forget: (peerId: string) => call<void>('control_forget', { peerId }),
   },

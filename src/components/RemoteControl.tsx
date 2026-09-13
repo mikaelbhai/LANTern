@@ -2,6 +2,7 @@ import React from 'react';
 import { Gamepad2, Hand, Keyboard, MousePointer2, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { api, on } from '../lib/bridge';
+import * as rtc from '../lib/webrtc';
 import {
   Held,
   PAD_KEYS,
@@ -60,6 +61,13 @@ export function RemoteControl({
   // The picture of their screen. Null until they grant control, because the
   // secret that opens it is minted by the grant.
   const [screen, setScreen] = React.useState<string | null>(null);
+  // Their screen as real video, once they agree to send it. Preferred over the
+  // still frames the moment it arrives: it is the same picture at six times
+  // the rate and a fraction of the bandwidth.
+  const [video, setVideo] = React.useState<MediaStream | null>(null);
+  // How many still frames a second to ask for, when it is still frames. No
+  // effect on the video path, where the encoder decides.
+  const [fps, setFps] = React.useState(10);
 
   // Everything held down at the far end, so it can all be let go of.
   const held = React.useRef(new Held());
@@ -115,6 +123,19 @@ export function RemoteControl({
 
   // The far end taking control away is not a failure, but it does mean
   // everything held is now held by nobody.
+  // Read by listeners registered once, so it cannot be the captured value.
+  const fpsRef = React.useRef(fps);
+  fpsRef.current = fps;
+
+  // Their screen arriving as video supersedes the still frames.
+  React.useEffect(
+    () =>
+      rtc.onScreenStream((from, stream) => {
+        if (from === peerId) setVideo(stream);
+      }),
+    [peerId],
+  );
+
   React.useEffect(
     () =>
       on(
@@ -126,8 +147,12 @@ export function RemoteControl({
             // picked for itself is not necessarily the one that works here.
             void api.control
               .screenUrl(peerId, msg.token)
-              .then(setScreen)
+              .then((url) => setScreen(`${url}&fps=${fpsRef.current}`))
               .catch(() => setScreen(null));
+            // And ask for the better one. It costs them a dialog, so it is a
+            // request rather than an assumption, and the still frames carry
+            // on either way until it answers.
+            void api.control.askScreen(peerId).catch(() => {});
             // Touch is the mode that makes sense once there is a picture to
             // point at, so it becomes the one on screen.
             setSurface('touch');
@@ -135,6 +160,8 @@ export function RemoteControl({
           if (msg.op === 'ended' || msg.op === 'denied') {
             held.current.releaseAll();
             setScreen(null);
+            setVideo(null);
+            rtc.stopScreenTo(peerId);
             onClose();
           }
         },
@@ -178,13 +205,42 @@ export function RemoteControl({
         means the operating system's share picker, which needs somebody
         standing at the machine nobody is standing at.
       */}
-      {screen && (
+      {(video || screen) && (
         <Screen
           src={screen}
+          video={video}
           push={push}
           held={held.current}
           pointing={surface === 'touch'}
         />
+      )}
+
+      {/*
+        Only for the still frames. On the video path the encoder decides, and
+        offering a number that changes nothing is worse than offering none.
+      */}
+      {screen && !video && (
+        <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-t border-edge">
+          <span className="text-[10px] text-muted mr-1">Frames a second</span>
+          {[5, 10, 15, 30].map((rate) => (
+            <button
+              key={rate}
+              onClick={() => {
+                setFps(rate);
+                setScreen((was) => (was ? was.replace(/&fps=\d+/, `&fps=${rate}`) : was));
+              }}
+              className={cn(
+                'px-2 py-0.5 rounded-input text-[10px]',
+                fps === rate ? 'bg-gold/20 text-gold' : 'text-dim hover:text-txt',
+              )}
+            >
+              {rate}
+            </button>
+          ))}
+          <span className="ml-auto text-[10px] text-muted">
+            waiting for video&hellip;
+          </span>
+        </div>
       )}
 
       <div className={cn('min-h-0', screen ? 'shrink-0' : 'flex-1')}>
@@ -461,29 +517,67 @@ function ClickRow({
  */
 function Screen({
   src,
+  video,
   push,
   held,
   pointing,
 }: {
-  src: string;
+  src: string | null;
+  video: MediaStream | null;
   push: (...e: (RemoteEvent | null)[]) => void;
   held: Held;
   pointing: boolean;
 }) {
   const picture = React.useRef<HTMLImageElement>(null);
+  const player = React.useRef<HTMLVideoElement>(null);
   const [broken, setBroken] = React.useState(false);
 
+  React.useEffect(() => {
+    if (player.current && video) player.current.srcObject = video;
+  }, [video]);
+
   const pointAt = (e: React.PointerEvent) => {
-    const box = picture.current?.getBoundingClientRect();
+    // Whichever is actually on screen. The two are never both visible, and
+    // measuring the hidden one would put every tap in the wrong place.
+    const box = (video ? player.current : picture.current)?.getBoundingClientRect();
     if (!box) return null;
     return touchPoint({ x: e.clientX, y: e.clientY }, box);
   };
 
   return (
     <div className="relative flex-1 min-h-0 bg-black grid place-items-center overflow-hidden">
+      {video && (
+        <video
+          ref={player}
+          autoPlay
+          playsInline
+          muted
+          className="max-h-full max-w-full object-contain touch-none select-none"
+          onPointerDown={
+            pointing
+              ? (e) => {
+                  e.preventDefault();
+                  push(pointAt(e), held.button('left', true));
+                  keepGesture(e);
+                }
+              : undefined
+          }
+          onPointerMove={
+            pointing
+              ? (e) => {
+                  if (e.buttons === 0) return;
+                  push(pointAt(e));
+                }
+              : undefined
+          }
+          onPointerUp={pointing ? () => push(held.button('left', false)) : undefined}
+          onPointerCancel={pointing ? () => push(held.button('left', false)) : undefined}
+        />
+      )}
       <img
+        hidden={!!video || !src}
         ref={picture}
-        src={src}
+        src={src ?? undefined}
         alt="The screen of the device you are controlling"
         className="max-h-full max-w-full object-contain touch-none select-none"
         draggable={false}

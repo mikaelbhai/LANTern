@@ -8,6 +8,8 @@
 // that keeps serving files after the window closes — is a separate binary
 // that links this library. Everything else stays private to it.
 mod audiotrack;
+#[cfg(target_os = "windows")]
+pub mod autoshare;
 mod commands;
 pub mod db;
 mod discovery;
@@ -181,6 +183,9 @@ pub fn run() {
             commands::control_end,
             commands::control_send,
             commands::control_screen_url,
+            commands::control_ask_screen,
+            commands::autoshare_get,
+            commands::autoshare_set,
             commands::control_status,
             commands::control_forget,
             commands::wake_device,

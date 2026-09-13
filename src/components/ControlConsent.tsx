@@ -2,6 +2,7 @@ import React from 'react';
 import { MousePointerClick, ShieldAlert, X } from 'lucide-react';
 import { Button, Modal } from './ui';
 import { api, on } from '../lib/bridge';
+import * as rtc from '../lib/webrtc';
 import { useStore } from '../lib/store';
 import type { ControlStatus } from '../lib/types';
 
@@ -27,6 +28,11 @@ export function ControlConsent() {
   const [status, setStatus] = React.useState<ControlStatus | null>(null);
   const peers = useStore((s) => s.peers);
 
+  // The listeners below are registered once and read this later, so it has to
+  // be a ref rather than the value captured at registration.
+  const statusRef = React.useRef<ControlStatus | null>(null);
+  statusRef.current = status;
+
   const refresh = React.useCallback(() => {
     void api.control
       .status()
@@ -42,6 +48,24 @@ export function ControlConsent() {
   // A request arriving is the one moment this must appear without being
   // asked, so it listens for the message as well as the state.
   React.useEffect(() => on('control:message', () => refresh()), [refresh]);
+
+  // Somebody driving this machine has asked for the good picture.
+  //
+  // Only from the device actually holding control — the ask is a message like
+  // any other and a peer that has not been granted anything must not be able
+  // to raise a share dialog on somebody's screen.
+  React.useEffect(
+    () =>
+      on('control:message', (msg: { op?: string; from?: string }) => {
+        if (msg.op !== 'screen' || !msg.from) return;
+        const holder = statusRef.current?.holder;
+        if (holder !== msg.from) return;
+        void rtc.shareScreenWith(msg.from);
+      }),
+    [],
+  );
+
+
 
   // Same reason as the wake list: an unimplemented command resolves with
   // null, and this one sits at the root of every screen.
