@@ -44,6 +44,23 @@ pub fn boot(app: AppHandle, state: AppState) {
     }
     let state = &state;
 
+    // Before the snapshot, not after it. If this machine is meant to rejoin a
+    // network at startup, every line below reads an address that does not
+    // exist yet — and the app would come up bound to nothing, on a device
+    // nobody is sitting at to notice. Nearly always this is one query and no
+    // delay, because the machine is already on the right network.
+    //
+    // Not the instance directory: which network a machine is on is a fact
+    // about the machine, and a second instance started for testing shares it.
+    #[cfg(desktop)]
+    if let Ok(dir) = app.path().app_data_dir() {
+        match crate::wifi::ensure(&dir) {
+            crate::wifi::Joined::Connected(ssid) => println!("joined {ssid} at startup"),
+            crate::wifi::Joined::Failed(ssid, why) => eprintln!("could not join {ssid}: {why}"),
+            _ => {}
+        }
+    }
+
     // Snapshot the local network before anything binds to it.
     let ip = net::primary_ip();
     let mask = net::netmask_for(&ip);
@@ -3258,6 +3275,69 @@ pub fn autoshare_set(_on: bool) -> Res<()> {
     #[cfg(not(target_os = "windows"))]
     {
         Err("only Windows can share a screen".into())
+    }
+}
+
+/* --------------------------------------------------------- joining a network */
+
+/// The networks this machine knows, the one it is on, and the one it rejoins.
+#[tauri::command]
+pub fn wifi_status(_app: AppHandle) -> serde_json::Value {
+    #[cfg(desktop)]
+    {
+        let chosen = _app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|dir| crate::wifi::preference(&dir));
+        return serde_json::json!({
+            "supported": crate::wifi::supported(),
+            "current": crate::wifi::current(),
+            "saved": crate::wifi::saved(),
+            "chosen": chosen,
+        });
+    }
+    #[cfg(not(desktop))]
+    {
+        // Android decides this itself: an app may suggest a network and the
+        // person chooses. Saying so is better than an empty list that looks
+        // like a machine which has never joined anything.
+        serde_json::json!({
+            "supported": false,
+            "current": serde_json::Value::Null,
+            "saved": Vec::<String>::new(),
+            "chosen": serde_json::Value::Null,
+        })
+    }
+}
+
+/// Chooses the network to rejoin at startup, or `None` to stop doing it.
+///
+/// Refused unless this machine has already saved that network, because
+/// LANTern has no password to offer and is never going to ask for one.
+#[tauri::command]
+pub fn wifi_set_startup(_app: AppHandle, _ssid: Option<String>) -> Res<()> {
+    #[cfg(desktop)]
+    {
+        let dir = _app.path().app_data_dir().map_err(|e| e.to_string())?;
+        crate::wifi::set_preference(&dir, _ssid.as_deref())
+    }
+    #[cfg(not(desktop))]
+    {
+        Err("this platform does not let an app choose the network".into())
+    }
+}
+
+/// Joins a saved network now, without waiting for the next start.
+#[tauri::command]
+pub fn wifi_connect(_ssid: String) -> Res<()> {
+    #[cfg(desktop)]
+    {
+        crate::wifi::connect(&_ssid)
+    }
+    #[cfg(not(desktop))]
+    {
+        Err("this platform does not let an app choose the network".into())
     }
 }
 

@@ -21,6 +21,8 @@ mod input;
 mod rating;
 mod screencap;
 mod wol;
+#[cfg(desktop)]
+mod wifi;
 mod media;
 mod model;
 mod mp4;
@@ -189,6 +191,9 @@ pub fn run() {
             commands::files_clear_outbox,
             commands::autoshare_get,
             commands::autoshare_set,
+            commands::wifi_status,
+            commands::wifi_set_startup,
+            commands::wifi_connect,
             commands::control_status,
             commands::control_forget,
             commands::ratings_status,

@@ -491,6 +491,18 @@ export interface ControlStatus {
   supported: boolean;
 }
 
+/** What this machine knows about the wireless networks around it. */
+export interface WifiStatus {
+  /** False on Android, which decides this itself and asks the person. */
+  supported: boolean;
+  /** The network it is on, or null if it is on none. */
+  current: string | null;
+  /** Networks it has saved. The only ones that can be chosen. */
+  saved: string[];
+  /** The one it rejoins at startup, or null if it does not. */
+  chosen: string | null;
+}
+
 /** A device that could be woken, and the address to wake it at. */
 export interface Wakeable {
   deviceId: string;

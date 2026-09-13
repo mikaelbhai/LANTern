@@ -169,6 +169,7 @@ const MEDIA_SEED: Array<
   },
 ];
 
+let startupWifi: string | null = null;
 let media: MediaItem[] = [];
 let party: WatchParty | null = null;
 let session: GameSession | null = null;
@@ -583,6 +584,23 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'autostart_set':
       return args.enabled;
+
+    /* ----------------------------------------------------------- wi-fi */
+
+    case 'wifi_status':
+      return {
+        supported: true,
+        current: 'Kitchen 5G',
+        saved: ['Kitchen 5G', 'Attic', 'Phone hotspot'],
+        chosen: startupWifi,
+      };
+
+    case 'wifi_set_startup':
+      startupWifi = args.ssid ?? null;
+      return null;
+
+    case 'wifi_connect':
+      return null;
 
     /* --------------------------------------------------------- theatre */
 

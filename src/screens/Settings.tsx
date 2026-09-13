@@ -38,7 +38,7 @@ import { api, on } from '../lib/bridge';
 import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
-import type { ControlStatus } from '../lib/types';
+import type { ControlStatus, WifiStatus } from '../lib/types';
 
 type Tab =
   | 'profile'
@@ -618,6 +618,8 @@ function NetworkTab() {
         </Row>
       </Group>
 
+      <WifiGroup />
+
       <Group title="Identity">
         <Row label="Device fingerprint" hint="Used to derive your pairing phrase">
           <Button
@@ -636,6 +638,124 @@ function NetworkTab() {
         </Row>
       </Group>
     </>
+  );
+}
+
+/**
+ * Rejoining a known network when the app starts.
+ *
+ * The case this exists for is a machine nobody is sitting at: it comes up on
+ * the wrong network, or on none, and every LANTern feature looks broken for a
+ * reason that has nothing to do with LANTern. Reaching it from a phone to fix
+ * that is exactly what does not work.
+ *
+ * Only saved networks are offered, and that is a limit rather than a
+ * shortcut — LANTern has no password to give and never asks for one.
+ */
+function WifiGroup() {
+  const toast = useStore((st) => st.toast);
+  const [status, setStatus] = React.useState<WifiStatus | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    void api.wifi.status().then(setStatus).catch(() => setStatus(null));
+  }, []);
+  React.useEffect(load, [load]);
+
+  // Nothing is known yet, or this platform does not answer.
+  if (!status) return null;
+
+  if (!status.supported) {
+    return (
+      <Group title="Wi-Fi">
+        <p className="text-xs text-dim leading-relaxed">
+          Android chooses its own network. An app can suggest one, but the
+          decision stays with you — so there is nothing for LANTern to set here.
+        </p>
+      </Group>
+    );
+  }
+
+  const choose = async (ssid: string) => {
+    setBusy(true);
+    try {
+      await api.wifi.setStartup(ssid || null);
+      load();
+      toast({
+        kind: 'success',
+        title: ssid ? `Will rejoin ${ssid}` : 'Startup reconnect off',
+        body: ssid
+          ? 'Checked when LANTern starts. Nothing happens if this machine is already on it.'
+          : 'LANTern will leave the network alone at startup.',
+      });
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not save that', body: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connectNow = async () => {
+    if (!status.chosen) return;
+    setBusy(true);
+    try {
+      await api.wifi.connect(status.chosen);
+      // Association takes a moment, so the answer is read back rather than
+      // assumed — saying "connected" before it is would be a lie the user
+      // then has to disprove.
+      setTimeout(load, 2500);
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not connect', body: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const options = [
+    { value: '', label: "Don't reconnect" },
+    ...status.saved.map((ssid) => ({ value: ssid, label: ssid })),
+  ];
+  const elsewhere = status.chosen !== null && status.current !== status.chosen;
+
+  return (
+    <Group title="Wi-Fi">
+      <Row
+        label="Rejoin at startup"
+        hint={
+          status.current
+            ? `Currently on ${status.current}`
+            : 'This machine is not on a wireless network'
+        }
+      >
+        <Select
+          value={status.chosen ?? ''}
+          onChange={(v) => void choose(v)}
+          options={options}
+          className="w-52"
+        />
+      </Row>
+      {status.saved.length === 0 && (
+        <p className="text-xs text-dim leading-relaxed">
+          No saved networks to choose from. Connect to one once in Windows or
+          macOS and it will appear here.
+        </p>
+      )}
+      {elsewhere && (
+        <Row
+          label="Not on that network"
+          hint={`LANTern will join ${status.chosen} at the next start`}
+        >
+          <Button size="xs" onClick={() => void connectNow()} disabled={busy}>
+            Connect now
+          </Button>
+        </Row>
+      )}
+      <p className="text-xs text-dim leading-relaxed">
+        Only networks this machine has already saved. LANTern never asks for a
+        Wi-Fi password and never stores one — it asks the operating system to
+        join with the credentials it already has.
+      </p>
+    </Group>
   );
 }
 

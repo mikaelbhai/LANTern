@@ -19,6 +19,7 @@ import type {
   Transfer,
   UpstreamInfo,
   Wakeable,
+  WifiStatus,
   WatchParty,
 } from './types';
 
@@ -439,6 +440,19 @@ export const api = {
     /** Returns how many packets went out. Nothing acknowledges them. */
     send: (mac: string) => call<number>('wake_device', { mac }),
     list: () => call<Wakeable[]>('wakeable'),
+  },
+  /**
+   * Rejoining a known network at startup.
+   *
+   * Only ever a network this machine has already saved: LANTern has no
+   * password to offer and does not ask for one, so the credentials stay with
+   * the operating system that already holds them.
+   */
+  wifi: {
+    status: () => call<WifiStatus>('wifi_status'),
+    /** Null turns it off. */
+    setStartup: (ssid: string | null) => call<void>('wifi_set_startup', { ssid }),
+    connect: (ssid: string) => call<void>('wifi_connect', { ssid }),
   },
   /** Tray and launch behaviour. No-ops in a plain browser. */
   system: {
