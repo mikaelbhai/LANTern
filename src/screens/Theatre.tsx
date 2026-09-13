@@ -934,6 +934,15 @@ function CollectionSheet({
     }
   }, [collection?.key]);
 
+  // How many of these were put here by hand rather than by the filename.
+  // Nothing to undo when the answer is none, and a button offering to undo
+  // nothing is worse than no button.
+  const handMade = collection
+    ? collection.items.filter(
+        (item) => overrides.itemToKey[item.id] || overrides.detached.includes(item.id),
+      ).length
+    : 0;
+
   if (!collection) return null;
 
   const saveTitle = () => {
@@ -1087,6 +1096,40 @@ function CollectionSheet({
               Grouped automatically from filenames. Rename it, or remove a title that does
               not belong.
             </p>
+            {/*
+              Undoing the whole collection, not one title at a time.
+
+              Every item already has this in its own panel, which is fine for
+              correcting one mistake and useless for the case it is actually
+              needed: a hand-made grouping that has been overtaken by the
+              automatic one, leaving two collections with the same name and no
+              way to merge them except opening a dozen titles in turn.
+            */}
+            {handMade > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const mine = new Set(collection.items.map((i) => i.id));
+                  onOverrides({
+                    ...overrides,
+                    itemToKey: Object.fromEntries(
+                      Object.entries(overrides.itemToKey).filter(([id]) => !mine.has(id)),
+                    ),
+                    detached: overrides.detached.filter((id) => !mine.has(id)),
+                    // The chosen name goes with the filing it belonged to. A
+                    // title left behind would rename whatever the automatic
+                    // grouping puts under that key next.
+                    titles: Object.fromEntries(
+                      Object.entries(overrides.titles).filter(([key]) => key !== collection.key),
+                    ),
+                  });
+                  onClose();
+                }}
+              >
+                Reset {handMade} to automatic
+              </Button>
+            )}
             <Button onClick={onClose}>Close</Button>
           </div>
         </motion.div>

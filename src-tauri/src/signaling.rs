@@ -196,6 +196,16 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // controlled, and routing it through the frontend would mean
             // input stopped arriving whenever the app was minimised - which
             // is exactly when somebody is driving it from another room.
+            // The key a peer issues us, to present when reading their library.
+            if envelope.kind == "key" {
+                if let Some(key) = envelope.payload.get("key").and_then(|v| v.as_str()) {
+                    let from = envelope.from.clone();
+                    let key = key.to_string();
+                    state.with(|s| s.held_keys.insert(from, key));
+                }
+                continue;
+            }
+
             if envelope.kind == "input" {
                 #[cfg(target_os = "windows")]
                 {
@@ -292,6 +302,30 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
     });
 
     let _ = app.emit(if is_new { "peer:joined" } else { "peer:updated" }, &peer);
+
+    // Hand them a key over this link, which is authenticated, so that their
+    // ordinary HTTP requests to our server can be attributed to them. Without
+    // it the server cannot tell one peer from another, and an age restriction
+    // it cannot attribute is one it cannot enforce.
+    //
+    // Minted fresh on every link rather than kept: a key that outlives the
+    // connection is a key that outlives the device being on the network.
+    {
+        let key = uuid::Uuid::new_v4().simple().to_string();
+        let (links, me) = state.with(|s| {
+            s.issued_keys.insert(peer_id.clone(), key.clone());
+            (s.links.clone(), s.device_id.clone())
+        });
+        links.send(
+            &peer_id,
+            &Envelope {
+                v: 1,
+                from: me,
+                kind: "key".into(),
+                payload: serde_json::json!({ "key": key }),
+            },
+        );
+    }
 
     // A peer we can reach is a library we can read. Theatre showed only local
     // titles until something asked.

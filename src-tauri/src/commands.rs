@@ -132,10 +132,34 @@ pub fn boot(app: AppHandle, state: AppState) {
                             macs.extend(rows.flatten());
                         }
                     }
+                    // Who may watch what, read before the server can answer
+                    // anything. A restriction that is not yet loaded is a
+                    // restriction that is not in force.
+                    let mut device_ages = std::collections::HashMap::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id, max_age FROM device_ages")
+                    {
+                        if let Ok(rows) = stmt
+                            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u8)))
+                        {
+                            device_ages.extend(rows.flatten());
+                        }
+                    }
+                    let mut title_ages = std::collections::HashMap::new();
+                    if let Ok(mut stmt) =
+                        conn.prepare("SELECT stream_path, min_age FROM title_ages")
+                    {
+                        if let Ok(rows) = stmt
+                            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u8)))
+                        {
+                            title_ages.extend(rows.flatten());
+                        }
+                    }
                     state.with(|s| {
                         s.blocked = blocked;
                         s.control.load_allowed(allowed);
                         s.macs = macs;
+                        s.device_ages = device_ages;
+                        s.title_ages = title_ages;
                         s.db = Some(conn);
                     });
                 }
@@ -3353,5 +3377,129 @@ pub async fn files_stage(
 #[tauri::command]
 pub fn files_clear_outbox(state: State<'_, AppState>) -> Res<()> {
     state.with(|s| s.staged.clear());
+    Ok(())
+}
+
+/* ---------------------------------------------------------- age restriction */
+
+/// What each device is allowed to watch, and the household default.
+#[tauri::command]
+pub fn ratings_status(state: State<'_, AppState>) -> serde_json::Value {
+    state.with(|s| {
+        let devices: Vec<serde_json::Value> = s
+            .device_ages
+            .iter()
+            .map(|(device_id, age)| {
+                let name = s
+                    .peers
+                    .values()
+                    .find(|p| &p.device_id == device_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                serde_json::json!({ "deviceId": device_id, "name": name, "maxAge": age })
+            })
+            .collect();
+
+        let default_age = s
+            .db
+            .as_ref()
+            .and_then(|db| {
+                db.query_row(
+                    "SELECT value FROM preferences WHERE key = 'default_max_age'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+            })
+            .and_then(|v| v.parse::<u8>().ok())
+            .unwrap_or(crate::rating::DEFAULT_MAX_AGE);
+
+        serde_json::json!({
+            "devices": devices,
+            "defaultAge": default_age,
+            "overrides": s.title_ages.len(),
+        })
+    })
+}
+
+/// Sets how old a device is allowed to be.
+///
+/// Only ever called on the machine holding the files. A device cannot raise
+/// its own allowance because it never asks — it presents a key, and the
+/// answer to what that key may see is decided here.
+#[tauri::command]
+pub fn ratings_set_device(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+    max_age: u8,
+) -> Res<()> {
+    state.with(|s| {
+        s.device_ages.insert(device_id.clone(), max_age);
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO device_ages (device_id, max_age) VALUES (?1, ?2)
+                 ON CONFLICT(device_id) DO UPDATE SET max_age = ?2",
+                rusqlite::params![device_id, max_age as i64],
+            );
+        }
+    });
+    // The library a peer sees depends on this, so it is rebuilt rather than
+    // left until something else happens to ask.
+    crate::library::spawn_refresh(&app, &state);
+    Ok(())
+}
+
+/// The age allowed to a device nobody has set.
+#[tauri::command]
+pub fn ratings_set_default(app: AppHandle, state: State<'_, AppState>, max_age: u8) -> Res<()> {
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('default_max_age', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![max_age.to_string()],
+            );
+        }
+    });
+    crate::library::spawn_refresh(&app, &state);
+    Ok(())
+}
+
+/// Sets a title's rating by hand, which always beats the guess.
+///
+/// `min_age` of `None` clears it, so a wrong correction can be undone rather
+/// than only replaced.
+#[tauri::command]
+pub fn ratings_set_title(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    stream_path: String,
+    min_age: Option<u8>,
+) -> Res<()> {
+    state.with(|s| {
+        match min_age {
+            Some(age) => {
+                s.title_ages.insert(stream_path.clone(), age);
+                if let Some(db) = s.db.as_ref() {
+                    let _ = db.execute(
+                        "INSERT INTO title_ages (stream_path, min_age) VALUES (?1, ?2)
+                         ON CONFLICT(stream_path) DO UPDATE SET min_age = ?2",
+                        rusqlite::params![stream_path, age as i64],
+                    );
+                }
+            }
+            None => {
+                s.title_ages.remove(&stream_path);
+                if let Some(db) = s.db.as_ref() {
+                    let _ = db.execute(
+                        "DELETE FROM title_ages WHERE stream_path = ?1",
+                        rusqlite::params![stream_path],
+                    );
+                }
+            }
+        }
+    });
+    crate::library::spawn_refresh(&app, &state);
     Ok(())
 }

@@ -164,7 +164,8 @@ async fn serve_root(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    respond(state, slug, String::new(), &headers, params.contains_key("json")).await
+    let key = params.get("k").cloned();
+    respond(state, slug, String::new(), &headers, key, params.contains_key("json")).await
 }
 
 async fn serve_path(
@@ -195,7 +196,28 @@ async fn serve_path(
         let codec = params.get("codec").cloned().unwrap_or_default();
         return serve_audio_selection(&state, &slug, &path, index, &codec, seek).await;
     }
-    respond(state, slug, path, &headers, params.contains_key("json")).await
+    // The gate, at the last point before bytes leave this machine.
+    //
+    // Not in the manifest alone: a title the far side was told about is a URL
+    // it can ask for again, from anything. Refusing here is what makes the
+    // restriction a restriction rather than a suggestion the viewer's app is
+    // free to ignore.
+    let stream_path = format!("/{slug}/{path}");
+    if !crate::rating::may_serve(
+        &state,
+        params.get("k").map(String::as_str),
+        &stream_path,
+        &path,
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            "This device is not approved for that title",
+        )
+            .into_response();
+    }
+
+    let key = params.get("k").cloned();
+    respond(state, slug, path, &headers, key, params.contains_key("json")).await
 }
 
 /// Spawns ffmpeg without letting Windows open a console for it.
@@ -455,6 +477,8 @@ async fn respond(
     slug: String,
     rel: String,
     headers: &HeaderMap,
+    // Who is asking, so the manifest can say what they may watch.
+    key: Option<String>,
     // True when another LANTern asked for a directory as data, rather than a
     // browser asking for a page to look at.
     as_json: bool,
@@ -477,7 +501,7 @@ async fn respond(
     // A media share advertises its contents as JSON so a peer's Theatre can
     // enumerate titles without scraping an HTML listing.
     if mode == ShareMode::Media && rel == "index.json" {
-        return media_manifest(&state, &slug, &root, headers).await;
+        return media_manifest(&state, &slug, &root, headers, key.as_deref()).await;
     }
 
     // SubRip is the format everyone has and no browser will load. Converting
@@ -701,6 +725,7 @@ async fn media_manifest(
     slug: &str,
     root: &Path,
     headers: &HeaderMap,
+    key: Option<&str>,
 ) -> Response {
     let (share_id, ip, host_port) = state.with(|s| {
         (
@@ -731,6 +756,54 @@ async fn media_manifest(
     })
     .await
     .unwrap_or_default();
+
+    // Every title says what it is rated and whether this particular device may
+    // watch it, and every URL carries the asker's key onward so the stream can
+    // check again. Restricted titles are still listed - a locked door somebody
+    // can see is easier to ask about than a gap they cannot - but the bytes
+    // behind them do not move.
+    let mut items = items;
+    for item in &mut items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        let name = object
+            .get("relPath")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let stream_path = object
+            .get("streamUrl")
+            .and_then(|v| v.as_str())
+            .and_then(|u| u.split_once("://").map(|(_, rest)| rest))
+            .and_then(|rest| rest.split_once('/').map(|(_, p)| format!("/{p}")))
+            .unwrap_or_default();
+        let stream_path = stream_path.split('?').next().unwrap_or("").to_string();
+
+        let needs = crate::rating::min_age_for(state, &stream_path, &name);
+        let allowed = crate::rating::may_serve(state, key, &stream_path, &name);
+
+        if let Some(age) = needs {
+            object.insert("minAge".into(), serde_json::Value::from(age));
+        }
+        object.insert("locked".into(), serde_json::Value::from(!allowed));
+
+        // The key travels with each address so a player following one is still
+        // recognised. Nothing is added for an anonymous reader, who simply
+        // never sees anything restricted.
+        if let Some(k) = key {
+            for field in ["streamUrl", "posterUrl"] {
+                if let Some(url) = object.get(field).and_then(|v| v.as_str()) {
+                    let joined = if url.contains('?') {
+                        format!("{url}&k={k}")
+                    } else {
+                        format!("{url}?k={k}")
+                    };
+                    object.insert(field.into(), serde_json::Value::from(joined));
+                }
+            }
+        }
+    }
 
     (
         [

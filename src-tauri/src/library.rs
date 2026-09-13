@@ -275,6 +275,10 @@ pub async fn fetch_peer(
     peer_id: &str,
     host: &str,
     port: u16,
+    // The key that peer issued us over the signalling link, so its server can
+    // tell which device is asking and answer with what this one may watch.
+    // Without it the reply is whatever an anonymous browser would get.
+    key: Option<&str>,
 ) -> Option<Vec<serde_json::Value>> {
     let body = get(host, port, "/shares.json").await.ok()?;
     let shares = serde_json::from_str::<Vec<serde_json::Value>>(&body).ok()?;
@@ -287,7 +291,11 @@ pub async fn fetch_peer(
             continue;
         }
 
-        let Ok(body) = get(host, port, &format!("/{slug}/index.json")).await else {
+        let route = match key {
+            Some(k) => format!("/{slug}/index.json?k={k}"),
+            None => format!("/{slug}/index.json"),
+        };
+        let Ok(body) = get(host, port, &route).await else {
             continue;
         };
         let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&body) else {
@@ -358,7 +366,10 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
 
         let mut reached = false;
         if let Some(address) = first_to_answer(addresses, default_port).await {
-            if let Some(items) = fetch_peer(&peer.device_id, &address, default_port).await {
+            let key = state.with(|s| s.held_keys.get(&peer.device_id).cloned());
+            if let Some(items) =
+                fetch_peer(&peer.device_id, &address, default_port, key.as_deref()).await
+            {
                 remote.extend(items);
                 reached = true;
             }

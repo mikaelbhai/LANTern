@@ -111,6 +111,22 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             seen_at   INTEGER NOT NULL
         );
 
+        -- How old each device is allowed to be, decided here and enforced
+        -- here. A device never asks for a raise: it presents a key, and what
+        -- that key may see is answered on this side.
+        CREATE TABLE IF NOT EXISTS device_ages (
+            device_id TEXT PRIMARY KEY,
+            max_age   INTEGER NOT NULL
+        );
+
+        -- Ratings set by hand, which beat whatever the filename suggested.
+        -- Keyed by the address the manifest advertises, so a correction
+        -- survives a rescan.
+        CREATE TABLE IF NOT EXISTS title_ages (
+            stream_path TEXT PRIMARY KEY,
+            min_age     INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS control_allowed (
             device_id  TEXT PRIMARY KEY,
             name       TEXT NOT NULL DEFAULT '',

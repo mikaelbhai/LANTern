@@ -91,6 +91,27 @@ pub struct Inner {
     /// make that path point at nothing, so it lives here until the send
     /// dialog is done with it.
     pub staged: std::collections::HashMap<std::path::PathBuf, crate::transfers::Staged>,
+    /// Keys this device has issued to peers, so it can tell who is asking.
+    ///
+    /// An HTTP request between peers carries no identity: anyone on the
+    /// network can fetch a stream URL. That is fine for a library everyone may
+    /// watch and useless the moment some of it is restricted, because
+    /// "enforced by the device holding the file" then means nothing.
+    ///
+    /// So each link hands the far side a secret over the signalling channel,
+    /// which is authenticated, and requests carry it back. Keyed by their
+    /// device id; the value is what they must present.
+    pub issued_keys: std::collections::HashMap<String, String>,
+    /// Keys peers have issued to this device, to present when asking them.
+    pub held_keys: std::collections::HashMap<String, String>,
+    /// The oldest content each device may watch, set here by the person at
+    /// this machine. Absent means the household default applies.
+    pub device_ages: std::collections::HashMap<String, u8>,
+    /// Ratings the host has set by hand, which always beat the guess.
+    ///
+    /// Keyed by the stream path the manifest advertises, so a title keeps its
+    /// rating however the library is rescanned.
+    pub title_ages: std::collections::HashMap<String, u8>,
 }
 
 #[derive(Clone)]
@@ -143,6 +164,10 @@ impl AppState {
             injector: None,
             macs: std::collections::HashMap::new(),
             staged: std::collections::HashMap::new(),
+            issued_keys: std::collections::HashMap::new(),
+            held_keys: std::collections::HashMap::new(),
+            device_ages: std::collections::HashMap::new(),
+            title_ages: std::collections::HashMap::new(),
         })))
     }
 

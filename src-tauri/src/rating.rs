@@ -13,6 +13,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::state::AppState;
+
 /// The lowest age a title is meant for, or nothing when it is unrated.
 ///
 /// `None` is genuinely different from zero: unrated means nobody has said,
@@ -142,6 +144,76 @@ pub fn may_watch(needs: MinAge, allowed: u8) -> bool {
     }
 }
 
+/* ------------------------------------------------------------ age gating */
+
+/// The default age this household allows a device nobody has set.
+///
+/// Twelve rather than eighteen: a new device is more often somebody's tablet
+/// than a stranger's, and a default of nothing means every new phone appears
+/// broken until the host notices. Twelve leaves the thing this feature exists
+/// for behind an approval, which is the point.
+pub const DEFAULT_MAX_AGE: u8 = 12;
+
+/// The oldest content one device may watch here.
+pub fn allowed_age(state: &AppState, device_id: &str) -> u8 {
+    state.with(|s| {
+        s.device_ages.get(device_id).copied().unwrap_or_else(|| {
+            s.db.as_ref()
+                .and_then(|db| {
+                    db.query_row(
+                        "SELECT value FROM preferences WHERE key = 'default_max_age'",
+                        [],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .ok()
+                })
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_MAX_AGE)
+        })
+    })
+}
+
+/// Which device is behind a request, from the key it presented.
+///
+/// `None` means nobody identifiable — a browser typing the address in, or a
+/// peer from before this version. Those are treated as the household default
+/// rather than refused outright, because the plain-HTTP library is a feature:
+/// any browser on the network can open it, and that stays true for everything
+/// nobody has restricted.
+pub fn requester(state: &AppState, key: Option<&str>) -> Option<String> {
+    let key = key?;
+    if key.is_empty() {
+        return None;
+    }
+    state.with(|s| {
+        s.issued_keys
+            .iter()
+            .find(|(_, issued)| issued.as_str() == key)
+            .map(|(device, _)| device.clone())
+    })
+}
+
+/// What a title is rated: the host's word if they gave one, else the guess.
+pub fn min_age_for(state: &AppState, stream_path: &str, name: &str) -> crate::rating::MinAge {
+    if let Some(set) = state.with(|s| s.title_ages.get(stream_path).copied()) {
+        return Some(set);
+    }
+    crate::rating::guess(name).map(|r| r.min_age)
+}
+
+/// Whether the device behind this request may watch this title.
+///
+/// The single place the decision is made, so there is one thing to read to
+/// know whether restricted content can leave this machine.
+pub fn may_serve(state: &AppState, key: Option<&str>, stream_path: &str, name: &str) -> bool {
+    let needs = min_age_for(state, stream_path, name);
+    let allowed = match requester(state, key) {
+        Some(device) => allowed_age(state, &device),
+        None => allowed_age(state, ""),
+    };
+    crate::rating::may_watch(needs, allowed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +308,123 @@ mod tests {
     fn a_device_allowed_nothing_still_sees_the_unrated_and_the_universal() {
         assert!(may_watch(Some(0), 0), "a U film was refused");
         assert!(!may_watch(Some(7), 0));
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::state::AppState;
+
+    /// A host with one approved device, one restricted device, and one title
+    /// it has rated by hand.
+    fn household() -> AppState {
+        let state = AppState::new();
+        state.with(|s| {
+            s.issued_keys.insert("grown-up".into(), "key-grown".into());
+            s.issued_keys.insert("child".into(), "key-child".into());
+            s.device_ages.insert("grown-up".into(), 18);
+            s.device_ages.insert("child".into(), 7);
+            s.title_ages.insert("/media/Some Film.mkv".into(), 18);
+        });
+        state
+    }
+
+    #[test]
+    fn a_key_says_which_device_is_asking() {
+        let state = household();
+        assert_eq!(requester(&state, Some("key-child")).as_deref(), Some("child"));
+        assert_eq!(requester(&state, Some("key-grown")).as_deref(), Some("grown-up"));
+    }
+
+    #[test]
+    fn and_anything_else_says_nobody() {
+        let state = household();
+        // Every one of these is a request the server cannot attribute, and
+        // must not attribute by accident to whoever is first in the map.
+        for attempt in [None, Some(""), Some("guessed"), Some("key-"), Some("KEY-CHILD")] {
+            assert_eq!(requester(&state, attempt), None, "{attempt:?} matched a device");
+        }
+    }
+
+    #[test]
+    fn the_host_s_rating_beats_the_guess() {
+        let state = household();
+        // The filename says nothing; the host said eighteen.
+        assert_eq!(min_age_for(&state, "/media/Some Film.mkv", "Some Film.mkv"), Some(18));
+        // And where the host has said nothing, the filename is used.
+        assert_eq!(min_age_for(&state, "/media/Other.mkv", "Other (PG-13).mkv"), Some(13));
+        assert_eq!(min_age_for(&state, "/media/Plain.mkv", "Plain.mkv"), None);
+    }
+
+    #[test]
+    fn a_restricted_title_is_refused_to_a_child_and_served_to_an_adult() {
+        let state = household();
+        let path = "/media/Some Film.mkv";
+        assert!(!may_serve(&state, Some("key-child"), path, "Some Film.mkv"));
+        assert!(may_serve(&state, Some("key-grown"), path, "Some Film.mkv"));
+    }
+
+    /// The whole point of a key. Guessing one, dropping it, or presenting
+    /// somebody else's must not open the door.
+    #[test]
+    fn a_restricted_title_is_refused_to_anyone_unidentified() {
+        let state = household();
+        let path = "/media/Some Film.mkv";
+        for attempt in [None, Some(""), Some("key-guessed")] {
+            assert!(
+                !may_serve(&state, attempt, path, "Some Film.mkv"),
+                "{attempt:?} was served a restricted title",
+            );
+        }
+    }
+
+    /// A default of twelve, so an unknown device is neither locked out of
+    /// everything nor handed everything.
+    #[test]
+    fn an_unknown_device_gets_the_household_default() {
+        let state = household();
+        assert_eq!(allowed_age(&state, "never-seen"), crate::rating::DEFAULT_MAX_AGE);
+        assert!(may_serve(&state, None, "/media/Kids.mkv", "Kids (PG).mkv"));
+        assert!(!may_serve(&state, None, "/media/Adult.mkv", "Adult (NC-17).mkv"));
+    }
+
+    /// The ordinary case, and the one that must not regress: a library nobody
+    /// has rated stays open to everybody.
+    #[test]
+    fn an_unrated_library_is_untouched() {
+        let state = household();
+        for name in [
+            "Flow 2024 1080p WEB-DL HEVC x265 BONE.mkv",
+            "Smiling Friends S01E01.mkv",
+            "Jaadugar A Witch In Mongolia Episode 9 In HD Online For Free.mkv",
+        ] {
+            let path = format!("/media/{name}");
+            assert!(
+                may_serve(&state, Some("key-child"), &path, name),
+                "{name} was withheld from a child who should see it",
+            );
+        }
+    }
+
+    /// A correction can be taken back, not merely replaced.
+    #[test]
+    fn a_rating_can_be_cleared() {
+        let state = household();
+        state.with(|s| s.title_ages.remove("/media/Some Film.mkv"));
+        assert_eq!(min_age_for(&state, "/media/Some Film.mkv", "Some Film.mkv"), None);
+        assert!(may_serve(&state, Some("key-child"), "/media/Some Film.mkv", "Some Film.mkv"));
+    }
+
+    /// Two devices sharing a household must not share an allowance.
+    #[test]
+    fn one_device_being_approved_does_not_approve_another() {
+        let state = household();
+        let path = "/media/Some Film.mkv";
+        assert!(may_serve(&state, Some("key-grown"), path, "Some Film.mkv"));
+        assert!(
+            !may_serve(&state, Some("key-child"), path, "Some Film.mkv"),
+            "approving one device approved another",
+        );
     }
 }
