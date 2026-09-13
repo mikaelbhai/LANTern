@@ -40,6 +40,41 @@ export function isTv(): boolean {
   return saysTv || (android && noPointer);
 }
 
+/**
+ * Something on screen has taken the arrow keys for itself.
+ *
+ * Two things do, and both were broken by D-pad navigation without anybody
+ * noticing, because both work perfectly on the machine they were written on.
+ * Crossy Road moves a chicken with the arrows and the player seeks and
+ * changes volume with them — and each attaches its handler to the window, as
+ * does the navigator, so on a television every press did both at once: the
+ * chicken stepped forward *and* focus leapt to some button above it, which
+ * then scrolled the game off screen.
+ *
+ * A claim rather than a guess. There is no way to ask the DOM whether another
+ * listener means to handle a key, so whatever means to must say so.
+ */
+let arrowOwners = 0;
+
+export function claimArrowKeys(): () => void {
+  arrowOwners += 1;
+  let released = false;
+  return () => {
+    // Effect cleanups run twice under StrictMode, and a count that goes
+    // negative would leave the arrows claimed by nobody for ever after.
+    if (released) return;
+    released = true;
+    arrowOwners -= 1;
+  };
+}
+
+export const arrowsAreClaimed = (): boolean => arrowOwners > 0;
+
+/** For tests, which must not inherit a claim from the one before. */
+export function resetArrowClaims(): void {
+  arrowOwners = 0;
+}
+
 /** Elements a D-pad should be able to land on. */
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
@@ -184,6 +219,10 @@ export function enableDpadNavigation(): () => void {
       } as const
     )[event.key];
     if (!direction) return;
+
+    // Whoever claimed them means to handle them, and moving focus underneath
+    // that is how a game ends up scrolling itself off the screen.
+    if (arrowsAreClaimed()) return;
 
     const active = document.activeElement as HTMLElement | null;
 

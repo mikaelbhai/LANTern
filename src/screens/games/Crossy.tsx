@@ -30,6 +30,7 @@ import type { Direction, Player } from '../../lib/crossy';
 import { api, on } from '../../lib/bridge';
 import { useStore } from '../../lib/store';
 import { sfx } from '../../lib/audio';
+import { claimArrowKeys } from '../../lib/tv';
 import { GameShell } from './GameShell';
 import { useLeaveGuard } from './LeaveGuard';
 import { useResult } from './useResult';
@@ -126,6 +127,10 @@ export function Crossy({ onExit }: { onExit: () => void }) {
     if (direction === 'forward') sfx.cardPlace();
     setBest((b) => Math.max(b, me.current.best));
   }, []);
+
+  // The arrows move the chicken. On a television they would also move
+  // focus, which scrolls the game out of view mid-run.
+  React.useEffect(claimArrowKeys, []);
 
   React.useEffect(() => {
     const keys: Record<string, Direction> = {

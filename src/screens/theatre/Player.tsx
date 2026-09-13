@@ -24,6 +24,7 @@ import { api } from '../../lib/bridge';
 import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
+import { claimArrowKeys } from '../../lib/tv';
 import { trackNames } from './tracks';
 import {
   SubtitleOverlay,
@@ -316,6 +317,11 @@ export function Player({
   );
 
   /* ------------------------------------------------------------ hotkeys */
+
+  // The arrows seek and set the volume. On a television they would also
+  // move focus - off the video and into whatever is behind it - because
+  // D-pad navigation listens on the window exactly as this does.
+  React.useEffect(claimArrowKeys, []);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
