@@ -481,6 +481,7 @@ fn parse_title(rel: &str) -> Parsed {
 ///   Show Season 3 Episode 12     what a download site writes
 ///   Show Episode 9 In HD ...     the same, with no season
 ///   Show 3x12                    the older convention
+///   Show S3 9                    a season, then a number, and no E
 ///   Show - 12                    anime, and the dangerous one
 /// ```
 ///
@@ -507,6 +508,7 @@ pub fn find_episode_marker(stem: &str) -> Option<(u32, u32, usize)> {
     consider(scene_marker(&lower));
     consider(worded_marker(&lower));
     consider(cross_marker(&lower));
+    consider(season_then_number(&lower));
 
     best
 }
@@ -531,6 +533,46 @@ fn scene_marker(lower: &str) -> Option<(u32, u32, usize)> {
         let Some((episode, _)) = number_at(lower, after + 1) else {
             continue;
         };
+        return Some((season, episode, i));
+    }
+    None
+}
+
+/// `S3 9` — a season marker, a separator, and the episode as a bare number.
+///
+/// The season is what makes this safe. "Show - 12" is refused because it is
+/// the same shape as "Deadpool - 2016", but "Jujutsu Kaisen S3 9" has already
+/// said which season it belongs to, and nothing but an episode follows that.
+fn season_then_number(lower: &str) -> Option<(u32, u32, usize)> {
+    let bytes = lower.as_bytes();
+    for (i, _) in lower.match_indices('s') {
+        if i > 0 && (bytes[i - 1] as char).is_ascii_alphanumeric() {
+            continue;
+        }
+        let Some((season, after)) = number_at(lower, i + 1) else {
+            continue;
+        };
+        // Two digits at most: "S2024" is a year somebody wrote without a gap.
+        if after - (i + 1) > 2 {
+            continue;
+        }
+        // A separator has to follow. Without one this is a resolution or a
+        // year rather than a season, and "s01e02" belongs to the scene reader.
+        if after >= bytes.len() || !matches!(bytes[after], b' ' | b'.' | b'-' | b'_') {
+            continue;
+        }
+        let mut j = after;
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'.' | b'-' | b'_') {
+            j += 1;
+        }
+        let Some((episode, end)) = number_at(lower, j) else {
+            continue;
+        };
+        // Three digits at most, and no letter welded to the end: "S2 1080p"
+        // is a season and a resolution, not episode 1080.
+        if end - j > 3 || (end < bytes.len() && (bytes[end] as char).is_ascii_alphabetic()) {
+            continue;
+        }
         return Some((season, episode, i));
     }
     None
@@ -641,7 +683,6 @@ fn number_at(lower: &str, from: usize) -> Option<(u32, usize)> {
     lower[from..end].parse().ok().map(|n| (n, end))
 }
 
-/// Turns `Some.Show.Name-1080p_x264` into `Some Show Name`.
 /// The resolution and HDR flavour a filename is advertising.
 ///
 /// Release names carry this and nothing else does: there is no way to know a
@@ -707,24 +748,88 @@ fn strip_brackets(raw: &str) -> String {
     out
 }
 
-fn clean(raw: &str) -> String {
-    let raw = &strip_brackets(raw);
-
-    /// Tags that are exactly one token.
-    const NOISE: [&str; 20] = [
-        "1080p", "720p", "2160p", "1440p", "480p", "4k", "8k", "uhd", "x264", "x265", "h264",
-        "h265", "hevc", "av1", "bluray", "webrip", "web", "webdl", "hdtv", "10bit",
+/// Drops the tracker's name from the front of a filename.
+///
+/// "www.UIndex.org - Palestine 36 (2025)" is one of a family: the site writes
+/// itself in ahead of the title, and it is the only part of the name that is
+/// not about the film.
+fn strip_site_prefix(raw: &str) -> &str {
+    const TLDS: [&str; 20] = [
+        "com", "org", "net", "info", "io", "tv", "me", "cc", "to", "in", "is", "se", "ru", "eu",
+        "xyz", "site", "top", "pro", "biz", "la",
     ];
+
+    let Some(at) = raw.find(" - ") else { return raw };
+    let head = raw[..at].trim();
+
+    // A domain rather than a title: dotted, unspaced, and ending in a suffix
+    // instead of a word. "Mr.Robot - S01E01" keeps its name; so does
+    // "Dr. Strangelove - Something", because that head has a space in it.
+    let ends_in_a_suffix = head.rsplit('.').next().is_some_and(|tail| {
+        let tail = tail.to_ascii_lowercase();
+        TLDS.contains(&tail.as_str())
+    });
+    let is_site = !head.contains(' ')
+        && head.contains('.')
+        && (head.to_ascii_lowercase().starts_with("www.") || ends_in_a_suffix);
+
+    if is_site {
+        raw[at + 3..].trim_start()
+    } else {
+        raw
+    }
+}
+
+/// Tags that mean the title has ended.
+///
+/// This does not have to be complete, because only the *first* one is ever
+/// needed — but it does have to be right, so anything ambiguous enough to be
+/// a word in a real title is left out and caught as a pair instead: "web"
+/// alone is Web of Lies, "web" followed by "dl" is a source tag.
+const MARKERS: &[&str] = &[
+    // Resolution.
+    "480p", "576p", "720p", "1080p", "1440p", "2160p", "4320p", "4k", "8k", "uhd", "hd",
+    // Codec and bit depth.
+    "x264", "x265", "h264", "h265", "hevc", "avc", "av1", "xvid", "divx", "vp9", "8bit", "10bit",
+    "12bit", "hi10p",
+    // Where it came from.
+    "bluray", "brrip", "bdrip", "bdremux", "remux", "webrip", "webdl", "hdtv", "pdtv", "dvdrip",
+    "dvdscr", "hdrip", "camrip", "telesync", "amzn", "dsnp", "hmax", "atvp", "itunes", "repack",
+    "proper",
+    // Dynamic range.
+    "hdr", "hdr10", "hdr10+", "sdr", "dolbyvision", "dovi",
+    // Language and subtitles.
+    "multi", "multisub", "dual", "dualaudio", "sub", "subs", "subbed", "esub", "esubs", "msubs",
+    "dub", "dubbed",
+    // Groups and trackers.
+    "yify", "yts", "rarbg", "ettv", "eztv", "galaxyrg", "tgx", "psa", "mkvcage", "shaanig",
+    "anoxmous", "tigole", "qxr", "megusta", "nogrp", "ntb", "cmrg", "edith", "successfulcrab",
+];
+
+/// Turns `Some.Show.Name-1080p_x264` into `Some Show Name`.
+///
+/// By truncation, not by filtering. A release name is laid out as `Title
+/// (Year) Quality Source Codec Audio-GROUP`, so everything from the first tag
+/// onwards is bookkeeping and none of it is the title.
+///
+/// Filtering meant naming every tag that exists, which is a list that can only
+/// ever be one release short: "Flow 2024 1080p WEB-DL HEVC x265 BONE" reached
+/// the screen as "Flow DL BONE" — DL because it was the far half of a
+/// hyphenated tag that the separator had already split in two, and BONE
+/// because no list contains every group's name. Truncating has to recognise
+/// one tag, not all of them, and what follows can be anything at all.
+fn clean(raw: &str) -> String {
+    let stripped = strip_brackets(raw);
+    let raw = strip_site_prefix(stripped.trim());
 
     /// Audio formats, which arrive with a channel count welded on: AAC5,
     /// DDP5, DTS, EAC3. Matching on the prefix catches every variation
-    /// without listing them, and is why the channel count is handled below.
-    const AUDIO: [&str; 10] = [
-        "aac", "ac3", "eac3", "ddp", "dd", "dts", "truehd", "atmos", "flac", "opus",
+    /// without listing them.
+    const AUDIO: [&str; 11] = [
+        "aac", "ac3", "eac3", "ddp", "dd", "dts", "truehd", "atmos", "flac", "opus", "mp3",
     ];
 
-    let is_audio = |t: &str| {
-        let lower = t.to_ascii_lowercase();
+    let is_audio = |lower: &str| {
         AUDIO.iter().any(|a| {
             lower.starts_with(a) && lower[a.len()..].chars().all(|c| c.is_ascii_digit() || c == '.')
         })
@@ -736,40 +841,41 @@ fn clean(raw: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect();
 
-    let mut out: Vec<&str> = Vec::with_capacity(tokens.len());
-    let mut dropped_audio = false;
-
-    for token in tokens {
-        let lower = token.to_ascii_lowercase();
-
-        if NOISE.contains(&lower.as_str()) {
-            dropped_audio = false;
-            continue;
+    let is_marker = |i: usize| {
+        let one = tokens[i].to_ascii_lowercase();
+        if MARKERS.contains(&one.as_str()) || is_audio(&one) {
+            return true;
         }
-        if is_audio(token) {
-            // "AAC5 1" is one tag split by the separator; remember so the
-            // stray channel count that follows goes with it.
-            dropped_audio = true;
-            continue;
-        }
-        // The ".1" of a 5.1 mix, now orphaned.
-        if dropped_audio && token.len() == 1 && token.chars().all(|c| c.is_ascii_digit()) {
-            dropped_audio = false;
-            continue;
-        }
-        dropped_audio = false;
+        // Hyphenated and dotted tags arrive in halves, because the separator
+        // between them is the same one that separates words: WEB-DL, Blu-Ray,
+        // x.265, HDR 10.
+        tokens.get(i + 1).is_some_and(|next| {
+            let joined = format!("{one}{}", next.to_ascii_lowercase());
+            MARKERS.contains(&joined.as_str())
+        })
+    };
 
-        // A bare four-digit year: the release year, not part of the name.
-        // A year the author wrote in parentheses is kept, since that is how
-        // people actually distinguish two films of the same name.
-        if token.len() == 4 && token.chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
+    // From one, not zero. A name that is nothing but tags is a name this
+    // cannot improve, and showing it verbatim beats showing nothing.
+    let cut = (1..tokens.len()).find(|&i| is_marker(i)).unwrap_or(tokens.len());
+    let truncated = cut < tokens.len();
+    let mut kept = &tokens[..cut];
 
-        out.push(token);
+    // A bare four-digit year is the release year rather than part of the name
+    // — but only where the filename is evidently a release name, which is
+    // either because tags followed it or because the whole name is written in
+    // dots. "Blade Runner 2049" is a title, and eating its year is worse than
+    // leaving one on a film somebody named by hand.
+    if (truncated || !raw.contains(' ')) && kept.len() > 1 {
+        let is_year = kept
+            .last()
+            .is_some_and(|last| last.len() == 4 && matches!(last.parse::<u32>(), Ok(1900..=2099)));
+        if is_year {
+            kept = &kept[..kept.len() - 1];
+        }
     }
 
-    out.join(" ").trim().to_string()
+    kept.join(" ").trim().to_string()
 }
 
 
@@ -805,6 +911,51 @@ mod tests {
             "the release group goes, the film name stays"
         );
         assert_eq!(clean("La La Land 10bit AAC5 1 [YTS MX]"), "La La Land");
+    }
+
+    /// Names straight out of the library this was reported from, and what
+    /// each of them used to put on screen: "Flow DL BONE", "Chronicle BrRip
+    /// YIFY", "Palestine 36 WORLD".
+    #[test]
+    fn the_title_stops_where_the_release_tags_start() {
+        for (raw, want) in [
+            ("Flow 2024 1080p WEB-DL HEVC x265 BONE", "Flow"),
+            ("Flow.2024.1080p.WEB-DL.HEVC.x265-BONE", "Flow"),
+            ("Chronicle 2012 BrRip XviD AC3 YIFY", "Chronicle"),
+            (
+                "Chainsaw Man The Movie Reze Arc 2025 2160p iT WEB-DL DV HDR10+ MULTi",
+                "Chainsaw Man The Movie Reze Arc",
+            ),
+            (
+                "www.UIndex.org - Palestine 36 (2025) 1080p WEBRip x264 WORLD",
+                "Palestine 36 (2025)",
+            ),
+            ("The.Quiet.Harbour.2023.1080p.x265", "The Quiet Harbour"),
+            ("Some Film 2019 Blu-Ray 10bit DTS 5.1", "Some Film"),
+        ] {
+            assert_eq!(clean(raw), want, "{raw}");
+        }
+    }
+
+    /// The other half of the same job: a name with nothing to strip must come
+    /// out exactly as it went in. Truncation that fires early is worse than
+    /// junk left on the end, because it deletes the film's actual name.
+    #[test]
+    fn a_name_with_nothing_to_strip_is_untouched() {
+        for name in [
+            "English Vinglish",
+            "Blade Runner 2049",
+            "Palestine 36",
+            "La La Land",
+            "Se7en",
+            "1917",
+        ] {
+            assert_eq!(clean(name), name, "{name}");
+        }
+
+        // A dotted head before a dash is only a tracker when it ends in one
+        // of their suffixes. This one is a show, and keeps its name.
+        assert_eq!(clean("Mr.Robot - Something"), "Mr Robot Something");
     }
 
     #[test]
@@ -967,6 +1118,31 @@ mod episode_tests {
         assert_eq!(marker("Some Show Ep 4"), Some((1, 4)));
         assert_eq!(marker("Some Show Ep. 4"), Some((1, 4)));
         assert_eq!(marker("Some Show - Episode 07"), Some((1, 7)));
+    }
+
+    /// A season, then the episode as a bare number. What the reported file
+    /// was named, and it had been showing as nine separate films.
+    #[test]
+    fn a_season_and_then_a_bare_number() {
+        assert_eq!(marker("Jujutsu Kaisen S3 9 SUB"), Some((3, 9)));
+        assert_eq!(marker("Jujutsu Kaisen S3 09"), Some((3, 9)));
+        assert_eq!(marker("Show.S2-14.1080p"), Some((2, 14)));
+
+        let p = parse_title("Jujutsu Kaisen S3 9 SUB.mp4");
+        assert_eq!(p.kind, "episode");
+        assert_eq!(p.series.as_deref(), Some("Jujutsu Kaisen"));
+        assert_eq!(p.season, Some(3));
+        assert_eq!(p.episode, Some(9));
+    }
+
+    /// The shapes that look like it and are not.
+    #[test]
+    fn a_season_and_then_something_that_is_not_an_episode() {
+        assert_eq!(marker("Show S2 1080p"), None, "a resolution is not an episode");
+        assert_eq!(marker("Show S1 2024 1080p"), None, "a year is not an episode");
+        assert_eq!(marker("Oceans 8"), None);
+        assert_eq!(marker("Ocean's 8"), None);
+        assert_eq!(marker("Toy Story 3 1080p"), None);
     }
 
     #[test]

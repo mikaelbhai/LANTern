@@ -1259,7 +1259,12 @@ export function runtime(sec: number): string {
   // Durations are read from the file by the player, so a freshly scanned
   // library legitimately has none yet.
   if (!Number.isFinite(sec) || sec <= 0) return 'Unknown length';
-  const h = Math.floor(sec / 3600);
-  const m = Math.round((sec % 3600) / 60);
+  // Rounded once, into minutes, and only then split. Rounding the remainder
+  // separately is how a two hour film came out as "1h 60m": anything from
+  // 1:59:30 rounds its leftover seconds up to a full sixty minutes, which is
+  // an hour the hours column never hears about.
+  const minutes = Math.round(sec / 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
