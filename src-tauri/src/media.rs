@@ -806,6 +806,29 @@ const MARKERS: &[&str] = &[
     "anoxmous", "tigole", "qxr", "megusta", "nogrp", "ntb", "cmrg", "edith", "successfulcrab",
 ];
 
+/// The latest four-digit number that could be a release year rather than a name.
+///
+/// Blade Runner 2049 is the reason this is not simply "any four digits from
+/// 1900". A film named after a future year is named, not dated, and dropping
+/// that number deletes the title instead of tidying it. Nothing has been
+/// released in 2049, so nothing released can be confused with it.
+///
+/// Taken from the clock rather than written down, because a constant here
+/// would quietly start eating real years a few of them from now.
+fn latest_plausible_year() -> u32 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Approximate, deliberately: this decides only whether four digits are a
+    // year, and being a day out at New Year changes nothing.
+    1970 + (secs / 31_556_952) as u32 + 1
+}
+
+fn is_release_year(token: &str, latest: u32) -> bool {
+    token.len() == 4 && matches!(token.parse::<u32>(), Ok(y) if (1900..=latest).contains(&y))
+}
+
 /// Turns `Some.Show.Name-1080p_x264` into `Some Show Name`.
 ///
 /// By truncation, not by filtering. A release name is laid out as `Title
@@ -859,19 +882,32 @@ fn clean(raw: &str) -> String {
     // cannot improve, and showing it verbatim beats showing nothing.
     let cut = (1..tokens.len()).find(|&i| is_marker(i)).unwrap_or(tokens.len());
     let truncated = cut < tokens.len();
-    let mut kept = &tokens[..cut];
+    let mut kept: Vec<&str> = tokens[..cut].to_vec();
 
     // A bare four-digit year is the release year rather than part of the name
     // — but only where the filename is evidently a release name, which is
     // either because tags followed it or because the whole name is written in
-    // dots. "Blade Runner 2049" is a title, and eating its year is worse than
-    // leaving one on a film somebody named by hand.
-    if (truncated || !raw.contains(' ')) && kept.len() > 1 {
-        let is_year = kept
-            .last()
-            .is_some_and(|last| last.len() == 4 && matches!(last.parse::<u32>(), Ok(1900..=2099)));
-        if is_year {
-            kept = &kept[..kept.len() - 1];
+    // dots. A film somebody named by hand keeps whatever number is in it.
+    //
+    // Anywhere in the name, not only at the end: the year sits before the
+    // edition as often as after it, which left "Jujutsu Kaisen 0 The Movie
+    // 2021 JAPANESE" and "Kingdom Of Heaven 2005 DIRECTOR'S CUT" carrying a
+    // date in the middle of a sentence.
+    if truncated || !raw.contains(' ') {
+        let latest = latest_plausible_year();
+        let trimmed: Vec<&str> = kept
+            .iter()
+            .copied()
+            .filter(|t| !is_release_year(t, latest))
+            .collect();
+        if !trimmed.is_empty() {
+            kept = trimmed;
+        } else {
+            // Every token was a year, so the first one is the title and the
+            // rest are the date: 1917 came out in 2019, 2012 in 2009. Both
+            // are films, and both would otherwise be left as a pair of
+            // numbers or thrown away entirely.
+            kept.truncate(1);
         }
     }
 
@@ -932,9 +968,32 @@ mod tests {
             ),
             ("The.Quiet.Harbour.2023.1080p.x265", "The Quiet Harbour"),
             ("Some Film 2019 Blu-Ray 10bit DTS 5.1", "Some Film"),
+            // The year sits before the edition as often as after it.
+            (
+                "Jujutsu.Kaisen.0.The.Movie.2021.JAPANESE.1080p.BluRay.x264.AAC5.1",
+                "Jujutsu Kaisen 0 The Movie JAPANESE",
+            ),
+            (
+                "Kingdom.Of.Heaven.2005.DIRECTOR'S.CUT.ROADSHOW.BLURAY.1080p",
+                "Kingdom Of Heaven DIRECTOR'S CUT ROADSHOW",
+            ),
         ] {
             assert_eq!(clean(raw), want, "{raw}");
         }
+    }
+
+    /// A film named after a future year is named, not dated. This is the one
+    /// case where dropping the number deletes the title instead of tidying
+    /// it, so it survives even with release tags stacked behind it.
+    #[test]
+    fn a_year_that_has_not_happened_is_part_of_the_name() {
+        assert_eq!(clean("Blade Runner 2049 1080p WEB-DL x265"), "Blade Runner 2049");
+        assert_eq!(clean("Blade.Runner.2049.2017.1080p.BluRay"), "Blade Runner 2049");
+        // A name that is nothing but years keeps the first, which is the
+        // title; the rest is when it came out.
+        assert_eq!(clean("1917.2019.1080p.BluRay.x264"), "1917");
+        assert_eq!(clean("2012.2009.1080p.BluRay"), "2012");
+        assert_eq!(clean("1917"), "1917");
     }
 
     /// The other half of the same job: a name with nothing to strip must come

@@ -76,8 +76,10 @@ pub fn set_preference(dir: &Path, ssid: Option<&str>) -> Result<(), String> {
 pub enum Joined {
     /// Nothing was asked for.
     NotAsked,
-    /// Already on it, which is the ordinary case and costs nothing.
-    Already(String),
+    /// Already on it, which is the ordinary case and costs nothing. No name
+    /// attached: nothing reports this, because a machine that was already
+    /// where it should be is not news.
+    Already,
     Connected(String),
     Failed(String, String),
 }
@@ -88,7 +90,7 @@ pub fn ensure(dir: &Path) -> Joined {
         return Joined::NotAsked;
     };
     if current().as_deref() == Some(want.as_str()) {
-        return Joined::Already(want);
+        return Joined::Already;
     }
     if let Err(e) = connect(&want) {
         return Joined::Failed(want, e);
