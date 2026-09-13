@@ -43,7 +43,9 @@ export function ControlConsent() {
   // asked, so it listens for the message as well as the state.
   React.useEffect(() => on('control:message', () => refresh()), [refresh]);
 
-  if (!status) return null;
+  // Same reason as the wake list: an unimplemented command resolves with
+  // null, and this one sits at the root of every screen.
+  if (!status || typeof status !== 'object') return null;
 
   const nameFor = (deviceId: string) => {
     const peer = Object.values(peers).find((p) => p.deviceId === deviceId || p.id === deviceId);

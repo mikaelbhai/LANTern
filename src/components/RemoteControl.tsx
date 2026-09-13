@@ -31,6 +31,24 @@ import {
  */
 export type Surface = 'trackpad' | 'touch' | 'pad';
 
+/**
+ * Keeps the gesture with the element it started on, if the browser will.
+ *
+ * Capture is an optimisation - it stops a finger that slides off a button
+ * from stranding the press - and it throws when the pointer is no longer
+ * active, which happens when a gesture is cancelled underneath you. Calling
+ * it before registering the press meant that throw swallowed the input and
+ * the button silently did nothing. It is now both guarded and last.
+ */
+function keepGesture(e: React.PointerEvent): void {
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  } catch {
+    /* the gesture simply is not ours to keep */
+  }
+}
+
+
 export function RemoteControl({
   peerId,
   onClose,
@@ -191,8 +209,9 @@ function Pad({ held, push }: { held: Held; push: (...e: (RemoteEvent | null)[]) 
   const bind = (button: PadButton) => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      // The press first. Nothing after it may prevent it happening.
       hold(button, true);
+      keepGesture(e);
     },
     onPointerUp: () => hold(button, false),
     onPointerCancel: () => hold(button, false),
@@ -252,10 +271,10 @@ function Trackpad({
       <div
         className="flex-1 m-3 rounded-card border border-dashed border-edge-strong bg-surface touch-none select-none grid place-items-center text-2xs text-muted"
         onPointerDown={(e) => {
-          (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           pointer.current.reset();
           start.current = { x: e.clientX, y: e.clientY, at: Date.now() };
           last.current = { x: e.clientX, y: e.clientY };
+          keepGesture(e);
         }}
         onPointerMove={(e) => {
           if (!last.current) return;
@@ -313,10 +332,10 @@ function TouchPad({
         ref={surface}
         className="flex-1 m-3 rounded-card border border-edge-strong bg-surface touch-none select-none grid place-items-center text-2xs text-muted"
         onPointerDown={(e) => {
-          (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           // Move first, then press. The other order presses wherever the
           // pointer happened to be, which is not where the finger is.
           push(pointAt(e), held.button('left', true));
+          keepGesture(e);
         }}
         onPointerMove={(e) => {
           if (e.buttons === 0) return;

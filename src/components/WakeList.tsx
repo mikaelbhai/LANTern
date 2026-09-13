@@ -27,7 +27,10 @@ export function WakeList() {
   const load = React.useCallback(() => {
     void api.wake
       .list()
-      .then(setDevices)
+      // A command the far side does not implement resolves with null rather
+      // than rejecting, so catching is not enough - and a null here took the
+      // whole screen down, not just this list.
+      .then((list) => setDevices(Array.isArray(list) ? list : []))
       .catch(() => setDevices([]));
   }, []);
 
