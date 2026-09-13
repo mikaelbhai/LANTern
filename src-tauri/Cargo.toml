@@ -64,6 +64,10 @@ tauri-plugin-autostart = "2"
 # bind the ports and showed an empty peer list for ever. This focuses the
 # window that is already running instead.
 tauri-plugin-single-instance = "2"
+# Moving the pointer and pressing keys on this machine, for a phone acting as
+# a trackpad or a controller. Desktop only, and deliberately so: there is no
+# such thing on Android, and the crate does not build for it.
+enigo = "0.2"
 
 [features]
 # Used by the Tauri CLI when producing a release bundle.

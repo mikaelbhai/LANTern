@@ -15,6 +15,7 @@ mod ebml;
 pub mod hosting;
 mod library;
 mod identity;
+mod input;
 mod media;
 mod model;
 mod mp4;
