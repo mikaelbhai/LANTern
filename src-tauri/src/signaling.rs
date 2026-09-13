@@ -190,6 +190,33 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 }
                 continue;
             }
+
+            // Input from a device driving this one. Applied here rather than
+            // handed to the window: the window is not what is being
+            // controlled, and routing it through the frontend would mean
+            // input stopped arriving whenever the app was minimised - which
+            // is exactly when somebody is driving it from another room.
+            if envelope.kind == "input" {
+                #[cfg(desktop)]
+                {
+                    let events: Vec<crate::input::RemoteEvent> = envelope
+                        .payload
+                        .get("events")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    crate::commands::control_apply(&state, &envelope.from, events);
+                }
+                continue;
+            }
+
+            // A request to take control, or an answer to one. The decision is
+            // made here so that a whitelisted device is granted even while
+            // nothing is on screen to ask.
+            if envelope.kind == "control" {
+                handle_control(&app, &state, &envelope);
+                continue;
+            }
+
             deliver(&app, &envelope);
         }
     });
@@ -475,6 +502,79 @@ async fn pump(
         }
     }
     Ok(())
+}
+
+/// One side of the control handshake.
+///
+/// The asking device sends `ask`; this machine either grants it outright,
+/// because it is on the always-allow list, or puts the question on screen.
+/// The answer comes back as `granted` or `denied`, and either side can send
+/// `ended`.
+fn handle_control(app: &AppHandle, state: &crate::state::AppState, envelope: &Envelope) {
+    use crate::input::Request;
+
+    let op = envelope.payload.get("op").and_then(|v| v.as_str()).unwrap_or("");
+    let from = envelope.from.clone();
+
+    match op {
+        "ask" => {
+            // A blocked device may not even raise a dialog. Being asked
+            // repeatedly is itself a way to make somebody press yes.
+            if state.with(|s| s.blocked.contains(&from)) {
+                return;
+            }
+            let decision = state.with(|s| s.control.request(&from));
+            match decision {
+                Request::Granted => {
+                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    links.send(
+                        &from,
+                        &Envelope {
+                            v: 1,
+                            from: me,
+                            kind: "control".into(),
+                            payload: serde_json::json!({ "op": "granted" }),
+                        },
+                    );
+                }
+                Request::Busy => {
+                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    links.send(
+                        &from,
+                        &Envelope {
+                            v: 1,
+                            from: me,
+                            kind: "control".into(),
+                            payload: serde_json::json!({ "op": "busy" }),
+                        },
+                    );
+                }
+                Request::Ask => {}
+            }
+        }
+        "ended" => {
+            state.with(|s| {
+                s.control.drop_peer(&from);
+                #[cfg(desktop)]
+                {
+                    if let Some(injector) = s.injector.as_mut() {
+                        injector.release_all();
+                    }
+                    s.injector = None;
+                }
+            });
+        }
+        _ => {}
+    }
+
+    // The controlling side needs to hear the answer, and this side needs to
+    // redraw whatever it is showing about the session.
+    let mut payload = envelope.payload.clone();
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("from".into(), serde_json::Value::String(from));
+    }
+    let _ = app.emit("control:message", payload);
+    let _ = app.emit("control:changed", crate::commands::control_status_of(state));
 }
 
 /// Turns a received envelope into the frontend event it corresponds to.

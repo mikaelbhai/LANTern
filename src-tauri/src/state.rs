@@ -70,6 +70,18 @@ pub struct Inner {
     /// identity — a blocked device that reconnects on a new IP is the same
     /// device and stays blocked.
     pub blocked: std::collections::HashSet<String>,
+    /// Who may drive this machine's pointer and keyboard, and who does now.
+    pub control: crate::input::Control,
+    /// Held open while a device is driving this one, so a finger dragging at
+    /// sixty events a second does not reopen the platform's input device
+    /// sixty times.
+    #[cfg(desktop)]
+    pub injector: Option<crate::input::Injector>,
+    /// Hardware addresses seen for peers, kept so a sleeping one can be woken.
+    ///
+    /// Only knowable while a device is awake, which is exactly when nobody
+    /// needs it — so it is written down every time a peer is seen.
+    pub macs: std::collections::HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -117,6 +129,10 @@ impl AppState {
             download_into: std::collections::HashMap::new(),
             host_error: None,
             blocked: std::collections::HashSet::new(),
+            control: crate::input::Control::default(),
+            #[cfg(desktop)]
+            injector: None,
+            macs: std::collections::HashMap::new(),
         })))
     }
 

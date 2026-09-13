@@ -91,6 +91,32 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             blocked_at INTEGER NOT NULL
         );
 
+        -- Devices allowed to drive this machine's pointer and keyboard
+        -- without being asked again.
+        --
+        -- Persisted, unlike the grant itself, because that is what always
+        -- allow means. It is the most consequential row in this database -
+        -- an entry here is standing permission to type into whatever has
+        -- focus - so the window lists them and can take one out, and the
+        -- banner shows while control is live whether or not it was asked for.
+        -- Hardware addresses, kept so a sleeping device can still be woken.
+        --
+        -- The address is only knowable while the machine is awake, which is
+        -- exactly when nobody needs it. Written down every time a peer is
+        -- seen, and read back when one is not.
+        CREATE TABLE IF NOT EXISTS device_macs (
+            device_id TEXT PRIMARY KEY,
+            mac       TEXT NOT NULL,
+            name      TEXT NOT NULL DEFAULT '',
+            seen_at   INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS control_allowed (
+            device_id  TEXT PRIMARY KEY,
+            name       TEXT NOT NULL DEFAULT '',
+            allowed_at INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS preferences (
             key   TEXT PRIMARY KEY,
             value TEXT NOT NULL

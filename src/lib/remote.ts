@@ -37,10 +37,41 @@ export type Button = 'left' | 'right' | 'middle';
  */
 export type RemoteEvent =
   | { t: 'm'; dx: number; dy: number }
+  | { t: 'a'; x: number; y: number }
   | { t: 'b'; b: Button; d: boolean }
   | { t: 's'; dx: number; dy: number }
   | { t: 'k'; k: string; d: boolean }
   | { t: 'x'; s: string };
+
+/* ------------------------------------------------------- the touch screen */
+
+/**
+ * Where on the far screen a touch landed, as a fraction of it.
+ *
+ * Normalised rather than in pixels because the two devices do not share a
+ * resolution and neither knows the other's. A phone in your hand and a
+ * television across the room agree on "three quarters of the way across"
+ * and on nothing else.
+ *
+ * This is the mode that matters for driving another touchscreen: you are
+ * looking at a picture of their screen and pointing at the thing you want,
+ * which is a different act from pushing a pointer around and needs a
+ * different event.
+ */
+export function touchPoint(
+  touch: { x: number; y: number },
+  surface: { left: number; top: number; width: number; height: number },
+): RemoteEvent | null {
+  if (surface.width <= 0 || surface.height <= 0) return null;
+  const x = (touch.x - surface.left) / surface.width;
+  const y = (touch.y - surface.top) / surface.height;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  // A finger that slid off the picture should stop at its edge rather than
+  // ask for a point outside the far screen.
+  return { t: 'a', x: clamp01(x), y: clamp01(y) };
+}
+
+const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /* ------------------------------------------------------------- the pointer */
 
@@ -233,6 +264,14 @@ export function coalesce(events: RemoteEvent[]): RemoteEvent[] {
     if (last && (event.t === 'm' || event.t === 's') && last.t === event.t) {
       last.dx += event.dx;
       last.dy += event.dy;
+      continue;
+    }
+    // Absolute positions do not add up - they replace. Keeping the last one
+    // of a run is both correct and the whole saving, since a finger dragging
+    // across the glass produces one of these a frame.
+    if (last && event.t === 'a' && last.t === 'a') {
+      last.x = event.x;
+      last.y = event.y;
       continue;
     }
     // Copied, so merging into it cannot reach back into the caller's array.

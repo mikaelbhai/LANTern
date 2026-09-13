@@ -33,6 +33,13 @@ pub enum RemoteEvent {
     /// Pointer movement, relative to where it is now.
     #[serde(rename = "m")]
     Move { dx: i32, dy: i32 },
+    /// A point on the screen, as a fraction of it from the top left.
+    ///
+    /// Normalised because the two devices do not share a resolution and
+    /// neither knows the other's. This is what a touchscreen sends: you are
+    /// looking at a picture of the far screen and pointing at a thing on it.
+    #[serde(rename = "a")]
+    At { x: f64, y: f64 },
     /// A mouse button. `d` is true for pressed.
     #[serde(rename = "b")]
     Button { b: String, d: bool },
@@ -70,6 +77,11 @@ pub fn is_sane(event: &RemoteEvent) -> bool {
         RemoteEvent::Move { dx, dy } | RemoteEvent::Scroll { dx, dy } => {
             dx.abs() <= MAX_STEP && dy.abs() <= MAX_STEP
         }
+        // A fraction outside the screen is a bug on the far side, not a
+        // gesture. NaN would reach the operating system as a wild coordinate.
+        RemoteEvent::At { x, y } => {
+            x.is_finite() && y.is_finite() && (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y)
+        }
         RemoteEvent::Text { s } => !s.is_empty() && s.len() <= MAX_TEXT,
         RemoteEvent::Button { b, .. } => matches!(b.as_str(), "left" | "right" | "middle"),
         RemoteEvent::Key { k, .. } => !k.is_empty() && k.len() <= 32,
@@ -85,6 +97,13 @@ pub fn is_sane(event: &RemoteEvent) -> bool {
 pub struct Control {
     /// Device id of the peer holding control, when one does.
     granted_to: Option<String>,
+    /// Devices that said "always allow", loaded from the database at startup.
+    ///
+    /// These skip the prompt. They do not skip the banner: control is never
+    /// invisible, however it was granted.
+    allowed: std::collections::HashSet<String>,
+    /// A device that has asked and not yet been answered.
+    pending: Option<String>,
 }
 
 impl Control {
@@ -115,12 +134,100 @@ impl Control {
     /// Called when a link drops. Another peer disconnecting must not quietly
     /// take control away from the one who has it.
     pub fn drop_peer(&mut self, device_id: &str) -> bool {
+        // A pending request from that device is also gone with it, or the
+        // prompt would outlive the peer that raised it.
+        if self.pending.as_deref() == Some(device_id) {
+            self.pending = None;
+        }
         if self.allows(device_id) {
             self.granted_to = None;
             return true;
         }
         false
     }
+
+    /* ------------------------------------------------------ the whitelist */
+
+    pub fn load_allowed(&mut self, ids: impl IntoIterator<Item = String>) {
+        self.allowed = ids.into_iter().collect();
+    }
+
+    pub fn remember(&mut self, device_id: &str) {
+        self.allowed.insert(device_id.to_string());
+    }
+
+    /// Takes a device off the list, and ends its session if it is using it.
+    ///
+    /// Both halves matter. Removing a standing permission while leaving the
+    /// current session running would look like it had not worked.
+    pub fn forget(&mut self, device_id: &str) -> bool {
+        let was_listed = self.allowed.remove(device_id);
+        self.drop_peer(device_id);
+        was_listed
+    }
+
+    pub fn is_remembered(&self, device_id: &str) -> bool {
+        self.allowed.contains(device_id)
+    }
+
+    pub fn allowed_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.allowed.iter().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /* --------------------------------------------------------- the asking */
+
+    /// What to do about a device asking for control.
+    ///
+    /// Remembered devices are granted without a prompt, which is what the
+    /// person chose when they said always. Everybody else waits.
+    pub fn request(&mut self, device_id: &str) -> Request {
+        if self.is_remembered(device_id) {
+            self.grant(device_id);
+            return Request::Granted;
+        }
+        // Somebody is already being asked. A second dialog stacked on the
+        // first is how people end up granting the wrong one.
+        if self.pending.is_some() && self.pending.as_deref() != Some(device_id) {
+            return Request::Busy;
+        }
+        self.pending = Some(device_id.to_string());
+        Request::Ask
+    }
+
+    pub fn pending(&self) -> Option<&str> {
+        self.pending.as_deref()
+    }
+
+    /// Answers the outstanding request. Returns whether it was granted.
+    pub fn answer(&mut self, device_id: &str, allow: bool, remember: bool) -> bool {
+        // Only the request actually on screen may be answered, or a peer could
+        // answer its own by racing the person at the keyboard.
+        if self.pending.as_deref() != Some(device_id) {
+            return false;
+        }
+        self.pending = None;
+        if !allow {
+            return false;
+        }
+        if remember {
+            self.remember(device_id);
+        }
+        self.grant(device_id);
+        true
+    }
+}
+
+/// What should happen when a device asks to take control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Request {
+    /// Already on the list; it has control now.
+    Granted,
+    /// Put the question on screen.
+    Ask,
+    /// Somebody else is already being asked.
+    Busy,
 }
 
 /* --------------------------------------------------------- pressing things */
@@ -194,6 +301,18 @@ mod desktop {
                     let (x, y) = self.enigo.location().map_err(|e| e.to_string())?;
                     self.enigo
                         .move_mouse(x + dx, y + dy, Coordinate::Abs)
+                        .map_err(|e| e.to_string())
+                }
+                RemoteEvent::At { x, y } => {
+                    // The fraction is of their screen; this turns it into a
+                    // pixel on ours. Asking the display each time rather than
+                    // caching it, because a monitor can be unplugged and a
+                    // stale size would put every tap in the wrong place.
+                    let (w, h) = self.enigo.main_display().map_err(|e| e.to_string())?;
+                    let px = (x * f64::from(w)).round() as i32;
+                    let py = (y * f64::from(h)).round() as i32;
+                    self.enigo
+                        .move_mouse(px.clamp(0, w - 1), py.clamp(0, h - 1), Coordinate::Abs)
                         .map_err(|e| e.to_string())
                 }
                 RemoteEvent::Scroll { dx, dy } => {
@@ -354,6 +473,27 @@ mod tests {
         // The boundary itself is fine; one past it is not.
         assert!(is_sane(&RemoteEvent::Move { dx: MAX_STEP, dy: -MAX_STEP }));
         assert!(!is_sane(&RemoteEvent::Move { dx: MAX_STEP + 1, dy: 0 }));
+    }
+
+    #[test]
+    fn a_touch_point_is_a_fraction_of_the_screen() {
+        let at: RemoteEvent = serde_json::from_str(r#"{"t":"a","x":0.5,"y":0.25}"#).unwrap();
+        assert_eq!(at, RemoteEvent::At { x: 0.5, y: 0.25 });
+
+        assert!(is_sane(&RemoteEvent::At { x: 0.0, y: 0.0 }));
+        assert!(is_sane(&RemoteEvent::At { x: 1.0, y: 1.0 }));
+        assert!(is_sane(&RemoteEvent::At { x: 0.5, y: 0.5 }));
+    }
+
+    #[test]
+    fn a_point_off_the_screen_is_refused() {
+        // Every one of these would reach the operating system as a wild
+        // coordinate and throw the pointer somewhere nobody asked for.
+        assert!(!is_sane(&RemoteEvent::At { x: -0.1, y: 0.5 }));
+        assert!(!is_sane(&RemoteEvent::At { x: 1.1, y: 0.5 }));
+        assert!(!is_sane(&RemoteEvent::At { x: 0.5, y: f64::NAN }));
+        assert!(!is_sane(&RemoteEvent::At { x: f64::INFINITY, y: 0.5 }));
+        assert!(!is_sane(&RemoteEvent::At { x: 1e9, y: 1e9 }));
     }
 
     #[test]

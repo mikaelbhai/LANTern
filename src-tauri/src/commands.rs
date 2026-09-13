@@ -113,8 +113,29 @@ pub fn boot(app: AppHandle, state: AppState) {
                             blocked.extend(rows.flatten());
                         }
                     }
+                    // Standing permission to drive this machine, and the
+                    // addresses of devices that may be asleep. Both are read
+                    // before anything can connect, for the same reason blocks
+                    // are: a decision made last week has to be in force before
+                    // the first packet arrives, not shortly after it.
+                    let mut allowed = Vec::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id FROM control_allowed") {
+                        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            allowed.extend(rows.flatten());
+                        }
+                    }
+                    let mut macs = std::collections::HashMap::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id, mac FROM device_macs") {
+                        if let Ok(rows) =
+                            stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                        {
+                            macs.extend(rows.flatten());
+                        }
+                    }
                     state.with(|s| {
                         s.blocked = blocked;
+                        s.control.load_allowed(allowed);
+                        s.macs = macs;
                         s.db = Some(conn);
                     });
                 }
@@ -2848,4 +2869,297 @@ mod host_port_tests {
         // is not a process id at all.
         assert!(!process_alive(0xFFFF_FFFE));
     }
+}
+
+/* ------------------------------------------------------------ remote control */
+
+/// Asks a peer to let this device drive it.
+///
+/// Nothing happens at the far end beyond a question appearing, unless that
+/// device has already been told to always allow this one.
+#[tauri::command]
+pub fn control_request(state: State<'_, AppState>, peer_id: String) -> Res<()> {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    let sent = links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "control".into(),
+            payload: serde_json::json!({ "op": "ask" }),
+        },
+    );
+    if sent {
+        Ok(())
+    } else {
+        Err("that device is not connected".into())
+    }
+}
+
+/// Answers the question this machine is showing.
+///
+/// `remember` is the whitelist: it means this device may take control again
+/// without asking, including after a restart. It is the most consequential
+/// row in the database, so it is only ever written from here - from a person
+/// pressing a button on the machine that would be controlled.
+#[tauri::command]
+pub fn control_answer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    peer_id: String,
+    allow: bool,
+    remember: bool,
+) -> Res<()> {
+    let granted = state.with(|s| s.control.answer(&peer_id, allow, remember));
+
+    if granted && remember {
+        state.with(|s| {
+            let name = s
+                .peers
+                .values()
+                .find(|p| p.device_id == peer_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_default();
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "INSERT INTO control_allowed (device_id, name, allowed_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(device_id) DO UPDATE SET name = ?2",
+                    rusqlite::params![peer_id, name, crate::model::now_ms() as i64],
+                );
+            }
+        });
+    }
+
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    let op = if granted { "granted" } else { "denied" };
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "control".into(),
+            payload: serde_json::json!({ "op": op }),
+        },
+    );
+
+    let snapshot = control_snapshot(&state);
+    let _ = app.emit("control:changed", snapshot);
+    Ok(())
+}
+
+/// Ends the session, from either side.
+///
+/// Releasing whatever the controller was holding is the point. A session cut
+/// off mid-keypress would otherwise leave a key down on this machine with
+/// nobody able to see why it was behaving oddly.
+#[tauri::command]
+pub fn control_end(app: AppHandle, state: State<'_, AppState>) -> Res<()> {
+    let (links, me, holder) = state.with(|s| {
+        let holder = s.control.holder().map(str::to_string);
+        s.control.revoke();
+        #[cfg(desktop)]
+        {
+            if let Some(injector) = s.injector.as_mut() {
+                injector.release_all();
+            }
+            s.injector = None;
+        }
+        (s.links.clone(), s.device_id.clone(), holder)
+    });
+
+    if let Some(peer) = holder {
+        links.send(
+            &peer,
+            &Envelope {
+                v: 1,
+                from: me,
+                kind: "control".into(),
+                payload: serde_json::json!({ "op": "ended" }),
+            },
+        );
+    }
+    let snapshot = control_snapshot(&state);
+    let _ = app.emit("control:changed", snapshot);
+    Ok(())
+}
+
+/// Sends a batch of input events to the device being controlled.
+///
+/// A batch rather than one at a time: a finger produces sixty events a second
+/// and each would otherwise be its own message on the link.
+#[tauri::command]
+pub fn control_send(
+    state: State<'_, AppState>,
+    peer_id: String,
+    events: Vec<serde_json::Value>,
+) -> Res<()> {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "input".into(),
+            payload: serde_json::json!({ "events": events }),
+        },
+    );
+    Ok(())
+}
+
+/// What the window needs to know: who is asking, who holds it, who is listed.
+#[tauri::command]
+pub fn control_status(state: State<'_, AppState>) -> serde_json::Value {
+    control_snapshot(&state)
+}
+
+/// The same snapshot, reachable from the link reader.
+pub fn control_status_of(state: &AppState) -> serde_json::Value {
+    control_snapshot(state)
+}
+
+fn control_snapshot(state: &AppState) -> serde_json::Value {
+    state.with(|s| {
+        serde_json::json!({
+            "pending": s.control.pending(),
+            "holder": s.control.holder(),
+            "allowed": s.control.allowed_ids(),
+            // Whether this device can be driven at all. Said plainly, because
+            // the alternative is a control that appears to work and does
+            // nothing at the far end.
+            "supported": cfg!(all(desktop, target_os = "windows")),
+        })
+    })
+}
+
+/// Takes a device off the always-allow list, and ends its session with it.
+#[tauri::command]
+pub fn control_forget(app: AppHandle, state: State<'_, AppState>, peer_id: String) -> Res<()> {
+    state.with(|s| {
+        s.control.forget(&peer_id);
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "DELETE FROM control_allowed WHERE device_id = ?1",
+                rusqlite::params![peer_id],
+            );
+        }
+    });
+    let snapshot = control_snapshot(&state);
+    let _ = app.emit("control:changed", snapshot);
+    Ok(())
+}
+
+/* --------------------------------------------------------------- wake on lan */
+
+/// Wakes a device that is asleep, by the address it was last seen at.
+///
+/// Nothing comes back. The packet is not acknowledged by anything, so the
+/// honest report is how many went out - whether the machine wakes is between
+/// its network card and its firmware.
+#[tauri::command]
+pub fn wake_device(state: State<'_, AppState>, mac: String) -> Res<usize> {
+    use std::net::Ipv4Addr;
+
+    let Some(parsed) = crate::wol::parse_mac(&mac) else {
+        return Err(format!("{mac} is not a hardware address"));
+    };
+
+    // Every network this device is on, because the sleeping machine is on one
+    // of them and this end cannot tell which.
+    let broadcasts: Vec<Ipv4Addr> = state.with(|s| {
+        s.net
+            .interfaces
+            .iter()
+            .filter_map(|i| {
+                let ip = i.ip.parse::<Ipv4Addr>().ok()?;
+                let mask = i.mask.parse::<Ipv4Addr>().ok()?;
+                let o = ip.octets();
+                if o[0] == 169 && o[1] == 254 {
+                    return None;
+                }
+                Some(crate::wol::broadcast_for(ip, mask))
+            })
+            .collect()
+    });
+
+    crate::wol::wake(parsed, &broadcasts)
+}
+
+/// Notes the hardware address of every peer currently visible.
+///
+/// Called when the wake list is read rather than on a timer: the ARP table is
+/// only consulted for devices that are answering right now, and looking one
+/// up costs a subprocess.
+fn remember_macs(state: &AppState) {
+    let seen: Vec<(String, String, String)> = state.with(|s| {
+        s.peers
+            .values()
+            .map(|p| (p.device_id.clone(), p.ip.clone(), p.name.clone()))
+            .collect()
+    });
+
+    for (device_id, ip, name) in seen {
+        let Some(mac) = crate::wol::mac_for(&ip) else {
+            continue;
+        };
+        state.with(|s| {
+            s.macs.insert(device_id.clone(), mac.clone());
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "INSERT INTO device_macs (device_id, mac, name, seen_at) VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(device_id) DO UPDATE SET mac = ?2, name = ?3, seen_at = ?4",
+                    rusqlite::params![device_id, mac, name, crate::model::now_ms() as i64],
+                );
+            }
+        });
+    }
+}
+
+/// Every device this machine could try to wake, with the address to use.
+#[tauri::command]
+pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    remember_macs(&state);
+    state.with(|s| {
+        let mut out: Vec<serde_json::Value> = s
+            .macs
+            .iter()
+            .map(|(device_id, mac)| {
+                let peer = s.peers.values().find(|p| &p.device_id == device_id);
+                serde_json::json!({
+                    "deviceId": device_id,
+                    "mac": mac,
+                    "name": peer.map(|p| p.name.clone()).unwrap_or_default(),
+                    "online": peer.is_some(),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        });
+        out
+    })
+}
+
+/// Applies input that arrived from the device holding control.
+///
+/// The gate is the first line and there is no other way in. Everything above
+/// this - the prompt, the whitelist, the banner - is how the grant is decided;
+/// this is the single place that acts on it, so there is exactly one thing to
+/// read to know whether input can reach the machine.
+#[cfg(desktop)]
+pub fn control_apply(state: &AppState, from: &str, events: Vec<crate::input::RemoteEvent>) {
+    if !state.with(|s| s.control.allows(from)) {
+        return;
+    }
+    state.with(|s| {
+        if s.injector.is_none() {
+            s.injector = crate::input::Injector::new().ok();
+        }
+        if let Some(injector) = s.injector.as_mut() {
+            for event in &events {
+                // One bad event in a batch must not discard the rest: a
+                // refused key should not swallow the release that follows it.
+                let _ = injector.apply(event);
+            }
+        }
+    });
 }

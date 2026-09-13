@@ -16,6 +16,7 @@ pub mod hosting;
 mod library;
 mod identity;
 mod input;
+mod wol;
 mod media;
 mod model;
 mod mp4;
@@ -174,6 +175,14 @@ pub fn run() {
             commands::service_running,
             commands::host_status,
             commands::host_retry,
+            commands::control_request,
+            commands::control_answer,
+            commands::control_end,
+            commands::control_send,
+            commands::control_status,
+            commands::control_forget,
+            commands::wake_device,
+            commands::wakeable,
             commands::peers_shares,
             commands::peers_browse,
             commands::peers_block,
