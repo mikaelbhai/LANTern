@@ -137,17 +137,6 @@ export default function App() {
 
   if (!onboarded) return <Onboarding />;
 
-  const screens: Record<Screen, React.ReactNode> = {
-    home: <Home onNavigate={go} />,
-    chats: <Chats />,
-    calls: <Calls />,
-    files: <Files />,
-    theatre: <Theatre />,
-    games: <Games />,
-    network: <Network />,
-    settings: <Settings />,
-  };
-
   if (tv) {
     /*
       Theatre and Games, and nothing else.
@@ -186,9 +175,47 @@ export default function App() {
         </div>
         <div className="flex-1 min-h-0">{screen === 'games' ? <Games /> : <Theatre />}</div>
         <RejoinBanner />
+        {/*
+          The four things a television needs that are not screens.
+
+          Leaving these out was not a decision about televisions; they simply
+          live at the bottom of the other branch and this one returns before
+          reaching them. Each absence was its own fault:
+
+          Toasts are how the application says anything went wrong, so without
+          them a TV failed in complete silence - no unreachable peer, no
+          library that could not be read, nothing.
+
+          A call arrives on any device that is on the network, whether or not
+          it can start one. With no overlay it rang with nothing on screen and
+          no way to answer or refuse, and - worse - the call stayed set, so
+          every later call was turned away as busy until the app restarted. A
+          television is exactly the device somebody calls to say come and
+          watch this.
+
+          A file offered to a TV could not be accepted, which is the obvious
+          way to get a video onto one.
+
+          And the primer, because a call on a TV still asks for a microphone.
+        */}
+        {call && <CallOverlay />}
+        <IncomingFile />
+        <SystemPromptHost />
+        <Toasts />
       </div>
     );
   }
+
+  const screens: Record<Screen, React.ReactNode> = {
+    home: <Home onNavigate={go} />,
+    chats: <Chats />,
+    calls: <Calls />,
+    files: <Files />,
+    theatre: <Theatre />,
+    games: <Games />,
+    network: <Network />,
+    settings: <Settings />,
+  };
 
   return (
     <div className="h-full w-full flex bg-base text-txt overflow-hidden">

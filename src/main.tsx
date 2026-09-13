@@ -1,4 +1,4 @@
-// First, before anything can call the two functions older WebKit lacks.
+// First, before anything can call the functions older WebKit lacks.
 import './lib/compat';
 
 import React from 'react';

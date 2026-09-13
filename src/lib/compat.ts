@@ -42,4 +42,26 @@ for (const proto of [Array.prototype, String.prototype]) {
   }
 }
 
+/**
+ * Safari 16. Used by the update check.
+ *
+ * The cost of its absence was not a crash anybody could see: the call throws,
+ * the update check catches everything and reports `offline`, and a Mac on
+ * macOS 12 therefore said it could not reach the internet whether or not it
+ * could - permanently, with no way to update from inside the application.
+ */
+if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
+  Object.defineProperty(AbortSignal, 'timeout', {
+    value: function timeout(ms: number): AbortSignal {
+      const controller = new AbortController();
+      // `TimeoutError`, not the default `AbortError`, so anything telling the
+      // two apart still can.
+      setTimeout(() => controller.abort(new DOMException('signal timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    },
+    configurable: true,
+    writable: true,
+  });
+}
+
 export {};

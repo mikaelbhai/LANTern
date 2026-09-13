@@ -36,6 +36,46 @@ import { uid } from './utils';
  */
 const pendingOffers = new Map<string, rtc.SignalMessage>();
 
+/**
+ * How long a call rings before it gives up.
+ *
+ * Nothing was stopping one. A call to a device that nobody is standing in
+ * front of rang until the app was closed, and the caller sat on "Calling..."
+ * for as long as they were willing to watch it. On a television it was worse
+ * than cosmetic: the ringing call stayed set, and every later call was turned
+ * away as busy because the device believed it was still on the first one.
+ *
+ * Forty-five seconds is roughly what a phone does, and the point is that some
+ * number exists rather than which one it is.
+ */
+const RING_TIMEOUT_MS = 45_000;
+
+let ringTimer: ReturnType<typeof setTimeout> | null = null;
+
+function stopRinging(): void {
+  if (ringTimer !== null) {
+    clearTimeout(ringTimer);
+    ringTimer = null;
+  }
+}
+
+/**
+ * Ends the call `callId` if it is still ringing when the time is up.
+ *
+ * `endCall` already knows how to do the right thing with an unanswered call:
+ * it declines rather than hangs up, and logs it as missed on both sides. So
+ * this only has to decide when.
+ */
+function ringUntilTimeout(callId: string, endCall: () => void, currentId: () => string | null): void {
+  stopRinging();
+  ringTimer = setTimeout(() => {
+    ringTimer = null;
+    // A different call may have started in the meantime, and the guard in the
+    // caller checks it is still unanswered.
+    if (currentId() === callId) endCall();
+  }, RING_TIMEOUT_MS);
+}
+
 /** What `deliver` on the Rust side stamps onto an inbound chat envelope. */
 interface InboundChat {
   from: string;
@@ -964,6 +1004,10 @@ export const useStore = create<State>((set, get) => {
             pip: false,
           },
         });
+        ringUntilTimeout(msg.callId, () => get().endCall(), () => {
+          const c = get().call;
+          return c && c.state === 'ringing' ? c.id : null;
+        });
       });
 
       // Media is flowing. For the caller this is the only signal that the
@@ -973,6 +1017,7 @@ export const useStore = create<State>((set, get) => {
         const call = get().call;
         if (!call || !call.participants.some((p) => p.peerId === peerId)) return;
         if (call.state === 'active') return;
+        stopRinging();
         set({ call: { ...call, state: 'active', startedAt: Date.now() } });
         sfx.callConnect();
       });
@@ -1332,6 +1377,12 @@ export const useStore = create<State>((set, get) => {
         })
         .then(() => {
           set((s) => (s.call?.id === call.id ? { call: { ...s.call, state: 'ringing' } } : {}));
+          // The far side may simply never be looked at. Without this the
+          // caller watches "Calling..." for as long as they can bear it.
+          ringUntilTimeout(call.id, () => get().endCall(), () => {
+            const c = get().call;
+            return c && c.state === 'ringing' ? c.id : null;
+          });
         })
         .catch((err: Error) => {
           set((s) => (s.call?.id === call.id ? { call: null } : {}));
@@ -1373,6 +1424,7 @@ export const useStore = create<State>((set, get) => {
     },
 
     endCall() {
+      stopRinging();
       const call = get().call;
       if (!call) return;
       const entry: CallLogEntry = {

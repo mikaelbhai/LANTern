@@ -96,7 +96,11 @@ function KeepHosting() {
       .catch(() => setSupported(false));
   }, []);
 
-  if (!supported) return null;
+  // The command answers on Android too — it only reads a preference — so the
+  // switch appeared there and did nothing whatever: the background process it
+  // promises is desktop-only, and Android has no published folders for it to
+  // serve in the first place. A switch that lies is worse than no switch.
+  if (!supported || !canHost()) return null;
 
   return (
     <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3 flex items-start gap-3">
