@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Gamepad2,
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
@@ -12,18 +13,22 @@ import { Badge, Button, Empty, IconButton, Modal, SectionTitle } from '../compon
 import { useStore } from '../lib/store';
 import { cn, exactTime, formatDuration, relativeTime } from '../lib/utils';
 import { useNow } from '../lib/hooks';
+import { RemoteControl } from '../components/RemoteControl';
+import { WakeList } from '../components/WakeList';
+import { api } from '../lib/bridge';
 
 export function Calls() {
   const log = useStore((s) => s.callLog);
   const peers = useStore((s) => s.peers);
   const startCall = useStore((s) => s.startCall);
+  const [controlling, setControlling] = React.useState<string | null>(null);
   const now = useNow();
   const [groupOpen, setGroupOpen] = React.useState(false);
 
   const peerList = Object.values(peers);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col relative">
       <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-2">
         <Phone size={15} className="text-gold" />
         <span className="text-sm font-semibold">Calls</span>
@@ -75,11 +80,25 @@ export function Calls() {
                     >
                       <Video size={13} />
                     </IconButton>
+                    {/* Needs no call. You are looking at their screen and not
+                        at this one, which is the whole point of a pad. */}
+                    <IconButton
+                      label={`Control ${p.name}`}
+                      size="sm"
+                      onClick={() => {
+                        const target = p.deviceId || p.id;
+                        void api.control.request(target).catch(() => {});
+                        setControlling(target);
+                      }}
+                    >
+                      <Gamepad2 size={13} />
+                    </IconButton>
                   </div>
                 </li>
               ))}
             </ul>
           )}
+          <WakeList />
         </div>
 
         <div className="flex-1 min-w-0 scroll-y">
@@ -154,6 +173,17 @@ export function Calls() {
       </div>
 
       <GroupCallModal open={groupOpen} onClose={() => setGroupOpen(false)} />
+
+      {/*
+        Over the screen rather than beside it. Somebody holding a pad is
+        holding the phone sideways and looking at a television, and the rest
+        of this screen is not what they are using.
+      */}
+      {controlling && (
+        <div className="absolute inset-0 z-[150] bg-base">
+          <RemoteControl peerId={controlling} onClose={() => setControlling(null)} />
+        </div>
+      )}
     </div>
   );
 }

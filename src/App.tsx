@@ -5,6 +5,7 @@ import { MobileTabBar, NAV_ITEMS, Sidebar } from './components/Sidebar';
 import { Onboarding } from './components/Onboarding';
 import { Toasts } from './components/Toasts';
 import { SystemPromptHost } from './components/SystemPrompt';
+import { ControlConsent } from './components/ControlConsent';
 import { Wordmark } from './components/Logo';
 import { Avatar } from './components/Avatar';
 import { IconButton } from './components/ui';
@@ -201,6 +202,7 @@ export default function App() {
         {call && <CallOverlay />}
         <IncomingFile />
         <SystemPromptHost />
+        <ControlConsent />
         <Toasts />
       </div>
     );
@@ -266,6 +268,7 @@ export default function App() {
       {/* Above the call overlay in the tree, because the microphone prompt it
           explains is the one that happens on the way into a call. */}
       <SystemPromptHost />
+      <ControlConsent />
       <Toasts />
     </div>
   );

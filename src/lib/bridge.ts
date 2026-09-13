@@ -6,18 +6,20 @@
  * whole UI is exercisable without the Rust toolchain.
  */
 import type {
+  ControlStatus,
   DiagStep,
-  NetInfo,
-  Peer,
   GameKind,
   GameSession,
   MediaItem,
+  NetInfo,
+  Peer,
   PortMapping,
-  WatchParty,
   Share,
   ShareMode,
   Transfer,
   UpstreamInfo,
+  Wakeable,
+  WatchParty,
 } from './types';
 
 type Handler = (payload: any) => void;
@@ -392,6 +394,27 @@ export const api = {
     status: () => call<string | null>('host_status'),
     /** Tries the port again. False when it was not down to begin with. */
     retry: () => call<boolean>('host_retry'),
+  },
+  /**
+   * Driving another device, and being driven.
+   *
+   * The asking is deliberately asymmetric: this side can only ever request,
+   * and only the machine being controlled can answer.
+   */
+  control: {
+    request: (peerId: string) => call<void>('control_request', { peerId }),
+    answer: (peerId: string, allow: boolean, remember: boolean) =>
+      call<void>('control_answer', { peerId, allow, remember }),
+    end: () => call<void>('control_end'),
+    send: (peerId: string, events: unknown[]) => call<void>('control_send', { peerId, events }),
+    status: () => call<ControlStatus>('control_status'),
+    forget: (peerId: string) => call<void>('control_forget', { peerId }),
+  },
+  /** Waking a device that has gone to sleep. */
+  wake: {
+    /** Returns how many packets went out. Nothing acknowledges them. */
+    send: (mac: string) => call<number>('wake_device', { mac }),
+    list: () => call<Wakeable[]>('wakeable'),
   },
   /** Tray and launch behaviour. No-ops in a plain browser. */
   system: {

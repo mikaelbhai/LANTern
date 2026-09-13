@@ -478,3 +478,23 @@ export interface ActivityItem {
   ts: number;
   peerId?: string;
 }
+
+/** Who is asking to drive this machine, who holds it, and who may always. */
+export interface ControlStatus {
+  /** Device id waiting on an answer, if the question is on screen. */
+  pending: string | null;
+  /** Device id currently driving this machine. */
+  holder: string | null;
+  /** Device ids that never have to ask again. */
+  allowed: string[];
+  /** Whether this device can be driven at all. False everywhere but Windows. */
+  supported: boolean;
+}
+
+/** A device that could be woken, and the address to wake it at. */
+export interface Wakeable {
+  deviceId: string;
+  mac: string;
+  name: string;
+  online: boolean;
+}
