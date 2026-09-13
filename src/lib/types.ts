@@ -257,7 +257,8 @@ export interface NetInfo {
   stunPort: number;
   relayHub: boolean;
   relayBytes: number;
-  bridging: boolean;
+  /** Pairs of this device's own interfaces that share a subnet. */
+  sameSubnet: { a: string; b: string }[];
   upstream: UpstreamInfo | null;
   /** Port the built-in static HTTP server listens on for published folders. */
   hostPort: number;

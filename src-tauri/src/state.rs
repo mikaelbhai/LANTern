@@ -88,7 +88,7 @@ impl AppState {
             stun_port: DEFAULT_STUN_PORT,
             relay_hub: false,
             relay_bytes: 0,
-            bridging: false,
+            same_subnet: Vec::new(),
             upstream: None,
             host_port: DEFAULT_HOST_PORT,
         };

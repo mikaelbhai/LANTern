@@ -106,7 +106,7 @@ export function Network() {
           <UpnpManager />
         </div>
 
-        <BridgeCard />
+        <InterfacesCard />
         <ConnectionStack />
       </div>
 
@@ -905,41 +905,80 @@ function UpnpManager() {
   );
 }
 
-/* ---------------------------------------------------------- Subnet bridge */
+/* --------------------------------------------------- Interfaces and subnets */
 
-function BridgeCard() {
+/**
+ * What this device does across more than one network card, and what it does
+ * not.
+ *
+ * There was a switch here called "Bridge discovery across interfaces", and it
+ * promised to proxy discovery and signalling between networks. It did nothing
+ * whatever: the flag it set was written in one place and read in none. Half of
+ * what it claimed was already true without it - LANTern announces itself on
+ * every address the machine holds, always - and the other half, relaying
+ * traffic between two networks, has never existed.
+ *
+ * What replaces it is the fault that actually turns up, which the switch was
+ * standing in front of.
+ */
+function InterfacesCard() {
   const net = useStore((s) => s.net);
   if (!net) return null;
-  const multiHomed = net.interfaces.length > 1;
+
+  const clashes = net.sameSubnet ?? [];
+  const routable = net.interfaces.filter((i) => !i.ip.startsWith('169.254.'));
 
   return (
     <section className="panel p-4">
       <SectionTitle
         right={
-          <Badge tone={multiHomed ? 'cyan' : 'muted'}>
+          <Badge tone={clashes.length ? 'gold' : 'muted'}>
             <Layers size={9} />
-            {net.interfaces.length} interface{net.interfaces.length === 1 ? '' : 's'}
+            {routable.length} network{routable.length === 1 ? '' : 's'}
           </Badge>
         }
       >
-        Subnet bridge
+        Network interfaces
       </SectionTitle>
+
+      {clashes.length > 0 && (
+        <div className="rounded-card border border-gold/40 bg-gold/10 px-3 py-2.5 mb-3">
+          <p className="text-xs font-medium text-gold">
+            {clashes.map((c) => `${c.a} and ${c.b}`).join(', ')} are on the same network
+          </p>
+          <p className="text-2xs text-dim leading-relaxed mt-1">
+            Two cards addressing one network is a misconfiguration, and it produces the
+            most confusing symptom this app has: other devices can reach you at one of
+            your addresses and not the other, changing without warning. Which card answers
+            for an address is not something the operating system decides consistently, so
+            a peer can learn an address it will never be able to open a connection to.
+            Turning one of them off, or moving it to its own network, fixes it.
+          </p>
+        </div>
+      )}
+
       <p className="text-xs text-dim mb-3 leading-relaxed">
-        {multiHomed
-          ? 'This device sits on more than one network. Bridging announces LANTern on every interface and proxies discovery and signaling between them, so peers on either side can find each other.'
-          : 'Bridging needs a second network interface — Ethernet and Wi-Fi on different subnets, for example.'}
+        LANTern announces itself on every address this device holds, so peers on any of
+        its networks can find it. It does not pass traffic between them — a device on one
+        network still cannot reach a device on another through this one.
       </p>
-      <Toggle
-        checked={net.bridging}
-        disabled={!multiHomed}
-        onChange={(v) => void api.net.setBridging(v)}
-        label="Bridge discovery across interfaces"
-        hint={
-          multiHomed
-            ? net.interfaces.map((i) => `${i.name} (${i.ip})`).join('  ·  ')
-            : undefined
-        }
-      />
+
+      <div className="flex flex-col gap-1.5">
+        {net.interfaces.map((i) => (
+          <div
+            key={`${i.name}-${i.ip}`}
+            className="flex items-center justify-between gap-3 text-2xs"
+          >
+            <span className="text-txt truncate">{i.name}</span>
+            <span className="font-mono text-dim shrink-0">
+              {i.ip}
+              {i.ip.startsWith('169.254.') && (
+                <span className="text-muted"> · no lease</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

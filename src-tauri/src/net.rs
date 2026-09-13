@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
-use crate::model::{Interface, NatType, UpstreamInfo};
+use crate::model::{Interface, NatType, SubnetClash, UpstreamInfo};
 
 /// Enumerates usable IPv4 interfaces, skipping loopback and link-local.
 pub fn interfaces() -> Vec<Interface> {
@@ -137,6 +137,79 @@ pub fn is_private_addr(ip: &str) -> bool {
 
 /// Infers NAT shape from what the interfaces reveal.
 ///
+/// Interfaces of ours that share one subnet with each other.
+///
+/// Two network cards on the same subnet is a misconfiguration, not a topology,
+/// and it produces the most confusing symptom this application has: a device
+/// that other machines can reach at one of its addresses and not the other,
+/// changing with the weather. Which of the two answers an ARP request is not
+/// something the operating system promises, so a peer learns whichever address
+/// it happened to hear first and may be unable to open a connection to it.
+///
+/// It cost a day here. A phone could stream from this machine's wi-fi address
+/// and got "no route to host" for its ethernet address; the addresses looked
+/// like two networks that had been given the same numbers, and the real answer
+/// was one network entered twice.
+///
+/// Returned as pairs of interface names so the window can name them.
+pub fn same_subnet_clashes(interfaces: &[Interface]) -> Vec<SubnetClash> {
+    let mut clashes = Vec::new();
+    for (i, a) in interfaces.iter().enumerate() {
+        for b in interfaces.iter().skip(i + 1) {
+            if share_a_subnet(a, b) {
+                clashes.push(SubnetClash { a: a.name.clone(), b: b.name.clone() });
+            }
+        }
+    }
+    clashes
+}
+
+/// Whether two interfaces address the same network.
+///
+/// Both masks are applied, not just one: a /24 sitting inside another card's
+/// /16 is the same clash seen from one side only, and checking a single mask
+/// finds it half the time.
+fn share_a_subnet(a: &Interface, b: &Interface) -> bool {
+    let (Some(ai), Some(bi)) = (octets(&a.ip), octets(&b.ip)) else {
+        return false;
+    };
+    // A link-local address is what a card with no DHCP lease gives itself.
+    // Every one of them is on 169.254/16, and two of those are not a clash -
+    // they are two cards that are equally unplugged.
+    if ai[0] == 169 && ai[1] == 254 {
+        return false;
+    }
+    if bi[0] == 169 && bi[1] == 254 {
+        return false;
+    }
+
+    [&a.mask, &b.mask].iter().any(|mask| {
+        octets(mask).is_some_and(|m| {
+            (0..4).all(|i| ai[i] & m[i] == bi[i] & m[i])
+        })
+    })
+}
+
+/// Whether this machine genuinely reaches two different networks.
+///
+/// The double-NAT signal, and not the same question as "has two cards": two
+/// cards on one subnet reach one network, and answering yes to that made the
+/// window report two routers in series where there was a duplicated cable.
+pub fn spans_two_networks(interfaces: &[Interface]) -> bool {
+    interfaces.iter().enumerate().any(|(i, a)| {
+        // Link-local means no lease; it is not a network anybody is on.
+        octets(&a.ip).is_some_and(|o| !(o[0] == 169 && o[1] == 254))
+            && interfaces.iter().skip(i + 1).any(|b| {
+                octets(&b.ip).is_some_and(|o| !(o[0] == 169 && o[1] == 254))
+                    && !share_a_subnet(a, b)
+            })
+    })
+}
+
+fn octets(addr: &str) -> Option<[u8; 4]> {
+    addr.parse::<Ipv4Addr>().ok().map(|a| a.octets())
+}
+
 /// A private local address whose gateway also sits on a private network is the
 /// signature of two routers in series — the double-NAT case LANTern exists to
 /// cross. Without probing the gateway's WAN side this is a best guess, which is
@@ -151,7 +224,10 @@ pub fn detect_nat(ip: &str, gateway: &str, multi_homed: bool) -> NatType {
     if gateway.is_empty() {
         return NatType::Unknown;
     }
-    // A device sitting on two private networks is bridging two NAT domains.
+    // A device sitting on two *different* private networks is bridging two NAT
+    // domains. Two cards on the same one is not that - it is one network
+    // entered twice, and calling it double NAT sent the diagnosis in exactly
+    // the wrong direction for a day.
     if multi_homed {
         return NatType::Double;
     }
@@ -255,5 +331,128 @@ mod tests {
         let dead = closed.local_addr().unwrap().port();
         drop(closed);
         assert!(probe_tcp("127.0.0.1", dead, timeout).await.is_none());
+    }
+}
+
+#[cfg(test)]
+mod subnet_tests {
+    use super::*;
+
+    fn iface(name: &str, ip: &str, mask: &str) -> Interface {
+        Interface {
+            name: name.into(),
+            ip: ip.into(),
+            kind: "ethernet".into(),
+            mask: mask.into(),
+            cidr: String::new(),
+        }
+    }
+
+    /// Exactly what this machine looked like while the diagnosis went wrong.
+    fn the_machine_that_caused_this() -> Vec<Interface> {
+        vec![
+            iface("Ethernet", "192.168.100.67", "255.255.255.0"),
+            iface("Wi-Fi", "192.168.100.141", "255.255.255.0"),
+        ]
+    }
+
+    #[test]
+    fn two_cards_on_one_subnet_is_a_clash() {
+        let found = same_subnet_clashes(&the_machine_that_caused_this());
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].a, "Ethernet");
+        assert_eq!(found[0].b, "Wi-Fi");
+    }
+
+    /// And it is not two networks, which is what it was reported as.
+    #[test]
+    fn and_it_is_not_two_networks() {
+        assert!(
+            !spans_two_networks(&the_machine_that_caused_this()),
+            "one network entered twice was called double NAT",
+        );
+    }
+
+    #[test]
+    fn genuinely_separate_networks_are_not_a_clash() {
+        let ifaces = vec![
+            iface("Ethernet", "192.168.100.67", "255.255.255.0"),
+            iface("Wi-Fi", "10.0.0.5", "255.255.255.0"),
+        ];
+        assert!(same_subnet_clashes(&ifaces).is_empty());
+        assert!(spans_two_networks(&ifaces), "two real networks were missed");
+    }
+
+    #[test]
+    fn one_card_is_neither() {
+        let ifaces = vec![iface("Ethernet", "192.168.100.67", "255.255.255.0")];
+        assert!(same_subnet_clashes(&ifaces).is_empty());
+        assert!(!spans_two_networks(&ifaces));
+    }
+
+    /// A card with no lease gives itself a 169.254 address. Two of those are
+    /// two cards that are equally unplugged, not a misconfiguration - and this
+    /// machine has three of them sitting there at all times.
+    #[test]
+    fn unplugged_cards_are_not_a_clash() {
+        let ifaces = vec![
+            iface("Ethernet", "192.168.100.67", "255.255.255.0"),
+            iface("Local Area Connection* 9", "169.254.173.127", "255.255.0.0"),
+            iface("Local Area Connection* 10", "169.254.157.240", "255.255.0.0"),
+            iface("Bluetooth", "169.254.243.183", "255.255.0.0"),
+        ];
+        assert!(
+            same_subnet_clashes(&ifaces).is_empty(),
+            "{:?}",
+            same_subnet_clashes(&ifaces),
+        );
+        assert!(
+            !spans_two_networks(&ifaces),
+            "unplugged cards were counted as a second network",
+        );
+    }
+
+    /// A /24 inside another card's /16 is the same fault seen from one side.
+    /// Checking a single mask finds it half the time, which is worse than not
+    /// checking at all because it depends which card is listed first.
+    #[test]
+    fn a_narrow_subnet_inside_a_wide_one() {
+        let narrow_first = vec![
+            iface("Ethernet", "10.0.5.20", "255.255.255.0"),
+            iface("VPN", "10.0.9.3", "255.255.0.0"),
+        ];
+        let wide_first = vec![
+            iface("VPN", "10.0.9.3", "255.255.0.0"),
+            iface("Ethernet", "10.0.5.20", "255.255.255.0"),
+        ];
+        assert_eq!(same_subnet_clashes(&narrow_first).len(), 1);
+        assert_eq!(
+            same_subnet_clashes(&wide_first).len(),
+            1,
+            "found only in one order",
+        );
+    }
+
+    #[test]
+    fn three_cards_two_of_them_clashing() {
+        let ifaces = vec![
+            iface("Ethernet", "192.168.100.67", "255.255.255.0"),
+            iface("Wi-Fi", "192.168.100.141", "255.255.255.0"),
+            iface("VPN", "10.8.0.2", "255.255.255.0"),
+        ];
+        assert_eq!(same_subnet_clashes(&ifaces).len(), 1);
+        // The VPN really is a second network, so this is both things at once.
+        assert!(spans_two_networks(&ifaces));
+    }
+
+    #[test]
+    fn nonsense_addresses_do_not_panic() {
+        let ifaces = vec![
+            iface("Broken", "", ""),
+            iface("Odd", "not an address", "255.255.255.0"),
+            iface("Ethernet", "192.168.100.67", ""),
+        ];
+        let _ = same_subnet_clashes(&ifaces);
+        let _ = spans_two_networks(&ifaces);
     }
 }

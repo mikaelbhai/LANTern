@@ -189,7 +189,7 @@ let net: NetInfo = {
   stunPort: 7980,
   relayHub: false,
   relayBytes: 0,
-  bridging: false,
+  sameSubnet: [],
   hostPort: 7981,
   upstream: {
     routerWanIp: '192.168.0.23',
@@ -325,11 +325,6 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'net_set_relay_hub':
       net.relayHub = args.on;
-      emit('net:changed', net);
-      return null;
-
-    case 'net_set_bridging':
-      net.bridging = args.on;
       emit('net:changed', net);
       return null;
 

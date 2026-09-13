@@ -49,7 +49,10 @@ pub fn boot(app: AppHandle, state: AppState) {
     let mask = net::netmask_for(&ip);
     let gateway = net::gateway_for(&ip, &mask);
     let ifaces = net::interfaces();
-    let multi_homed = ifaces.len() > 1;
+    // Two cards on *different* networks is the double-NAT signal. Two on the
+    // same one is a fault, and counting cards conflated them.
+    let multi_homed = net::spans_two_networks(&ifaces);
+    let clashes = net::same_subnet_clashes(&ifaces);
 
     // Running a second instance on one machine is how peer-to-peer gets tested
     // without a second machine. An offset shifts every port, and a suffix gives
@@ -65,6 +68,7 @@ pub fn boot(app: AppHandle, state: AppState) {
         s.net.subnet = mask.clone();
         s.net.gateway = gateway.clone();
         s.net.interfaces = ifaces;
+        s.net.same_subnet = clashes;
         s.net.nat = net::detect_nat(&ip, &gateway, multi_homed);
         s.net.upstream = net::upstream_for(&ip, &gateway);
         s.net.upnp_available = false;
@@ -306,13 +310,15 @@ fn watch_network(app: AppHandle, state: AppState) {
             let ip = net::primary_ip();
             let mask = net::netmask_for(&ip);
             let gateway = net::gateway_for(&ip, &mask);
-            let multi_homed = interfaces.len() > 1;
+            let multi_homed = net::spans_two_networks(&interfaces);
+            let clashes = net::same_subnet_clashes(&interfaces);
 
             let (info, device_id, instance, port, daemon) = state.with(|s| {
                 s.net.ip = ip.clone();
                 s.net.subnet = mask.clone();
                 s.net.gateway = gateway.clone();
                 s.net.interfaces = interfaces.clone();
+                s.net.same_subnet = clashes.clone();
                 s.net.nat = net::detect_nat(&ip, &gateway, multi_homed);
                 s.net.upstream = net::upstream_for(&ip, &gateway);
                 (
@@ -370,15 +376,6 @@ pub fn net_info(state: State<'_, AppState>) -> NetInfo {
 pub fn net_set_relay_hub(app: AppHandle, state: State<'_, AppState>, on: bool) {
     let info = state.with(|s| {
         s.net.relay_hub = on;
-        s.net.clone()
-    });
-    let _ = app.emit("net:changed", &info);
-}
-
-#[tauri::command]
-pub fn net_set_bridging(app: AppHandle, state: State<'_, AppState>, on: bool) {
-    let info = state.with(|s| {
-        s.net.bridging = on;
         s.net.clone()
     });
     let _ = app.emit("net:changed", &info);

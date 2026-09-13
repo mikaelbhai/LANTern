@@ -122,7 +122,6 @@ pub fn run() {
             commands::profile_has_avatar,
             commands::net_info,
             commands::net_set_relay_hub,
-            commands::net_set_bridging,
             commands::net_set_port,
             commands::net_add_manual_peer,
             commands::net_add_by_phrase,

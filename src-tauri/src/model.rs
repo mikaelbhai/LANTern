@@ -81,6 +81,14 @@ pub struct Peer {
     pub initiated_by: Initiator,
 }
 
+/// Two of this device's interfaces addressing the same network.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubnetClash {
+    pub a: String,
+    pub b: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Interface {
@@ -187,7 +195,13 @@ pub struct NetInfo {
     pub stun_port: u16,
     pub relay_hub: bool,
     pub relay_bytes: u64,
-    pub bridging: bool,
+    /// Pairs of this device's own interfaces that share a subnet.
+    ///
+    /// Empty in the ordinary case. Non-empty means a real misconfiguration,
+    /// and one worth naming because its symptom - reachable at one address
+    /// and not the other, intermittently - looks like everything except what
+    /// it is.
+    pub same_subnet: Vec<SubnetClash>,
     pub upstream: Option<UpstreamInfo>,
     pub host_port: u16,
 }

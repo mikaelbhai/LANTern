@@ -147,7 +147,6 @@ export const api = {
   net: {
     info: () => call<NetInfo>('net_info'),
     setRelayHub: (on: boolean) => call<void>('net_set_relay_hub', { on }),
-    setBridging: (on: boolean) => call<void>('net_set_bridging', { on }),
     setPort: (port: number) => call<void>('net_set_port', { port }),
     addManualPeer: (ip: string, port: number) =>
       call<Peer>('net_add_manual_peer', { ip, port }),
