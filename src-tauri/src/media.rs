@@ -135,12 +135,20 @@ pub fn items_for_share(
                             ),
                         }));
                     }
-                    "audio" => audio_tracks.push(serde_json::json!({
-                        "label": track.label(),
-                        "lang": track.lang,
-                        "codec": track.codec,
-                        "default": track.default,
-                    })),
+                    "audio" => {
+                        // The ordinal among audio tracks, which is what the
+                        // remux endpoint maps with `0:a:N` — not the track
+                        // number inside the container.
+                        let ordinal = audio_tracks.len() as u64;
+                        audio_tracks.push(serde_json::json!({
+                            "index": ordinal,
+                            "label": track.label(),
+                            "lang": track.lang,
+                            "codec": track.codec,
+                            "default": track.default,
+                            "webSafe": crate::audiotrack::is_web_safe(&track.codec),
+                        }))
+                    }
                     _ => {}
                 }
             }
@@ -187,12 +195,21 @@ pub fn items_for_share(
                 obj.insert("subtitles".into(), serde_json::Value::Array(all));
             }
 
-            // Listed, not offered. A webview cannot switch between audio
-            // tracks muxed into a file — Chromium has never implemented
-            // HTMLMediaElement.audioTracks — so these are shown as
-            // information about the file rather than as a control that would
-            // do nothing.
-            if audio_tracks.len() > 1 {
+            // Listed when there is a choice to make, and — this is the part
+            // that was missing — also when there is only one track and the
+            // browser cannot decode it.
+            //
+            // A webview cannot switch between tracks muxed into a file, so the
+            // switch happens here by remuxing. Hiding a lone E-AC-3 track
+            // because "there is nothing to switch to" is what left five
+            // episodes playing in silence on a phone, with no control to fix
+            // it: the one case that needs the remux was the one case never
+            // offered it. Desktop hid the fault, because Windows lends the
+            // webview a Dolby decoder that Android has none of.
+            let unplayable = audio_tracks
+                .iter()
+                .any(|t| t.get("webSafe").and_then(|v| v.as_bool()) == Some(false));
+            if audio_tracks.len() > 1 || unplayable {
                 obj.insert("audioTracks".into(), serde_json::Value::Array(audio_tracks));
             }
         }

@@ -24,6 +24,7 @@ import { api } from '../../lib/bridge';
 import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
+import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
 import { trackNames } from './tracks';
 import {
@@ -145,10 +146,41 @@ export function Player({
   const [sourceOffset, setSourceOffset] = React.useState(0);
   const [canSwitchAudio, setCanSwitchAudio] = React.useState(false);
 
+  // True when some track here cannot be decoded on this device — which is a
+  // reason to offer the control even with nothing to switch between.
+  const unplayable = React.useMemo(
+    () =>
+      audioTracks.some((t: any) =>
+        needsRemux(t?.codec ?? '', t?.webSafe !== false, browserCanPlay),
+      ),
+    [audioTracks],
+  );
+
   React.useEffect(() => {
-    if (audioTracks.length < 2) return;
+    if (audioTracks.length < 2 && !unplayable) return;
     void api.media.canSwitchAudio().then(setCanSwitchAudio).catch(() => setCanSwitchAudio(false));
-  }, [audioTracks.length]);
+  }, [audioTracks.length, unplayable]);
+
+  /**
+   * Asks for the remuxed stream when the only track is one this device cannot
+   * decode, without waiting to be told.
+   *
+   * Five episodes played in silence because their sole track was E-AC-3:
+   * nothing to switch to, so nothing was offered, so the one thing that would
+   * have fixed it was never reachable. Chosen once per title, and never over
+   * a choice already made by hand.
+   */
+  const autoPicked = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (autoPicked.current === item.id) return;
+    if (audioTrack >= 0 || audioTracks.length === 0) return;
+    const track: any =
+      audioTracks.find((t: any) => t?.default) ?? audioTracks[0];
+    if (!track) return;
+    if (!needsRemux(track.codec ?? '', track.webSafe !== false, browserCanPlay)) return;
+    autoPicked.current = item.id;
+    setAudioTrack(typeof track.index === 'number' ? track.index : 0);
+  }, [item.id, audioTracks, audioTrack]);
 
   /**
    * Remembers the pair whenever either changes.

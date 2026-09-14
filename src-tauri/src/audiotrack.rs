@@ -73,8 +73,17 @@ pub fn ffmpeg_path() -> Option<&'static Path> {
 }
 
 /// True when the browser can play this audio codec as-is.
+///
+/// Compared without case, because the names arrive in two spellings: the
+/// Matroska ids are `A_OPUS` and `A_VORBIS` while this list is written the way
+/// a person writes them. Matching exactly meant Opus and Vorbis - both
+/// perfectly playable - were re-encoded for no reason, which is expensive and
+/// silent about it.
 pub fn is_web_safe(codec: &str) -> bool {
-    WEB_SAFE_AUDIO.iter().any(|safe| codec.contains(safe))
+    let codec = codec.to_ascii_lowercase();
+    WEB_SAFE_AUDIO
+        .iter()
+        .any(|safe| codec.contains(&safe.to_ascii_lowercase()))
 }
 
 /// Builds the ffmpeg invocation for one track.
@@ -160,6 +169,28 @@ pub fn thumbnail_arguments(path: &str, at_sec: f64) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The case that played in silence: a lone E-AC-3 track. Chromium has no
+    /// Dolby decoder, so this must come back false or the remux is skipped
+    /// and the file arrives unplayable.
+    #[test]
+    fn dolby_and_dts_are_not_web_safe() {
+        for codec in ["A_EAC3", "A_AC3", "E-AC-3", "AC-3", "A_DTS", "A_TRUEHD"] {
+            assert!(!is_web_safe(codec), "{codec} was treated as playable");
+        }
+    }
+
+    /// And the ones that are playable must not be re-encoded, in either
+    /// spelling - the container writes A_OPUS where a person writes Opus.
+    #[test]
+    fn the_playable_codecs_are_left_alone() {
+        for codec in [
+            "A_AAC", "AAC", "A_OPUS", "Opus", "A_VORBIS", "Vorbis", "A_FLAC", "FLAC",
+        ] {
+            assert!(is_web_safe(codec), "{codec} would have been re-encoded");
+        }
+    }
+
     use super::*;
 
     #[test]
