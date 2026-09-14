@@ -170,6 +170,11 @@ const MEDIA_SEED: Array<
 ];
 
 let startupWifi: string | null = null;
+let ratingDefault = 12;
+const ratingAges: { deviceId: string; name: string; maxAge: number }[] = [
+  { deviceId: 'peer-nadia', name: 'Nadia', maxAge: 18 },
+  { deviceId: 'peer-tomas', name: 'Tomas', maxAge: 7 },
+];
 let media: MediaItem[] = [];
 let party: WatchParty | null = null;
 let session: GameSession | null = null;
@@ -584,6 +589,29 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'autostart_set':
       return args.enabled;
+
+    /* -------------------------------------------------------- maturity */
+
+    case 'ratings_status':
+      return {
+        devices: ratingAges,
+        defaultAge: ratingDefault,
+        overrides: 0,
+      };
+
+    case 'ratings_set_device': {
+      const found = ratingAges.find((d) => d.deviceId === args.deviceId);
+      if (found) found.maxAge = args.maxAge;
+      else ratingAges.push({ deviceId: args.deviceId, name: 'Device', maxAge: args.maxAge });
+      return null;
+    }
+
+    case 'ratings_set_default':
+      ratingDefault = args.maxAge;
+      return null;
+
+    case 'ratings_set_title':
+      return null;
 
     /* ----------------------------------------------------------- wi-fi */
 

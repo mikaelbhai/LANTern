@@ -18,6 +18,7 @@ import type {
   ShareMode,
   Transfer,
   UpstreamInfo,
+  RatingsStatus,
   Wakeable,
   WifiStatus,
   WatchParty,
@@ -440,6 +441,22 @@ export const api = {
     /** Returns how many packets went out. Nothing acknowledges them. */
     send: (mac: string) => call<number>('wake_device', { mac }),
     list: () => call<Wakeable[]>('wakeable'),
+  },
+  /**
+   * Age limits, set by the device holding the files.
+   *
+   * Only ever meaningful on the host: a viewer cannot raise its own
+   * allowance, because it never asks — it presents a key and the machine
+   * with the bytes decides what that key may see.
+   */
+  ratings: {
+    status: () => call<RatingsStatus>('ratings_status'),
+    setDevice: (deviceId: string, maxAge: number) =>
+      call<void>('ratings_set_device', { deviceId, maxAge }),
+    setDefault: (maxAge: number) => call<void>('ratings_set_default', { maxAge }),
+    /** Null clears the host's rating and returns the title to the guess. */
+    setTitle: (streamPath: string, minAge: number | null) =>
+      call<void>('ratings_set_title', { streamPath, minAge }),
   },
   /**
    * Rejoining a known network at startup.

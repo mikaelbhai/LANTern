@@ -491,6 +491,16 @@ export interface ControlStatus {
   supported: boolean;
 }
 
+/** Who may watch what, as decided by the device holding the files. */
+export interface RatingsStatus {
+  /** Devices the host has given an explicit allowance. */
+  devices: { deviceId: string; name: string; maxAge: number }[];
+  /** What a device nobody has set is allowed. */
+  defaultAge: number;
+  /** How many titles the host has rated by hand. */
+  overrides: number;
+}
+
 /** What this machine knows about the wireless networks around it. */
 export interface WifiStatus {
   /** False on Android, which decides this itself and asks the person. */
