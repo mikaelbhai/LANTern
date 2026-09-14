@@ -549,7 +549,18 @@ async fn respond(
         let index = target.join("index.html");
         if tokio::fs::try_exists(&index).await.unwrap_or(false) {
             Some(index)
-        } else if mode == ShareMode::Files {
+        } else if mode == ShareMode::Files || mode == ShareMode::Media {
+            // Media folders are listable too. Theatre offers what it can play,
+            // which is not everything a media folder holds - the subtitle
+            // beside an episode, the artwork, the file itself to copy rather
+            // than stream. Refusing here meant a published library could be
+            // watched and never opened, and the Files screen showed it as an
+            // empty folder, which reads as a fault rather than a rule.
+            //
+            // Names only. What may actually be sent is still decided further
+            // down, at the last point before bytes leave, which is where a
+            // restriction has to live to mean anything.
+            //
             // `?json=1` is another LANTern asking; anything else is a browser.
             if as_json {
                 return listing_json(&root, &target, &slug).await;
@@ -1195,6 +1206,30 @@ mod tests {
         assert!(
             response.contains("http://192.168.100.141:7981/test/clip.mp4"),
             "{response}"
+        );
+    }
+
+    /// A media folder can be listed, not only played.
+    ///
+    /// Refusing this answered "Not found", which the Files screen showed as an
+    /// empty folder - indistinguishable from the folder really being empty,
+    /// and so read as a fault rather than a rule. Theatre offers what it can
+    /// play; the subtitle beside an episode and the file itself are reachable
+    /// only by browsing.
+    #[tokio::test]
+    async fn a_media_folder_lists_its_contents() {
+        let (addr, root) = serve_fixture(ShareMode::Media).await;
+        std::fs::write(root.join("nested/episode.mkv"), b"fake video").unwrap();
+        std::fs::write(root.join("nested/episode.srt"), b"1
+").unwrap();
+
+        // `nested` rather than the root, which carries an index.html the
+        // fixture serves in preference to any listing.
+        let response = get_as(addr, "/test/nested?json=1", "127.0.0.1:7981", "").await;
+        assert!(response.contains("episode.mkv"), "{response}");
+        assert!(
+            response.contains("episode.srt"),
+            "the subtitle beside an episode is the reason to browse at all: {response}"
         );
     }
 

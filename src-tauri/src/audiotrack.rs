@@ -172,6 +172,23 @@ pub fn arguments(
     // `delay_moov` waits for the first fragment, not the whole film, so the
     // edit list survives and playback still starts in a moment rather than
     // after a transcode.
+    // Negative timestamps are what a fast seek leaves behind, and they are
+    // worse than the thing they come from.
+    //
+    // `-ss` before `-i` jumps by index, so video resumes at the keyframe
+    // *before* the requested point - 0.656s before it, in the file this was
+    // found on - while the audio is re-encoded from the point itself. The
+    // relationship is correct: that video really does belong two thirds of a
+    // second earlier. But it is expressed as a negative timestamp, and a
+    // player that clamps those to zero drops the video's head start and slides
+    // the two apart by exactly that much. Resuming a film was ten times worse
+    // than the fault this was meant to fix.
+    //
+    // `make_zero` shifts both streams by the same amount instead, so the
+    // offset survives as the gap it is rather than being quietly discarded.
+    args.push("-avoid_negative_ts".into());
+    args.push("make_zero".into());
+
     args.push("-movflags".into());
     args.push("frag_keyframe+delay_moov+default_base_moof".into());
     args.push("-f".into());
@@ -321,6 +338,21 @@ mod tests {
         let shifted = arguments("f.mkv", 0, "AAC", 0.0, 200);
         let at = shifted.iter().position(|a| a == "-c:a").unwrap();
         assert_eq!(shifted[at + 1], "aac", "a copied stream cannot be filtered");
+    }
+
+    /// A fast seek must not hand the player negative timestamps.
+    ///
+    /// Measured on a real resume: video came back at -0.656 against audio at
+    /// -0.021, and clamping those to zero is a 635ms slide. The flag shifts
+    /// both together so the gap stays the gap.
+    #[test]
+    fn a_resume_does_not_leave_negative_timestamps() {
+        let args = arguments("f.mkv", 0, "A_EAC3", 345.0, 0);
+        let at = args
+            .iter()
+            .position(|a| a == "-avoid_negative_ts")
+            .expect("a fast seek can produce negative timestamps");
+        assert_eq!(args[at + 1], "make_zero");
     }
 
     /// The header has to be late enough to carry an edit list.
