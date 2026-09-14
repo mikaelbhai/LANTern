@@ -273,6 +273,14 @@ fn rehost(value: &mut serde_json::Value, host: &str, port: u16) {
 /// library, and left Theatre with nothing to say.
 pub async fn fetch_peer(
     peer_id: &str,
+    // Who this library belongs to, carried with it.
+    //
+    // The screen used to look the name up in the live peer list, which is a
+    // different thing from the library and not always there: a peer that has
+    // momentarily dropped, or has not been re-announced yet, left every one of
+    // its titles labelled "Peer". The library knows whose it is at the moment
+    // it is fetched, so it says so.
+    owner_name: &str,
     host: &str,
     port: u16,
     // The key that peer issued us over the signalling link, so its server can
@@ -317,6 +325,12 @@ pub async fn fetch_peer(
                 serde_json::Value::String(format!("{peer_id}:{slug}:{rel}")),
             );
             fields.insert("peerId".into(), serde_json::Value::String(peer_id.into()));
+            if !owner_name.is_empty() {
+                fields.insert(
+                    "ownerName".into(),
+                    serde_json::Value::String(owner_name.into()),
+                );
+            }
 
             // Every address in the manifest, not just the one to press play on.
             rehost(&mut item, host, port);
@@ -368,7 +382,14 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         if let Some(address) = first_to_answer(addresses, default_port).await {
             let key = state.with(|s| s.held_keys.get(&peer.device_id).cloned());
             if let Some(items) =
-                fetch_peer(&peer.device_id, &address, default_port, key.as_deref()).await
+                fetch_peer(
+                    &peer.device_id,
+                    &peer.name,
+                    &address,
+                    default_port,
+                    key.as_deref(),
+                )
+                .await
             {
                 remote.extend(items);
                 reached = true;

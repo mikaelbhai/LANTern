@@ -130,6 +130,47 @@ function useThumbnail(_key: string, _streamUrl?: string, posterUrl?: string): st
   return posterUrl ?? null;
 }
 
+/**
+ * Just the picture: the real frame where there is one, the generated art
+ * where there is not.
+ *
+ * `TitleCard` draws this plus a label and a badge, which is right for a grid
+ * and wrong for a row inside a collection - so a row reached for `Artwork`
+ * directly and always got the generated version. The same episode then looked
+ * like a coloured skyline in one place and like itself in another.
+ */
+export function Thumbnail({
+  title,
+  seed,
+  posterUrl,
+  streamUrl,
+  className,
+}: {
+  title: string;
+  seed?: string;
+  posterUrl?: string;
+  streamUrl?: string;
+  className?: string;
+}) {
+  const thumb = useThumbnail(seed ?? title, streamUrl, posterUrl);
+  if (!thumb) {
+    return <Artwork title={title} seed={seed} variant="backdrop" className={className} />;
+  }
+  return (
+    <img
+      src={thumb}
+      alt={title}
+      loading="lazy"
+      className={`object-cover ${className ?? ''}`}
+      // A poster that 404s falls back to nothing rather than leaving a broken
+      // image behind, exactly as it does on a card.
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.display = 'none';
+      }}
+    />
+  );
+}
+
 export function TitleCard({
   title,
   subtitle,

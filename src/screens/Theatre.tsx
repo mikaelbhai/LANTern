@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, IconButton, Input } from '../components/ui';
-import { Artwork, TitleCard } from '../lib/poster';
+import { Artwork, Thumbnail, TitleCard } from '../lib/poster';
 import { Player } from './theatre/Player';
 import { PublishMediaModal } from './theatre/PublishMedia';
 import { api, on } from '../lib/bridge';
@@ -90,7 +90,12 @@ export function Theatre() {
 
   const ownerName = React.useCallback(
     (item: MediaItem) =>
-      item.peerId ? (peers[item.peerId]?.name ?? 'Peer') : (profile.name || 'This device'),
+      item.peerId
+        ? // The live peer list first, because a name can change; then the one
+          // the library was fetched with, which is there even when the peer
+          // momentarily is not.
+          (peers[item.peerId]?.name ?? (item as any).ownerName ?? 'Peer')
+        : profile.name || 'This device',
     [peers, profile.name],
   );
 
@@ -973,11 +978,11 @@ function CollectionSheet({
           className="w-full max-w-3xl max-h-[86vh] bg-surface border border-edge-strong rounded-modal overflow-hidden shadow-2xl flex flex-col"
         >
           <div className="relative h-40 shrink-0">
-            <Artwork
+            <Thumbnail
               title={collection.title}
               seed={collection.items[0]?.id ?? collection.key}
-              variant="backdrop"
-              rounded={false}
+              posterUrl={collection.items[0]?.posterUrl}
+              streamUrl={collection.items[0]?.streamUrl}
               className="h-full w-full"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-surface to-transparent" />
@@ -1031,10 +1036,11 @@ function CollectionSheet({
                         onClick={() => onPlay(item)}
                         className="relative w-28 shrink-0 rounded-input overflow-hidden group/thumb"
                       >
-                        <Artwork
+                        <Thumbnail
                           title={item.title}
                           seed={item.id}
-                          variant="backdrop"
+                          posterUrl={item.posterUrl}
+                          streamUrl={item.streamUrl}
                           className="aspect-video w-full"
                         />
                         <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
@@ -1054,8 +1060,14 @@ function CollectionSheet({
 
                       <div className="min-w-0 flex-1">
                         <div className="text-xs font-medium truncate">
+                          {/* An episode with no name of its own carried the
+                              series name, so every row in a collection read
+                              "1. Lanterns", "2. Lanterns" — the one thing
+                              every row already had in common. */}
                           {item.episode
-                            ? `${item.episode}. ${item.title}`
+                            ? item.title === collection.title
+                              ? `Episode ${item.episode}`
+                              : `${item.episode}. ${item.title}`
                             : item.title}
                         </div>
                         <div className="text-2xs text-muted mt-0.5">
