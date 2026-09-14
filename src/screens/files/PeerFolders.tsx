@@ -6,6 +6,11 @@
  * the only way in was to know its address and type it into a browser, which
  * is not something anyone should have to do on their own network.
  *
+ * Media folders are listed here too. Theatre shows what it can play, which is
+ * not everything a media folder holds: the subtitle beside an episode, the
+ * artwork, the file itself to copy rather than stream. Excluding them meant a
+ * published library could be watched and not opened.
+ *
  * So this is the other half of Hosting. Your own published folders are one tab
  * across; these are everyone else's.
  */
@@ -57,9 +62,12 @@ export function PeerFolders() {
       // network, and a burst of them on a busy Wi-Fi is how timeouts happen.
       for (const peer of online) {
         const list = await api.peers.shares(peer.id).catch(() => []);
-        // Media shares already have a home in Theatre.
-        const folders = list.filter((s) => s.mode !== 'media');
-        if (folders.length) found[peer.id] = folders;
+        // Media shares are listed here as well as in Theatre. They are the
+        // same folder either way, and Theatre only offers what it can play —
+        // so a library was browsable as a grid of films and not as the
+        // directory it actually is, with no way to reach a subtitle file
+        // beside an episode, or to copy the file itself.
+        if (list.length) found[peer.id] = list;
       }
       setShares(found);
     } finally {
@@ -161,15 +169,19 @@ export function PeerFolders() {
                       <span className="text-2xs text-muted shrink-0">
                         {formatBytes(entry.size)}
                       </span>
-                      {/* Opening it hands the URL to the system, which is what
-                          downloads it — the same address any browser on the
-                          network can already use. */}
+                      {/* Handed to the system as a web address, not as a
+                          path. They are different things to the operating
+                          system: `files.open` wants somewhere on this disk,
+                          and an http address is not that. Asking it anyway
+                          failed silently on the desktop and did nothing at
+                          all on Android, which is what "I pressed download
+                          and nothing happened" was. */}
                       <IconButton
-                        label="Open"
+                        label="Download"
                         size="xs"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void api.files.open(entry.url);
+                          void api.system.openExternal(entry.url);
                         }}
                       >
                         <ExternalLink size={11} />
@@ -193,7 +205,8 @@ export function PeerFolders() {
     <div className="h-full flex flex-col">
       <div className="shrink-0 flex items-center gap-2 px-4 py-2.5 border-b border-edge">
         <span className="text-2xs text-muted flex-1">
-          Folders other devices have published. Media libraries appear in Theatre instead.
+          Folders other devices have published, media libraries included — those
+          are in Theatre too, as something to watch rather than to browse.
         </span>
         <Button size="sm" icon={<RefreshCw size={12} />} onClick={() => void load()}>
           {loading ? 'Looking…' : 'Refresh'}
@@ -221,6 +234,9 @@ export function PeerFolders() {
                     >
                       <Folder size={15} className="text-gold shrink-0" />
                       <span className="text-xs font-medium truncate flex-1">{share.name}</span>
+                      {share.mode === 'media' && (
+                        <span className="text-2xs text-muted shrink-0">Also in Theatre</span>
+                      )}
                       <ChevronRight size={13} className="text-muted shrink-0" />
                     </button>
                   ))}

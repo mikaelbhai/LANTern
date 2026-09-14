@@ -144,6 +144,15 @@ export function Player({
   // asked for, so the player's clock is offset by that amount and seeking
   // re-requests rather than scrubbing.
   const [sourceOffset, setSourceOffset] = React.useState(0);
+  /**
+   * How far to move the audio, in milliseconds, positive for later.
+   *
+   * The shift is applied where the file is, not here: one <video> element has
+   * a single clock, so a page cannot slide its own audio against its own
+   * picture. Asking the far side to re-cut the stream is the only lever there
+   * is, which is why this re-requests rather than adjusting something local.
+   */
+  const [audioDelay, setAudioDelay] = React.useState(0);
   const [canSwitchAudio, setCanSwitchAudio] = React.useState(false);
 
   // True when some track here cannot be decoded on this device — which is a
@@ -220,9 +229,32 @@ export function Player({
     audioTrack >= 0
       ? `${item.streamUrl}${item.streamUrl.includes('?') ? '&' : '?'}audio=${audioTrack}` +
         `&codec=${encodeURIComponent(audioTracks[audioTrack]?.codec ?? '')}` +
-        `&t=${Math.floor(sourceOffset)}`
+        `&t=${Math.floor(sourceOffset)}` +
+        (audioDelay !== 0 ? `&adelay=${audioDelay}` : '')
       : item.streamUrl;
 
+
+  /**
+   * Moves the audio, keeping the place.
+   *
+   * Re-requesting restarts the stream, so the current position goes with it.
+   * On a file playing untouched there is nothing to re-cut, so this also takes
+   * the remuxed path — which costs a re-encode, and is the only way to apply
+   * a shift at all.
+   */
+  const nudgeDelay = (deltaMs: number) => {
+    const next = Math.max(-5000, Math.min(5000, audioDelay + deltaMs));
+    if (next === audioDelay) return;
+    setSourceOffset(Math.max(0, Math.floor(time)));
+    if (audioTrack < 0) {
+      const track: any = audioTracks.find((t: any) => t?.default) ?? audioTracks[0];
+      if (track) setAudioTrack(typeof track.index === 'number' ? track.index : 0);
+    }
+    setAudioDelay(next);
+  };
+
+  // A shift belongs to the file it was judged against, not to the player.
+  React.useEffect(() => setAudioDelay(0), [item.id]);
 
   const chooseAudio = (index: number) => {
     setSourceOffset(index >= 0 ? Math.max(0, Math.floor(time)) : 0);
@@ -944,6 +976,45 @@ export function Player({
                                   {option.label}
                                 </button>
                               ))}
+                            </div>
+                          )}
+
+                          {audioTracks.length > 0 && (
+                            <div className="shrink-0">
+                              <div className="my-1 border-t border-edge" />
+                              <div className="px-2 pb-1 pt-0.5 label">Audio delay</div>
+                              <div className="flex items-center gap-1 px-2 pb-1">
+                                <button
+                                  onClick={() => nudgeDelay(-50)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Audio earlier"
+                                >
+                                  −50 ms
+                                </button>
+                                <span
+                                  className={cn(
+                                    'w-16 text-center text-2xs tabular-nums',
+                                    audioDelay !== 0 ? 'text-gold' : 'text-dim',
+                                  )}
+                                >
+                                  {audioDelay > 0 ? `+${audioDelay}` : audioDelay} ms
+                                </span>
+                                <button
+                                  onClick={() => nudgeDelay(50)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Audio later"
+                                >
+                                  +50 ms
+                                </button>
+                              </div>
+                              {audioDelay !== 0 && (
+                                <button
+                                  onClick={() => nudgeDelay(-audioDelay)}
+                                  className="track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised text-dim"
+                                >
+                                  Back to none
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>

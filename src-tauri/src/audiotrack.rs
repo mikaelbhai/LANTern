@@ -90,7 +90,15 @@ pub fn is_web_safe(codec: &str) -> bool {
 ///
 /// Split out from spawning so the argument list can be asserted in a test:
 /// getting `-c:v copy` wrong would silently re-encode a 20 GB film.
-pub fn arguments(path: &str, track_index: u64, codec: &str, seek_sec: f64) -> Vec<String> {
+pub fn arguments(
+    path: &str,
+    track_index: u64,
+    codec: &str,
+    seek_sec: f64,
+    // Milliseconds to move the audio by, positive to make it later. Zero for
+    // the ordinary case, which is nearly always.
+    delay_ms: i64,
+) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
 
     // Seeking before -i lets ffmpeg jump by index instead of decoding up to
@@ -112,7 +120,27 @@ pub fn arguments(path: &str, track_index: u64, codec: &str, seek_sec: f64) -> Ve
     args.push("-c:v".into());
     args.push("copy".into());
 
-    if is_web_safe(codec) {
+    // A filter cannot be applied to a stream that is only being copied, so
+    // asking for a shift is asking for a re-encode. Worth saying out loud:
+    // a viewer who nudges the slider on an already-playable file pays for it
+    // in CPU, and gets nothing else in return.
+    let shifting = delay_ms != 0;
+
+    if shifting {
+        args.push("-af".into());
+        args.push(if delay_ms > 0 {
+            // Later: pad the front with silence. `all=1` so it applies to
+            // every channel without naming how many there are.
+            format!("adelay={delay_ms}:all=1")
+        } else {
+            // Earlier: drop that much from the front and restamp, because a
+            // trim alone leaves the timestamps where they were.
+            let seconds = (-delay_ms) as f64 / 1000.0;
+            format!("atrim=start={seconds:.3},asetpts=PTS-STARTPTS")
+        });
+    }
+
+    if is_web_safe(codec) && !shifting {
         // Already playable: remux only, which costs almost nothing.
         args.push("-c:a".into());
         args.push("copy".into());
@@ -131,8 +159,21 @@ pub fn arguments(path: &str, track_index: u64, codec: &str, seek_sec: f64) -> Ve
     // Fragmented MP4 so playback can start before the file ends — a normal
     // MP4 puts its index last, which would mean transcoding the whole film
     // before the first frame appeared.
+    //
+    // `delay_moov` rather than `empty_moov`, and the difference is audible.
+    // A copied H.264 stream carries B-frames, so its first frame presents
+    // later than it decodes: PTS 0.083 against DTS 0. An ordinary MP4 hides
+    // that with an edit list, which `empty_moov` cannot write because the
+    // header is emitted before any of it is known — leaving video starting
+    // 83ms after audio, for the whole film. That is twice the threshold where
+    // audio arriving first becomes obvious, and it is what made a fixed
+    // soundtrack sound wrong in a new way.
+    //
+    // `delay_moov` waits for the first fragment, not the whole film, so the
+    // edit list survives and playback still starts in a moment rather than
+    // after a transcode.
     args.push("-movflags".into());
-    args.push("frag_keyframe+empty_moov+default_base_moof".into());
+    args.push("frag_keyframe+delay_moov+default_base_moof".into());
     args.push("-f".into());
     args.push("mp4".into());
     args.push("pipe:1".into());
@@ -196,7 +237,7 @@ mod tests {
     #[test]
     fn copies_the_video_stream_always() {
         for codec in ["AAC", "E-AC-3", "DTS", "TrueHD"] {
-            let args = arguments("f.mkv", 1, codec, 0.0);
+            let args = arguments("f.mkv", 1, codec, 0.0, 0);
             let at = args.iter().position(|a| a == "-c:v").expect("video codec set");
             assert_eq!(
                 args[at + 1],
@@ -208,18 +249,18 @@ mod tests {
 
     #[test]
     fn remuxes_a_playable_codec_and_re_encodes_the_rest() {
-        let aac = arguments("f.mp4", 0, "AAC", 0.0);
+        let aac = arguments("f.mp4", 0, "AAC", 0.0, 0);
         let at = aac.iter().position(|a| a == "-c:a").unwrap();
         assert_eq!(aac[at + 1], "copy", "AAC already plays; do not touch it");
 
-        let eac3 = arguments("f.mp4", 2, "E-AC-3", 0.0);
+        let eac3 = arguments("f.mp4", 2, "E-AC-3", 0.0, 0);
         let at = eac3.iter().position(|a| a == "-c:a").unwrap();
         assert_eq!(eac3[at + 1], "aac", "E-AC-3 cannot be decoded by the webview");
     }
 
     #[test]
     fn selects_the_requested_track() {
-        let args = arguments("f.mp4", 3, "AAC", 0.0);
+        let args = arguments("f.mp4", 3, "AAC", 0.0, 0);
         assert!(
             args.windows(2).any(|w| w[0] == "-map" && w[1] == "0:a:3"),
             "the chosen audio track must be the one mapped: {args:?}"
@@ -232,24 +273,74 @@ mod tests {
 
     #[test]
     fn seeks_before_the_input_so_it_is_not_a_decode() {
-        let args = arguments("f.mkv", 0, "AAC", 90.0);
+        let args = arguments("f.mkv", 0, "AAC", 90.0, 0);
         let ss = args.iter().position(|a| a == "-ss").expect("seek present");
         let input = args.iter().position(|a| a == "-i").expect("input present");
         assert!(ss < input, "-ss must precede -i to seek by index");
 
         assert!(
-            !arguments("f.mkv", 0, "AAC", 0.0).contains(&"-ss".to_string()),
+            !arguments("f.mkv", 0, "AAC", 0.0, 0).contains(&"-ss".to_string()),
             "no seek argument when starting from the beginning"
         );
     }
 
     #[test]
     fn output_is_streamable() {
-        let args = arguments("f.mkv", 0, "DTS", 0.0);
+        let args = arguments("f.mkv", 0, "DTS", 0.0, 0);
         let at = args.iter().position(|a| a == "-movflags").unwrap();
         assert!(
-            args[at + 1].contains("empty_moov"),
+            args[at + 1].contains("frag_keyframe"),
             "a plain MP4 would need the whole film transcoded before playback"
+        );
+    }
+
+    /// Moving the audio, which is what the player's delay control asks for.
+    #[test]
+    fn a_shift_moves_the_audio_either_way() {
+        let later = arguments("f.mkv", 0, "A_EAC3", 0.0, 120);
+        let at = later.iter().position(|a| a == "-af").expect("no filter");
+        assert_eq!(later[at + 1], "adelay=120:all=1");
+
+        let earlier = arguments("f.mkv", 0, "A_EAC3", 0.0, -120);
+        let at = earlier.iter().position(|a| a == "-af").expect("no filter");
+        assert_eq!(earlier[at + 1], "atrim=start=0.120,asetpts=PTS-STARTPTS");
+
+        // The ordinary case asks for no filter at all.
+        assert!(!arguments("f.mkv", 0, "A_EAC3", 0.0, 0).contains(&"-af".to_string()));
+    }
+
+    /// A filter cannot be applied to a copied stream, so a shift on an
+    /// already-playable file has to re-encode. Copying it anyway would drop
+    /// the shift silently and leave the control looking broken.
+    #[test]
+    fn shifting_a_playable_codec_stops_copying_it() {
+        let plain = arguments("f.mkv", 0, "AAC", 0.0, 0);
+        let at = plain.iter().position(|a| a == "-c:a").unwrap();
+        assert_eq!(plain[at + 1], "copy", "nothing asked for, nothing re-encoded");
+
+        let shifted = arguments("f.mkv", 0, "AAC", 0.0, 200);
+        let at = shifted.iter().position(|a| a == "-c:a").unwrap();
+        assert_eq!(shifted[at + 1], "aac", "a copied stream cannot be filtered");
+    }
+
+    /// The header has to be late enough to carry an edit list.
+    ///
+    /// With `empty_moov` there is nowhere to record that a copied stream's
+    /// first frame presents after it decodes, so video ran 83ms behind audio
+    /// for the length of the film. Measured, not guessed: first video PTS was
+    /// 0.083 against audio at 0.000, and moving to `delay_moov` put both at
+    /// zero.
+    #[test]
+    fn the_header_can_still_describe_the_offset() {
+        let args = arguments("f.mkv", 0, "A_EAC3", 0.0, 0);
+        let at = args.iter().position(|a| a == "-movflags").unwrap();
+        assert!(
+            args[at + 1].contains("delay_moov"),
+            "empty_moov cannot write the edit list, and the audio drifts ahead"
+        );
+        assert!(
+            !args[at + 1].contains("empty_moov"),
+            "empty_moov is the thing that caused the drift"
         );
     }
 

@@ -194,7 +194,15 @@ async fn serve_path(
             .and_then(|t| t.parse::<f64>().ok())
             .unwrap_or(0.0);
         let codec = params.get("codec").cloned().unwrap_or_default();
-        return serve_audio_selection(&state, &slug, &path, index, &codec, seek).await;
+        // How far to move the audio, in milliseconds, positive for later.
+        // Clamped: this becomes silence padded onto the front of a stream, and
+        // a viewer nudging a control has no business asking for a minute of it.
+        let delay_ms = params
+            .get("adelay")
+            .and_then(|d| d.parse::<i64>().ok())
+            .unwrap_or(0)
+            .clamp(-5_000, 5_000);
+        return serve_audio_selection(&state, &slug, &path, index, &codec, seek, delay_ms).await;
     }
     // The gate, at the last point before bytes leave this machine.
     //
@@ -340,6 +348,7 @@ async fn serve_audio_selection(
     index: u64,
     codec: &str,
     seek_sec: f64,
+    delay_ms: i64,
 ) -> Response {
     let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
         return (
@@ -370,6 +379,7 @@ async fn serve_audio_selection(
         index,
         codec,
         seek_sec,
+        delay_ms,
     );
 
     let mut child = match ffmpeg_command(ffmpeg)
