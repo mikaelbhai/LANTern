@@ -87,6 +87,13 @@ strip = true
 # work there means keeping it on one thread and posting to it, which is real
 # work for a platform this feature does not yet claim to support - and the
 # window already says so rather than offering a control that does nothing.
+# Handing a staged package to Android's own installer. No plugin does this:
+# the opener plugin builds ACTION_VIEW from a bare string, with no MIME type
+# and no permission grant, which cannot install an APK. See apkinstall.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+
 [target.'cfg(windows)'.dependencies]
 enigo = "0.2"
 

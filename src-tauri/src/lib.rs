@@ -7,6 +7,8 @@
 // Four modules are public because `src/bin/lantern-host.rs` — the process
 // that keeps serving files after the window closes — is a separate binary
 // that links this library. Everything else stays private to it.
+#[cfg(target_os = "android")]
+mod apkinstall;
 mod audiotrack;
 #[cfg(target_os = "windows")]
 pub mod autoshare;

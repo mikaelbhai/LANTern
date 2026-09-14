@@ -2084,10 +2084,17 @@ pub fn update_launch(app: AppHandle, path: String) -> Result<(), String> {
         return Ok(());
     }
 
-    // Everywhere else the system's own installer asks its own questions: a
-    // .dmg is mounted and dragged, and Android's package installer wants a
-    // confirmation that is not ours to skip.
-    #[cfg(not(windows))]
+    // Android's package installer is a separate process and cannot read a
+    // path inside this app at all, so the file is handed over as a content
+    // URI instead of a filename. What it does with it is its own dialogue.
+    #[cfg(target_os = "android")]
+    {
+        let _ = &app;
+        return crate::apkinstall::install(&target);
+    }
+
+    // Everywhere else the system opens it: a .dmg is mounted and dragged.
+    #[cfg(not(any(windows, target_os = "android")))]
     {
         use tauri_plugin_opener::OpenerExt;
         app.opener()
