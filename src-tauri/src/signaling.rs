@@ -28,6 +28,15 @@ const LINKED: &str = "__linked";
 /// Bumped only for changes older builds could not parse.
 const PROTOCOL_VERSION: u8 = 1;
 
+/// A keepalive, and the gap between them.
+///
+/// Its only job is to give the writer something to fail on. A link that
+/// carries no traffic cannot discover that it has died, and these links are
+/// quiet most of the time - nobody is messaging at three in the morning, which
+/// is exactly when the Wi-Fi drops.
+const PING: &str = "ping";
+const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Envelope {
     pub v: u8,
@@ -493,14 +502,62 @@ async fn handle(
         payload: serde_json::json!({ "name": peer_name, "address": address }),
     });
 
-    // Writer pump.
-    let writer = tokio::spawn(async move {
-        while let Some(line) = rx.recv().await {
-            if write_half.write_all(format!("{line}\n").as_bytes()).await.is_err() {
-                break;
+    // A socket can die without either end being told - a Wi-Fi adapter that
+    // drops, an address that moves - and TCP leaves that half-open. The reader
+    // below then never returns, so the cleanup after it never runs, so the
+    // sender stays in the table and `send` keeps reporting success into a
+    // channel nobody drains. That is a peer that looks connected while every
+    // message vanishes, and it never recovers, because `reconcile` skips any
+    // peer that already has a link.
+    //
+    // So the writer deregisters the moment a write fails, which is what lets
+    // the link be dialled again. Generation-guarded: a write failing on a
+    // socket that has already been replaced must not evict its replacement.
+    let writer = {
+        let links = links.clone();
+        let peer_id = peer_id.clone();
+        tokio::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                if write_half
+                    .write_all(format!("{line}
+").as_bytes())
+                    .await
+                    .is_err()
+                {
+                    links.remove(&peer_id, generation);
+                    break;
+                }
             }
-        }
-    });
+        })
+    };
+
+    // And something to fail on while the link is idle.
+    //
+    // Nothing is ever torn down for *not receiving* these. An older peer does
+    // not send them, and dropping a working link because the far side is an
+    // earlier version would be a worse fault than the one this fixes.
+    let heartbeat = {
+        let links = links.clone();
+        let peer_id = peer_id.clone();
+        let me = me.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(HEARTBEAT).await;
+                let still_linked = links.send(
+                    &peer_id,
+                    &Envelope {
+                        v: PROTOCOL_VERSION,
+                        from: me.clone(),
+                        kind: PING.into(),
+                        payload: serde_json::Value::Null,
+                    },
+                );
+                if !still_linked {
+                    break;
+                }
+            }
+        })
+    };
 
     // Read until the link ends, then always deregister it. Propagating the
     // read error directly with `?` used to skip the cleanup below, which left
@@ -510,6 +567,7 @@ async fn handle(
     let outcome = pump(&mut reader, &peer_id, &inbound).await;
 
     links.remove(&peer_id, generation);
+    heartbeat.abort();
     writer.abort();
     outcome
 }
@@ -527,6 +585,10 @@ async fn pump(
         let Ok(envelope) = serde_json::from_str::<Envelope>(&line) else {
             continue;
         };
+        // A keepalive has arrived, and did its job by arriving.
+        if envelope.kind == PING {
+            continue;
+        }
         // A peer may only speak for itself.
         if envelope.from != peer_id {
             continue;
@@ -884,6 +946,28 @@ mod tests {
     }
 
     /// The bug this guards against made a peer look connected while every
+    /// A dead socket deregisters itself, and must not take a live one with it.
+    ///
+    /// The writer now removes the link when a write fails, because a half-open
+    /// socket never wakes the reader and the cleanup after it never runs. That
+    /// removal has to be generation-guarded: by the time a dying socket
+    /// notices, the peer may already have been dialled again, and evicting the
+    /// replacement would be the same silent-disappearance fault one step on.
+    #[test]
+    fn a_dead_socket_cannot_evict_the_link_that_replaced_it() {
+        let links = Links::default();
+        let (first_tx, _first_rx) = mpsc::unbounded_channel();
+        let first = links.insert("peer".into(), first_tx);
+        let (second_tx, _second_rx) = mpsc::unbounded_channel();
+        let second = links.insert("peer".into(), second_tx);
+
+        links.remove("peer", first);
+        assert!(links.has("peer"), "the replacement was evicted by its predecessor");
+
+        links.remove("peer", second);
+        assert!(!links.has("peer"), "the live link was never cleared");
+    }
+
     /// message vanished: both ends dial, the second registration replaces the
     /// first, and then the first link's teardown cleared the slot the second
     /// one was using.

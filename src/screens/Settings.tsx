@@ -935,8 +935,29 @@ function PrivacyTab() {
   const [blocked, setBlocked] = React.useState<
     { deviceId: string; name: string; blockedAt: number }[]
   >([]);
+  // Everyone currently reachable, and everyone allowed to drive this machine.
+  // Both belong beside the block list: a list you can only ever remove from is
+  // half a control, and the allow list was only visible under remote control -
+  // which is where it is granted, not where you would go to review it.
+  const [known, setKnown] = React.useState<{ deviceId: string; name: string }[]>([]);
+  const [allowed, setAllowed] = React.useState<string[]>([]);
   const loadBlocked = React.useCallback(() => {
     void api.peers.blocked().then(setBlocked).catch(() => setBlocked([]));
+    void api.peers
+      .list()
+      .then((list) =>
+        setKnown(
+          list.map((p: any) => ({
+            deviceId: p.deviceId,
+            name: p.name || p.deviceName || 'Device',
+          })),
+        ),
+      )
+      .catch(() => setKnown([]));
+    void api.control
+      .status()
+      .then((s) => setAllowed(s.allowed ?? []))
+      .catch(() => setAllowed([]));
   }, []);
   React.useEffect(loadBlocked, [loadBlocked]);
 
@@ -951,11 +972,36 @@ function PrivacyTab() {
           altogether: no messages, no calls, no files, and it stops being listed.
         </p>
 
+        {known.length === 0 && blocked.length === 0 && (
+          <p className="px-3 pb-2 text-2xs text-dim">
+            No other devices yet. Anyone who joins appears here.
+          </p>
+        )}
+
+        {known.map((p) => (
+          <Row
+            key={p.deviceId}
+            label={p.name}
+            hint={allowed.includes(p.deviceId) ? 'Allowed to drive this device' : p.deviceId}
+          >
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={async () => {
+                await api.peers.block(p.deviceId, true);
+                loadBlocked();
+              }}
+            >
+              Block
+            </Button>
+          </Row>
+        ))}
+
         {blocked.length === 0 ? (
           <p className="px-3 pb-2 text-2xs text-dim">Nothing is blocked.</p>
         ) : (
           blocked.map((b) => (
-            <Row key={b.deviceId} label={b.name || 'Unknown device'} hint={b.deviceId}>
+            <Row key={b.deviceId} label={b.name || 'Unknown device'} hint={`Blocked · ${b.deviceId}`}>
               <Button
                 size="sm"
                 onClick={async () => {
