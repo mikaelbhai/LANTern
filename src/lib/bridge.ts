@@ -197,8 +197,12 @@ export const api = {
     /** Everything currently blocked, for the list in Settings. */
     blocked: () =>
       call<{ deviceId: string; name: string; blockedAt: number }[]>('peers_blocked'),
+    /** Vouches for a device, or withdraws it. Persisted, unlike before. */
     trust: (peerId: string, trusted: boolean) =>
       call<void>('peers_trust', { peerId, trusted }),
+    /** Everyone vouched for, whether or not they are on the network now. */
+    trusted: () =>
+      call<{ deviceId: string; name: string; trustedAt: number }[]>('peers_trusted'),
   },
   chat: {
     /** `memberIds` are peer device ids; empty means broadcast to the network. */
@@ -457,6 +461,15 @@ export const api = {
     /** Null clears the host's rating and returns the title to the guess. */
     setTitle: (streamPath: string, minAge: number | null) =>
       call<void>('ratings_set_title', { streamPath, minAge }),
+    /**
+     * The same for a whole selection — a season, a series, a folder.
+     *
+     * One call rather than one per episode: thirty-four requests to express a
+     * single decision is thirty-four chances for one of them to be the one
+     * that did not land.
+     */
+    setTitles: (streamPaths: string[], minAge: number | null) =>
+      call<number>('ratings_set_titles', { streamPaths, minAge }),
   },
   /**
    * Rejoining a known network at startup.

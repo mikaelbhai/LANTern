@@ -403,8 +403,16 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         }
     }
 
-    let all: Vec<serde_json::Value> = local.into_iter().chain(remote).collect();
+    let mut all: Vec<serde_json::Value> = local.into_iter().chain(remote).collect();
     state.with(|s| {
+        // Our own titles say what they are rated. A peer's arrive already
+        // marked by the device holding the files, which is the only one
+        // entitled to say, so they are left exactly as they came.
+        for item in &mut all {
+            if item.get("peerId").map(|v| v.is_null()).unwrap_or(true) {
+                crate::rating::annotate_with(&s.title_ages, item);
+            }
+        }
         s.media = all.clone();
         s.library_unreachable = unreachable.clone();
     });

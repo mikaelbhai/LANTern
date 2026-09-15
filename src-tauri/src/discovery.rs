@@ -115,7 +115,13 @@ pub fn start(
                                     status: PeerStatus::Available,
                                     status_message: None,
                                     last_seen: now_ms(),
-                                    trusted: true,
+                                    // Vouched for only if the host has said
+                                    // so. This was `true` for everyone found,
+                                    // which quietly made "auto-accept from
+                                    // trusted peers" mean "from anybody" -
+                                    // files arriving unasked from a device
+                                    // nobody had ever approved.
+                                    trusted: s.trusted.contains(&peer_id),
                                     scope: PeerScope::Local,
                                     initiated_by: Initiator::Us,
         // Filled in when a link is established; unknown until then.

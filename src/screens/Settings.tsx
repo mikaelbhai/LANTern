@@ -13,6 +13,7 @@ import {
   FolderSearch,
   ExternalLink,
 } from 'lucide-react';
+import { Audience } from '../components/Audience';
 import { Avatar } from '../components/Avatar';
 import {
   Badge,
@@ -929,94 +930,18 @@ function PrivacyTab() {
   const ask = (title: string, body: string, run: () => void) =>
     setConfirm({ title, body, run });
 
-  // Devices refused outright. Read from the backend rather than the peer list,
-  // because a blocked device is removed from that list — the whole point is
-  // that it stops appearing.
-  const [blocked, setBlocked] = React.useState<
-    { deviceId: string; name: string; blockedAt: number }[]
-  >([]);
-  // Everyone currently reachable, and everyone allowed to drive this machine.
-  // Both belong beside the block list: a list you can only ever remove from is
-  // half a control, and the allow list was only visible under remote control -
-  // which is where it is granted, not where you would go to review it.
-  const [known, setKnown] = React.useState<{ deviceId: string; name: string }[]>([]);
-  const [allowed, setAllowed] = React.useState<string[]>([]);
-  const loadBlocked = React.useCallback(() => {
-    void api.peers.blocked().then(setBlocked).catch(() => setBlocked([]));
-    void api.peers
-      .list()
-      .then((list) =>
-        setKnown(
-          list.map((p: any) => ({
-            deviceId: p.deviceId,
-            name: p.name || p.deviceName || 'Device',
-          })),
-        ),
-      )
-      .catch(() => setKnown([]));
-    void api.control
-      .status()
-      .then((s) => setAllowed(s.allowed ?? []))
-      .catch(() => setAllowed([]));
-  }, []);
-  React.useEffect(loadBlocked, [loadBlocked]);
 
   return (
     <>
       <ControlGroup />
-      <Group title="Who may reach this device">
-        <p className="px-3 pt-1 pb-2 text-2xs text-muted leading-relaxed">
-          Anyone on your network can see this device and ask to send it something —
-          nothing arrives without you accepting it. Trusting a peer (from its card on
-          Home) lets its files come straight through; blocking one refuses it
-          altogether: no messages, no calls, no files, and it stops being listed.
-        </p>
 
-        {known.length === 0 && blocked.length === 0 && (
-          <p className="px-3 pb-2 text-2xs text-dim">
-            No other devices yet. Anyone who joins appears here.
-          </p>
-        )}
-
-        {known.map((p) => (
-          <Row
-            key={p.deviceId}
-            label={p.name}
-            hint={allowed.includes(p.deviceId) ? 'Allowed to drive this device' : p.deviceId}
-          >
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={async () => {
-                await api.peers.block(p.deviceId, true);
-                loadBlocked();
-              }}
-            >
-              Block
-            </Button>
-          </Row>
-        ))}
-
-        {blocked.length === 0 ? (
-          <p className="px-3 pb-2 text-2xs text-dim">Nothing is blocked.</p>
-        ) : (
-          blocked.map((b) => (
-            <Row key={b.deviceId} label={b.name || 'Unknown device'} hint={`Blocked · ${b.deviceId}`}>
-              <Button
-                size="sm"
-                onClick={async () => {
-                  await api.peers.block(b.deviceId, false);
-                  loadBlocked();
-                }}
-              >
-                Unblock
-              </Button>
-            </Row>
-          ))
-        )}
-      </Group>
-
-      <MaturityGroup />
+      {/* Allow list, block list and maturity limits, drawn by the one
+          component that also appears in Theatre and beside a published
+          folder. Three copies of a permission control is how two of them end
+          up out of date. */}
+      <section className="mb-6">
+        <Audience />
+      </section>
 
       <Group title="App lock">
         <Row label="Require a PIN to open LANTern" hint="Uses biometrics where available">
@@ -1132,127 +1057,6 @@ function PrivacyTab() {
         <p className="text-xs text-dim">{confirm?.body}</p>
       </Modal>
     </>
-  );
-}
-
-/**
- * Age limits, set here because this is the machine that has the files.
- *
- * The rating is only worth anything where the bytes are: a viewer cannot
- * raise its own allowance, because it never asks. It presents a key, and the
- * device holding the title decides what that key may see. So this panel only
- * appears useful on a host, and what it sets is enforced at the moment the
- * bytes would leave rather than by the watching app agreeing to behave.
- */
-function MaturityGroup() {
-  const toast = useStore((st) => st.toast);
-  const [status, setStatus] = React.useState<RatingsStatus | null>(null);
-  const [peers, setPeers] = React.useState<{ deviceId: string; name: string }[]>([]);
-
-  const load = React.useCallback(() => {
-    void api.ratings.status().then(setStatus).catch(() => setStatus(null));
-    void api.peers
-      .list()
-      .then((list) =>
-        setPeers(list.map((p: any) => ({ deviceId: p.deviceId, name: p.name || p.deviceName || 'Device' }))),
-      )
-      .catch(() => setPeers([]));
-  }, []);
-  React.useEffect(load, [load]);
-
-  if (!status) return null;
-
-  // Every device worth showing: the ones already set, plus anyone currently
-  // on the network who has not been given a limit yet.
-  const rows = [
-    ...status.devices,
-    ...peers
-      .filter((p) => !status.devices.some((d) => d.deviceId === p.deviceId))
-      .map((p) => ({ ...p, maxAge: status.defaultAge })),
-  ];
-
-  // "Everything" is a real choice rather than a missing one, so it is written
-  // down instead of being the absence of a limit.
-  const AGES = [
-    { value: '0', label: 'Unrated only' },
-    { value: '7', label: 'Up to 7' },
-    { value: '12', label: 'Up to 12' },
-    { value: '16', label: 'Up to 16' },
-    { value: '18', label: 'Up to 18' },
-    { value: '99', label: 'Everything' },
-  ];
-  const nearest = (age: number) =>
-    AGES.reduce((best, o) =>
-      Math.abs(Number(o.value) - age) < Math.abs(Number(best.value) - age) ? o : best,
-    ).value;
-
-  const setDefault = async (v: string) => {
-    try {
-      await api.ratings.setDefault(Number(v));
-      load();
-    } catch (e) {
-      toast({ kind: 'error', title: 'Could not save that', body: String(e) });
-    }
-  };
-
-  const setDevice = async (deviceId: string, name: string, v: string) => {
-    try {
-      await api.ratings.setDevice(deviceId, Number(v));
-      load();
-      toast({
-        kind: 'success',
-        title: `${name} updated`,
-        body: 'Takes effect on their next request, not their next restart.',
-      });
-    } catch (e) {
-      toast({ kind: 'error', title: 'Could not save that', body: String(e) });
-    }
-  };
-
-  return (
-    <Group title="Maturity">
-      <Row
-        label="Default for new devices"
-        hint="What a device nobody has set is allowed to watch"
-      >
-        <Select
-          value={nearest(status.defaultAge)}
-          onChange={(v) => void setDefault(v)}
-          options={AGES}
-          className="w-44"
-        />
-      </Row>
-
-      {rows.length === 0 && (
-        <p className="text-xs text-dim leading-relaxed">
-          No other devices yet. Anyone who joins gets the default above until
-          you give them their own limit.
-        </p>
-      )}
-
-      {rows.map((d) => (
-        <Row
-          key={d.deviceId}
-          label={d.name || 'Device'}
-          hint={status.devices.some((x) => x.deviceId === d.deviceId) ? 'Set by you' : 'Using the default'}
-        >
-          <Select
-            value={nearest(d.maxAge)}
-            onChange={(v) => void setDevice(d.deviceId, d.name, v)}
-            options={AGES}
-            className="w-44"
-          />
-        </Row>
-      ))}
-
-      <p className="text-xs text-dim leading-relaxed">
-        Enforced by this device, every time, at the moment the file would be
-        sent — not by the watching app agreeing to hide it. Titles above a
-        device's limit still appear in their library, marked locked, because a
-        door somebody can see is easier to ask about than a gap they cannot.
-        {status.overrides > 0 && ` You have rated ${status.overrides} title${status.overrides === 1 ? '' : 's'} by hand.`}
-      </p>
-    </Group>
   );
 }
 

@@ -70,6 +70,9 @@ pub struct Inner {
     /// identity — a blocked device that reconnects on a new IP is the same
     /// device and stays blocked.
     pub blocked: std::collections::HashSet<String>,
+    /// Devices the host has vouched for. The other half of `blocked`, and
+    /// what "auto-accept from trusted peers" actually reads.
+    pub trusted: std::collections::HashSet<String>,
     /// Who may drive this machine's pointer and keyboard, and who does now.
     pub control: crate::input::Control,
     /// Held open while a device is driving this one, so a finger dragging at
@@ -166,6 +169,7 @@ impl AppState {
             staged: std::collections::HashMap::new(),
             issued_keys: std::collections::HashMap::new(),
             held_keys: std::collections::HashMap::new(),
+            trusted: std::collections::HashSet::new(),
             device_ages: std::collections::HashMap::new(),
             title_ages: std::collections::HashMap::new(),
         })))

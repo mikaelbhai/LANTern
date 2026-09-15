@@ -91,6 +91,19 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             blocked_at INTEGER NOT NULL
         );
 
+        -- Devices the host has vouched for: the other half of `blocked`.
+        --
+        -- Persisted for the same reason a block is. Trust used to live on the
+        -- peer record, which is a cache of who has been seen, so it lasted
+        -- until that device went quiet and then quietly went away - and the
+        -- setting that depends on it, auto-accepting files from trusted
+        -- peers, could never come true.
+        CREATE TABLE IF NOT EXISTS trusted (
+            device_id  TEXT PRIMARY KEY,
+            name       TEXT NOT NULL DEFAULT '',
+            trusted_at INTEGER NOT NULL
+        );
+
         -- Devices allowed to drive this machine's pointer and keyboard
         -- without being asked again.
         --

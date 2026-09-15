@@ -14,11 +14,13 @@ import {
   Play,
   Plus,
   QrCode as QrIcon,
+  ShieldCheck,
   Trash2,
   Upload,
   Users,
 } from 'lucide-react';
 import { QrCode } from '../../components/QrCode';
+import { Audience } from '../../components/Audience';
 import {
   Badge,
   Button,
@@ -203,6 +205,8 @@ export function Hosting() {
   const net = useStore((s) => s.net);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [qrShare, setQrShare] = React.useState<Share | null>(null);
+  /** Allow list, block list and maturity limits — the panel Settings draws. */
+  const [audienceOpen, setAudienceOpen] = React.useState(false);
 
   React.useEffect(() => {
     void api.host.list().then(setShares);
@@ -228,6 +232,15 @@ export function Hosting() {
             open them, no app required.
           </p>
         </div>
+        {/* Publishing something is deciding who it is for. The two belong
+            next to each other rather than one of them living in Settings. */}
+        <Button
+          size="sm"
+          icon={<ShieldCheck size={13} />}
+          onClick={() => setAudienceOpen(true)}
+        >
+          Who can see these
+        </Button>
         <Button
           size="sm"
           variant="primary"
@@ -293,6 +306,21 @@ export function Hosting() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={audienceOpen}
+        onClose={() => setAudienceOpen(false)}
+        title="Who can see these"
+        width="max-w-xl"
+      >
+        <p className="text-2xs text-muted leading-relaxed mb-4">
+          A published folder is served to anyone on the network who is not
+          refused. These lists decide who that is, and the maturity limits
+          decide what each of them is handed — checked here, on this device, at
+          the moment a file would be sent.
+        </p>
+        <Audience compact />
       </Modal>
     </div>
   );

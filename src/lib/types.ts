@@ -371,6 +371,30 @@ export interface MediaItem {
    * holding the file.
    */
   audioTracks?: { label: string; lang: string; codec: string; default: boolean }[];
+  /**
+   * The lowest age this title is meant for, or absent when nobody has said.
+   *
+   * On our own titles it is the host's rating where they gave one and the
+   * guess read from the filename otherwise. On a peer's, it is whatever the
+   * device holding the file says — the only device entitled to say.
+   */
+  minAge?: number;
+  /**
+   * Whether that number is the host's word rather than a guess at the name.
+   *
+   * The same label means two different things, and only one of them is worth
+   * offering to clear.
+   */
+  ratedByHost?: boolean;
+  /** Restricted above the watching device's allowance: listed, not served. */
+  locked?: boolean;
+  /**
+   * What a rating is stored against — the path on the serving device.
+   *
+   * A library id is rebuilt on every scan; this is not, and it is what the
+   * server has in hand at the moment it has to decide.
+   */
+  streamPath?: string;
 }
 
 /**

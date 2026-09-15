@@ -335,7 +335,7 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                     status: crate::model::PeerStatus::Available,
                     status_message: None,
                     last_seen: crate::model::now_ms(),
-                    trusted: false,
+                    trusted: s.trusted.contains(&peer_id),
                     scope: crate::model::PeerScope::Local,
                     initiated_by: crate::model::Initiator::Them,
                     local_address: local_address.clone(),

@@ -152,6 +152,12 @@ pub fn boot(app: AppHandle, state: AppState) {
                     // Who may watch what, read before the server can answer
                     // anything. A restriction that is not yet loaded is a
                     // restriction that is not in force.
+                    let mut trusted = std::collections::HashSet::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id FROM trusted") {
+                        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            trusted.extend(rows.flatten());
+                        }
+                    }
                     let mut device_ages = std::collections::HashMap::new();
                     if let Ok(mut stmt) = conn.prepare("SELECT device_id, max_age FROM device_ages")
                     {
@@ -173,6 +179,7 @@ pub fn boot(app: AppHandle, state: AppState) {
                     }
                     state.with(|s| {
                         s.blocked = blocked;
+                        s.trusted = trusted;
                         s.control.load_allowed(allowed);
                         s.macs = macs;
                         s.device_ages = device_ages;
@@ -479,7 +486,9 @@ pub fn net_add_manual_peer(
         status: PeerStatus::Available,
         status_message: None,
         last_seen: now_ms(),
-        trusted: true,
+        // Typed in by hand is not the same as vouched for. Trust is granted
+        // once, deliberately, and is the thing files come through on.
+        trusted: false,
         scope: PeerScope::Local,
         initiated_by: Initiator::Us,
         // Filled in when a link is established; unknown until then.
@@ -1092,12 +1101,97 @@ pub async fn peers_ping(app: AppHandle, state: State<'_, AppState>, peer_id: Str
 }
 
 #[tauri::command]
-pub fn peers_trust(state: State<'_, AppState>, peer_id: String, trusted: bool) {
+pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, trusted: bool) {
     state.with(|s| {
-        if let Some(p) = s.peers.get_mut(&peer_id) {
-            p.trusted = trusted;
+        // `peer_id` is a device id everywhere this is called from, but the
+        // peer map is keyed by peer id and the two only usually coincide. Set
+        // the flag on whichever record answers to it, and keep the durable
+        // record under the device id either way.
+        let device_id = s
+            .peers
+            .values()
+            .find(|p| p.device_id == peer_id || p.id == peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone());
+        let name = s
+            .peers
+            .values()
+            .find(|p| p.device_id == device_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+
+        for p in s.peers.values_mut() {
+            if p.device_id == device_id {
+                p.trusted = trusted;
+            }
+        }
+
+        if trusted {
+            s.trusted.insert(device_id.clone());
+        } else {
+            s.trusted.remove(&device_id);
+        }
+
+        // On disk as well as in memory. This used to live only on the peer
+        // record - a cache of who has been seen - so trusting somebody lasted
+        // until they went quiet, and "auto-accept from trusted peers" could
+        // never once have fired.
+        if let Some(db) = s.db.as_ref() {
+            if trusted {
+                let _ = db.execute(
+                    "INSERT INTO trusted (device_id, name, trusted_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(device_id) DO UPDATE SET name = ?2",
+                    rusqlite::params![device_id, name, crate::model::now_ms()],
+                );
+            } else {
+                let _ = db.execute(
+                    "DELETE FROM trusted WHERE device_id = ?1",
+                    rusqlite::params![device_id],
+                );
+            }
         }
     });
+
+    let peers: Vec<Peer> = state.with(|s| s.peers.values().cloned().collect());
+    let _ = app.emit("peers:changed", &peers);
+}
+
+/// Every device the host has vouched for, for the list beside the blocked one.
+///
+/// Read from the table rather than from the peer list, for the reason the
+/// block list is: somebody trusted who is not on the network right now is
+/// still trusted, and a list that hid them would look like it had forgotten.
+#[tauri::command]
+pub fn peers_trusted(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) =
+            db.prepare("SELECT device_id, name, trusted_at FROM trusted ORDER BY trusted_at DESC")
+        else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map([], |r| {
+            let device_id = r.get::<_, String>(0)?;
+            let stored = r.get::<_, String>(1)?;
+            // Their current name where they are on the network, so a device
+            // renamed since it was trusted is still recognisable.
+            let name = s
+                .peers
+                .values()
+                .find(|p| p.device_id == device_id)
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or(stored);
+            Ok(serde_json::json!({
+                "deviceId": device_id,
+                "name": name,
+                "trustedAt": r.get::<_, i64>(2)?,
+            }))
+        });
+        rows.map(|rows| rows.flatten().collect()).unwrap_or_default()
+    })
 }
 
 /* ----------------------------------------------------------------- chat */
@@ -3580,6 +3674,51 @@ pub fn ratings_set_default(app: AppHandle, state: State<'_, AppState>, max_age: 
     });
     crate::library::spawn_refresh(&app, &state);
     Ok(())
+}
+
+/// Rates many titles at once.
+///
+/// A series is the unit anybody actually thinks in. Rating a show one episode
+/// at a time is thirty-four decisions to express one, and the thirty-fourth is
+/// the one that gets forgotten - which leaves a season with a hole in it that
+/// looks exactly like a rating that did not save.
+///
+/// One write, one rebuild, whatever the size of the selection.
+#[tauri::command]
+pub fn ratings_set_titles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    stream_paths: Vec<String>,
+    min_age: Option<u8>,
+) -> Res<usize> {
+    let count = state.with(|s| {
+        for path in &stream_paths {
+            match min_age {
+                Some(age) => {
+                    s.title_ages.insert(path.clone(), age);
+                    if let Some(db) = s.db.as_ref() {
+                        let _ = db.execute(
+                            "INSERT INTO title_ages (stream_path, min_age) VALUES (?1, ?2)
+                             ON CONFLICT(stream_path) DO UPDATE SET min_age = ?2",
+                            rusqlite::params![path, age as i64],
+                        );
+                    }
+                }
+                None => {
+                    s.title_ages.remove(path);
+                    if let Some(db) = s.db.as_ref() {
+                        let _ = db.execute(
+                            "DELETE FROM title_ages WHERE stream_path = ?1",
+                            rusqlite::params![path],
+                        );
+                    }
+                }
+            }
+        }
+        stream_paths.len()
+    });
+    crate::library::spawn_refresh(&app, &state);
+    Ok(count)
 }
 
 /// Sets a title's rating by hand, which always beats the guess.

@@ -9,14 +9,17 @@ import {
   Plus,
   RefreshCw,
   Layers,
+  Lock,
   Pencil,
   Search,
+  ShieldCheck,
   Tv,
   Upload,
   Users,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
-import { Badge, Button, Empty, IconButton, Input } from '../components/ui';
+import { Badge, Button, Empty, IconButton, Input, Modal, Select, Spinner } from '../components/ui';
+import { Audience, TITLE_AGES, ratingLabel } from '../components/Audience';
 import { Artwork, Thumbnail, TitleCard } from '../lib/poster';
 import { Player } from './theatre/Player';
 import { PublishMediaModal } from './theatre/PublishMedia';
@@ -72,6 +75,8 @@ export function Theatre() {
   const [detail, setDetail] = React.useState<MediaItem | null>(null);
   const [query, setQuery] = React.useState('');
   const [publishOpen, setPublishOpen] = React.useState(false);
+  /** Who may watch what this device publishes — the same panel as Settings. */
+  const [audienceOpen, setAudienceOpen] = React.useState(false);
   const [collection, setCollection] = React.useState<Collection | null>(null);
   const [overrides, setOverrides] = useLocalStorage<Overrides>(
     'lantern.theatre.grouping',
@@ -221,6 +226,11 @@ export function Theatre() {
           >
             <RefreshCw size={14} />
           </IconButton>
+          {/* Publishing is deciding who it is for, so the two sit together
+              rather than one of them being three screens away in Settings. */}
+          <IconButton label="Who can watch" onClick={() => setAudienceOpen(true)}>
+            <ShieldCheck size={14} />
+          </IconButton>
           <Button
             size="xs"
             variant="primary"
@@ -327,6 +337,7 @@ export function Theatre() {
         collections={grouping.collections}
         overrides={overrides}
         onOverrides={setOverrides}
+        onRated={() => void load()}
         onClose={() => setDetail(null)}
         onPlay={play}
       />
@@ -336,6 +347,7 @@ export function Theatre() {
         ownerName={ownerName}
         overrides={overrides}
         onOverrides={setOverrides}
+        onRated={() => void load()}
         onClose={() => setCollection(null)}
         onPlay={play}
         onInfo={(i) => {
@@ -351,6 +363,24 @@ export function Theatre() {
           void load();
         }}
       />
+
+      {/* The same panel Settings draws, opened from where the decision is
+          actually being made. */}
+      <Modal
+        open={audienceOpen}
+        onClose={() => {
+          setAudienceOpen(false);
+          void load();
+        }}
+        title="Who can watch"
+        width="max-w-xl"
+      >
+        <p className="text-2xs text-muted leading-relaxed mb-4">
+          Everything below is decided by this device, at the moment a file would
+          be sent. Nothing depends on the watching app agreeing to behave.
+        </p>
+        <Audience compact />
+      </Modal>
     </div>
   );
 }
@@ -699,6 +729,26 @@ function Card({
         className="aspect-video"
       />
 
+      {/* What it is rated, where a rating exists. On the card rather than
+          only in the details, because the question "can the children see
+          this" is asked while looking at the shelf, not after opening one. */}
+      {item.minAge !== undefined && (
+        <span
+          className="absolute top-1.5 left-1.5 px-1.5 h-[18px] rounded-[4px] bg-black/70 border border-white/20 text-[10px] font-medium text-white/90 grid place-items-center"
+          title={item.ratedByHost ? 'Rated by you' : 'Guessed from the filename'}
+        >
+          {ratingLabel(item.minAge)}
+        </span>
+      )}
+
+      {/* Restricted above the watching device's allowance: it is listed, and
+          the bytes do not move. A door somebody can see. */}
+      {item.locked && (
+        <span className="absolute top-1.5 right-1.5 h-[18px] w-[18px] rounded-full bg-black/70 border border-white/20 grid place-items-center">
+          <Lock size={9} className="text-white/80" />
+        </span>
+      )}
+
       {pct > 1 && (
         <div className="absolute bottom-0 inset-x-0 h-[3px] bg-black/50">
           <div className="h-full bg-gold" style={{ width: `${pct}%` }} />
@@ -731,6 +781,7 @@ function DetailSheet({
   collections,
   overrides,
   onOverrides,
+  onRated,
   onClose,
   onPlay,
   onWatchTogether,
@@ -745,6 +796,8 @@ function DetailSheet({
   /** How many peers are online, which decides whether that is worth offering. */
   peerCount: number;
   onOverrides: (o: Overrides) => void;
+  /** Re-reads the library, so a rating just set is the one shown. */
+  onRated: () => void;
   onClose: () => void;
   onPlay: (i: MediaItem) => void;
 }) {
@@ -825,6 +878,16 @@ function DetailSheet({
                 </div>
               </div>
 
+              {/* Ours to rate; a peer's is set on the device holding it. */}
+              {!item.peerId && item.streamPath && (
+                <RatingControl
+                  paths={[item.streamPath]}
+                  minAge={item.minAge}
+                  byHost={item.ratedByHost}
+                  onChanged={onRated}
+                />
+              )}
+
               <GroupingEditor
                 item={item}
                 collections={collections}
@@ -854,6 +917,88 @@ function DetailSheet({
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/**
+ * What a title is rated, and the host's chance to say otherwise.
+ *
+ * Only for our own titles. A peer's rating is set on the device holding the
+ * file, which is the only device that can enforce it — offering a control here
+ * would be offering a label with nothing behind it.
+ *
+ * `paths` is a whole selection so a series can be rated in one go. Rating a
+ * show one episode at a time is thirty-four decisions to express one, and the
+ * thirty-fourth is the one that gets forgotten.
+ */
+function RatingControl({
+  paths,
+  minAge,
+  byHost,
+  count,
+  onChanged,
+}: {
+  paths: string[];
+  minAge?: number;
+  byHost?: boolean;
+  /** How many titles this covers, when it is more than one. */
+  count?: number;
+  onChanged: () => void;
+}) {
+  const toast = useStore((s) => s.toast);
+  const [saving, setSaving] = React.useState(false);
+
+  if (paths.length === 0) return null;
+
+  const save = async (v: string) => {
+    setSaving(true);
+    try {
+      const age = v === '' ? null : Number(v);
+      await api.ratings.setTitles(paths, age);
+      toast({
+        kind: 'success',
+        title:
+          age === null
+            ? 'Rating cleared'
+            : `Rated ${TITLE_AGES.find((o) => o.value === v)?.label ?? v}`,
+        body: count && count > 1 ? `${count} titles` : undefined,
+      });
+      onChanged();
+    } catch {
+      toast({ kind: 'error', title: 'Could not save that rating' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2.5 p-2.5 rounded-card bg-raised border border-edge">
+      <span className="h-[26px] w-[26px] rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-gold shrink-0">
+        <ShieldCheck size={12} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs">
+          {count && count > 1 ? `Rating for all ${count}` : 'Rating'}
+        </div>
+        <div className="text-[10px] text-muted">
+          {byHost
+            ? 'Set by you'
+            : minAge !== undefined
+              ? 'Guessed from the filename — set it to be sure'
+              : 'Nobody has said'}
+        </div>
+      </div>
+      {saving ? (
+        <Spinner size={12} />
+      ) : (
+        <Select
+          value={minAge === undefined ? '' : String(minAge)}
+          onChange={save}
+          options={TITLE_AGES}
+          className="w-36 shrink-0"
+        />
+      )}
+    </div>
   );
 }
 
@@ -917,6 +1062,7 @@ function CollectionSheet({
   ownerName,
   overrides,
   onOverrides,
+  onRated,
   onClose,
   onPlay,
   onInfo,
@@ -925,6 +1071,8 @@ function CollectionSheet({
   ownerName: (i: MediaItem) => string;
   overrides: Overrides;
   onOverrides: (o: Overrides) => void;
+  /** Re-reads the library after a rating covering the whole collection. */
+  onRated: () => void;
   onClose: () => void;
   onPlay: (i: MediaItem) => void;
   onInfo: (i: MediaItem) => void;
@@ -949,6 +1097,16 @@ function CollectionSheet({
     : 0;
 
   if (!collection) return null;
+
+  // Only our own titles can be rated here, and only a rating every one of them
+  // already shares can be shown as the collection's — a season where one
+  // episode differs has no single answer, and inventing one would overwrite
+  // the odd one out the moment the control was touched by accident.
+  const ours = collection.items
+    .filter((i) => !i.peerId && i.streamPath)
+    .map((i) => i.streamPath as string);
+  const ages = new Set(collection.items.filter((i) => !i.peerId).map((i) => i.minAge));
+  const sharedAge = ages.size === 1 ? [...ages][0] : undefined;
 
   const saveTitle = () => {
     const next = draft.trim();
@@ -1021,6 +1179,19 @@ function CollectionSheet({
           </div>
 
           <div className="flex-1 scroll-y p-5 space-y-5">
+            {/* One rating for the whole series. Ours only: a peer's is set on
+                the device holding the files, which is the only one that can
+                enforce it. */}
+            {ours.length > 0 && (
+              <RatingControl
+                paths={ours}
+                minAge={sharedAge}
+                byHost={collection.items.every((i) => i.ratedByHost)}
+                count={ours.length}
+                onChanged={onRated}
+              />
+            )}
+
             {collection.seasons.map(({ season, items }) => (
               <section key={season}>
                 {collection.kind === 'series' && collection.seasons.length > 1 && (

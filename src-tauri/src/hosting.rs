@@ -796,10 +796,8 @@ async fn media_manifest(
         let stream_path = object
             .get("streamUrl")
             .and_then(|v| v.as_str())
-            .and_then(|u| u.split_once("://").map(|(_, rest)| rest))
-            .and_then(|rest| rest.split_once('/').map(|(_, p)| format!("/{p}")))
+            .map(crate::rating::stream_path)
             .unwrap_or_default();
-        let stream_path = stream_path.split('?').next().unwrap_or("").to_string();
 
         let needs = crate::rating::min_age_for(state, &stream_path, &name);
         let allowed = crate::rating::may_serve(state, key, &stream_path, &name);

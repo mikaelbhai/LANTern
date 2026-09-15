@@ -393,6 +393,13 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
                 }
             }
         }
+        // What each title is rated, carried on the entry itself. Marked up
+        // here rather than where the library is handed out, so every reader -
+        // the screen that asks for it, and the four places that push it -
+        // sees the same thing.
+        for item in &mut built {
+            crate::rating::annotate_with(&s.title_ages, item);
+        }
         s.media = built.clone();
     });
 

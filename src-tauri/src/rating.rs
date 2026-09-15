@@ -201,6 +201,78 @@ pub fn min_age_for(state: &AppState, stream_path: &str, name: &str) -> crate::ra
     crate::rating::guess(name).map(|r| r.min_age)
 }
 
+/// The path part of a stream address, which is how a title is named here.
+///
+/// A rating is stored against this rather than against a library id, because
+/// an id is rebuilt on every scan and the path is not. It is also what the
+/// serving side has in hand when it has to decide, which is the moment that
+/// actually matters.
+///
+/// Any query string is dropped: `?adelay=` and `?k=` describe how to serve a
+/// file, not which file it is, and a rating that missed because of a delay
+/// setting would be a restriction that silently lifted.
+pub fn stream_path(stream_url: &str) -> String {
+    let after_scheme = stream_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(stream_url);
+    let path = after_scheme
+        .split_once('/')
+        .map(|(_, p)| format!("/{p}"))
+        .unwrap_or_default();
+    path.split('?').next().unwrap_or_default().to_string()
+}
+
+/// Writes what a title is rated, and who said so, onto a library entry.
+///
+/// For the host's own library. A peer's entries arrive already marked by the
+/// device that holds the files, which is the only one entitled to say.
+///
+/// `ratedByHost` is the difference between a rating and a guess, and the
+/// interface needs it: "PG-13, because the filename said so" and "PG-13,
+/// because you said so" are the same label and not the same fact, and only
+/// one of them is worth offering to clear.
+pub fn annotate(state: &AppState, item: &mut serde_json::Value) {
+    let by_hand = state.with(|s| s.title_ages.clone());
+    annotate_with(&by_hand, item);
+}
+
+/// As `annotate`, given the ratings already in hand.
+///
+/// The library is marked up inside the lock that writes it, and reaching for
+/// the same lock from in there would be the last thing this process did.
+pub fn annotate_with(
+    by_hand: &std::collections::HashMap<String, u8>,
+    item: &mut serde_json::Value,
+) {
+    let Some(object) = item.as_object_mut() else {
+        return;
+    };
+    let name = object
+        .get("relPath")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let path = object
+        .get("streamUrl")
+        .and_then(|v| v.as_str())
+        .map(stream_path)
+        .unwrap_or_default();
+
+    let by_host = by_hand.get(&path).copied();
+    let needs = match by_host {
+        Some(age) => Some(age),
+        None => guess(&name).map(|r| r.min_age),
+    };
+
+    object.insert("streamPath".into(), serde_json::Value::from(path));
+    object.insert("ratedByHost".into(), serde_json::Value::from(by_host.is_some()));
+    match needs {
+        Some(age) => object.insert("minAge".into(), serde_json::Value::from(age)),
+        None => object.remove("minAge"),
+    };
+}
+
 /// Whether the device behind this request may watch this title.
 ///
 /// The single place the decision is made, so there is one thing to read to
@@ -220,6 +292,121 @@ mod tests {
 
     fn age(name: &str) -> Option<u8> {
         guess(name).map(|r| r.min_age)
+    }
+
+    /* ------------------------------------------------- what a title is called */
+
+    #[test]
+    fn a_stream_address_reduces_to_its_path() {
+        assert_eq!(
+            stream_path("http://192.168.100.67:7981/media/Movies/A%20Film.mkv"),
+            "/media/Movies/A%20Film.mkv",
+        );
+    }
+
+    /// The reason this is not a `split('?')` at the call site: a query string
+    /// says how to serve a file, never which file it is, and a rating that
+    /// missed because somebody nudged the audio delay would be a restriction
+    /// that silently lifted.
+    #[test]
+    fn how_to_serve_it_is_not_part_of_which_one_it_is() {
+        let plain = stream_path("http://host:7981/media/A.mkv");
+        assert_eq!(stream_path("http://host:7981/media/A.mkv?adelay=250"), plain);
+        assert_eq!(stream_path("http://host:7981/media/A.mkv?k=abc&t=2"), plain);
+    }
+
+    /// The same title served from two addresses is one title. Ratings are kept
+    /// against the path for exactly this reason - a device that moves between
+    /// networks must not shed its restrictions on the way.
+    #[test]
+    fn the_same_file_from_another_address_is_the_same_title() {
+        assert_eq!(
+            stream_path("http://192.168.100.67:7981/media/A.mkv"),
+            stream_path("http://10.0.0.9:7981/media/A.mkv"),
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_an_address_yields_nothing_to_rate() {
+        assert_eq!(stream_path(""), "");
+        assert_eq!(stream_path("not a url"), "");
+    }
+
+    /* ------------------------------------------------------ marking up a title */
+
+    fn item(stream_url: &str, rel_path: &str) -> serde_json::Value {
+        serde_json::json!({ "streamUrl": stream_url, "relPath": rel_path })
+    }
+
+    #[test]
+    fn the_hosts_word_beats_the_filename() {
+        let mut by_hand = std::collections::HashMap::new();
+        by_hand.insert("/media/Some.Film.PG-13.mkv".to_string(), 18u8);
+
+        let mut it = item("http://h:1/media/Some.Film.PG-13.mkv", "Some.Film.PG-13.mkv");
+        annotate_with(&by_hand, &mut it);
+
+        assert_eq!(it["minAge"], 18);
+        assert_eq!(it["ratedByHost"], true);
+    }
+
+    /// Two different facts wearing the same label. The interface needs to tell
+    /// them apart: only one of them is worth offering to clear.
+    #[test]
+    fn a_guess_is_marked_as_a_guess() {
+        let by_hand = std::collections::HashMap::new();
+        let mut it = item("http://h:1/media/Some.Film.PG-13.mkv", "Some.Film.PG-13.mkv");
+        annotate_with(&by_hand, &mut it);
+
+        assert_eq!(it["minAge"], 13);
+        assert_eq!(it["ratedByHost"], false);
+    }
+
+    #[test]
+    fn a_title_nobody_has_rated_carries_no_age_at_all() {
+        let by_hand = std::collections::HashMap::new();
+        let mut it = item("http://h:1/media/Some.Film.mkv", "Some.Film.mkv");
+        annotate_with(&by_hand, &mut it);
+
+        assert!(it.get("minAge").is_none());
+        assert_eq!(it["ratedByHost"], false);
+    }
+
+    /// Rated for everyone is a rating. Nought must survive as a number, not
+    /// collapse into "nobody has said" - the difference is a host who vouched
+    /// for a children's film against a host who never looked at it.
+    #[test]
+    fn rated_for_everyone_is_not_the_same_as_unrated() {
+        let mut by_hand = std::collections::HashMap::new();
+        by_hand.insert("/media/Cartoon.mkv".to_string(), 0u8);
+
+        let mut it = item("http://h:1/media/Cartoon.mkv", "Cartoon.mkv");
+        annotate_with(&by_hand, &mut it);
+
+        assert_eq!(it["minAge"], 0);
+        assert_eq!(it["ratedByHost"], true);
+    }
+
+    /// Clearing a rating has to take the old number off the entry, or the
+    /// screen goes on showing a restriction that is no longer in force.
+    #[test]
+    fn clearing_a_rating_removes_the_age_from_the_entry() {
+        let by_hand = std::collections::HashMap::new();
+        let mut it = item("http://h:1/media/Some.Film.mkv", "Some.Film.mkv");
+        it["minAge"] = serde_json::Value::from(18);
+
+        annotate_with(&by_hand, &mut it);
+
+        assert!(it.get("minAge").is_none());
+    }
+
+    #[test]
+    fn the_path_a_rating_is_stored_against_travels_with_the_entry() {
+        let by_hand = std::collections::HashMap::new();
+        let mut it = item("http://h:1/media/Movies/A.mkv?k=key", "Movies/A.mkv");
+        annotate_with(&by_hand, &mut it);
+
+        assert_eq!(it["streamPath"], "/media/Movies/A.mkv");
     }
 
     #[test]
