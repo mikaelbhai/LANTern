@@ -35,7 +35,7 @@ import {
 import { useLocalStorage } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { cn, formatBytes } from '../lib/utils';
-import type { MediaItem, WatchParty } from '../lib/types';
+import type { MediaItem, RatingsStatus, WatchParty } from '../lib/types';
 import { PullToRefresh } from '../components/PullToRefresh';
 
 export function Theatre() {
@@ -888,6 +888,8 @@ function DetailSheet({
                 />
               )}
 
+              {!item.peerId && <ApproveControl item={item} onChanged={onRated} />}
+
               <GroupingEditor
                 item={item}
                 collections={collections}
@@ -998,6 +1000,123 @@ function RatingControl({
           className="w-36 shrink-0"
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Letting one device past the rating on one title.
+ *
+ * The obvious alternative — raise that device's limit — is a standing change
+ * made to answer a question about a single evening, and nobody ever puts it
+ * back. Six months later the tablet is allowed everything and the reason was
+ * one film. So this records the exception and leaves the limit alone.
+ *
+ * Only devices the rating would actually stop are offered. Approving somebody
+ * who was already allowed is a control that does nothing, and a list of them
+ * would bury the one name that matters.
+ */
+function ApproveControl({
+  item,
+  onChanged,
+}: {
+  item: MediaItem;
+  onChanged: () => void;
+}) {
+  const peers = useStore((s) => s.peers);
+  const toast = useStore((s) => s.toast);
+
+  const [ratings, setRatings] = React.useState<RatingsStatus | null>(null);
+  const [live, setLive] = React.useState<{ deviceId: string; streamPath: string }[]>([]);
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(() => {
+    void api.ratings.status().then(setRatings).catch(() => setRatings(null));
+    void api.ratings.approvals().then(setLive).catch(() => setLive([]));
+  }, []);
+  React.useEffect(load, [load]);
+
+  const path = item.streamPath;
+  const needs = item.minAge;
+  if (!path || needs === undefined) return null;
+
+  const allowanceOf = (deviceId: string) =>
+    ratings?.devices.find((d) => d.deviceId === deviceId)?.maxAge ?? ratings?.defaultAge ?? 12;
+
+  const approvedFor = (deviceId: string) =>
+    live.some(
+      (a) => a.deviceId === deviceId && (a.streamPath === path || a.streamPath === '*'),
+    );
+
+  // Everyone this title is currently out of reach for.
+  const stopped = Object.values(peers).filter((p) => allowanceOf(p.deviceId) < needs);
+  if (stopped.length === 0) return null;
+
+  const grant = async (deviceId: string, name: string, minutes: number | null) => {
+    setBusy(true);
+    try {
+      await api.ratings.approve(deviceId, path, minutes);
+      toast({
+        kind: 'success',
+        title: `${name} can watch this`,
+        body: minutes ? `For the next ${minutes} minutes` : 'Just this title',
+      });
+      load();
+      onChanged();
+    } catch {
+      toast({ kind: 'error', title: 'Could not approve that' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const withdraw = async (deviceId: string, name: string) => {
+    setBusy(true);
+    try {
+      await api.ratings.revoke(deviceId, path);
+      toast({ kind: 'success', title: `${name} can no longer watch this` });
+      load();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-2.5 rounded-card bg-raised border border-edge space-y-2">
+      <div className="flex items-center gap-2.5">
+        <span className="h-[26px] w-[26px] rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-gold shrink-0">
+          <Lock size={12} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs">Rated {ratingLabel(needs)}</div>
+          <div className="text-[10px] text-muted">
+            Out of reach for {stopped.length} device{stopped.length === 1 ? '' : 's'} — let one
+            past without changing what it is allowed
+          </div>
+        </div>
+        {busy && <Spinner size={12} />}
+      </div>
+
+      {stopped.map((p) => (
+        <div key={p.deviceId} className="flex items-center gap-2 pl-[34px]">
+          <span className="text-[11px] truncate flex-1">{p.name}</span>
+          {approvedFor(p.deviceId) ? (
+            <Button size="xs" onClick={() => void withdraw(p.deviceId, p.name)}>
+              Withdraw
+            </Button>
+          ) : (
+            <>
+              <Button size="xs" onClick={() => void grant(p.deviceId, p.name, null)}>
+                Just this video
+              </Button>
+              <Button size="xs" onClick={() => void grant(p.deviceId, p.name, 180)}>
+                Just for now
+              </Button>
+            </>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

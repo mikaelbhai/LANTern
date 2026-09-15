@@ -279,12 +279,51 @@ pub fn annotate_with(
 /// know whether restricted content can leave this machine.
 pub fn may_serve(state: &AppState, key: Option<&str>, stream_path: &str, name: &str) -> bool {
     let needs = min_age_for(state, stream_path, name);
-    let allowed = match requester(state, key) {
-        Some(device) => allowed_age(state, &device),
+    let device = requester(state, key);
+    let allowed = match &device {
+        Some(device) => allowed_age(state, device),
         None => allowed_age(state, ""),
     };
-    crate::rating::may_watch(needs, allowed)
+    if crate::rating::may_watch(needs, allowed) {
+        return true;
+    }
+
+    // Refused by the rating, but the host may have said yes to this one.
+    //
+    // Checked after the limit rather than folded into it, so an approval can
+    // only ever widen what is allowed. A bug here lets somebody watch a film
+    // they were told they could watch; a bug the other way round would be a
+    // restriction quietly lifted for everybody.
+    match device {
+        Some(device) => approved(state, &device, stream_path),
+        // Nobody identifiable cannot have been approved: an approval names a
+        // device, and an unidentified reader is not one.
+        None => false,
+    }
 }
+
+/// Whether the host has let this device past the rating on this title.
+///
+/// Two ways in: an approval naming the title, and one naming everything for a
+/// while. Both are checked against the clock here rather than swept up on a
+/// timer, so an approval that has run out stops working at the moment it runs
+/// out and not whenever something next happened to tidy up.
+pub fn approved(state: &AppState, device_id: &str, stream_path: &str) -> bool {
+    let now = crate::model::now_ms();
+    state.with(|s| {
+        [stream_path, ANY_TITLE].iter().any(|path| {
+            s.approvals
+                .get(&(device_id.to_string(), path.to_string()))
+                .is_some_and(|&expires| expires == NEVER_EXPIRES || expires > now)
+        })
+    })
+}
+
+/// An approval covering every title rather than one of them.
+pub const ANY_TITLE: &str = "*";
+
+/// An approval that only ends when it is taken away.
+pub const NEVER_EXPIRES: u64 = 0;
 
 #[cfg(test)]
 mod tests {

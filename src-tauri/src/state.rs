@@ -73,6 +73,9 @@ pub struct Inner {
     /// Devices the host has vouched for. The other half of `blocked`, and
     /// what "auto-accept from trusted peers" actually reads.
     pub trusted: std::collections::HashSet<String>,
+    /// One-off permission to watch past a rating: (device, path) -> when it
+    /// lapses, where 0 never does and a path of `*` covers everything.
+    pub approvals: std::collections::HashMap<(String, String), u64>,
     /// Who may drive this machine's pointer and keyboard, and who does now.
     pub control: crate::input::Control,
     /// Held open while a device is driving this one, so a finger dragging at
@@ -170,6 +173,7 @@ impl AppState {
             issued_keys: std::collections::HashMap::new(),
             held_keys: std::collections::HashMap::new(),
             trusted: std::collections::HashSet::new(),
+            approvals: std::collections::HashMap::new(),
             device_ages: std::collections::HashMap::new(),
             title_ages: std::collections::HashMap::new(),
         })))

@@ -16,7 +16,7 @@
  * leave. Nothing depends on the watching app agreeing to behave.
  */
 import React from 'react';
-import { ShieldCheck, ShieldX, Baby } from 'lucide-react';
+import { ShieldCheck, ShieldX, Baby, Clock } from 'lucide-react';
 
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
@@ -35,20 +35,35 @@ import type { RatingsStatus } from '../lib/types';
 export const AGES = [
   { value: '0', label: 'Unrated only' },
   { value: '7', label: 'Up to 7' },
-  { value: '12', label: 'Up to 12' },
+  { value: '10', label: 'Up to 10' },
   { value: '13', label: 'Up to 13' },
   { value: '16', label: 'Up to 16' },
+  { value: '17', label: 'Up to 17' },
   { value: '18', label: 'Up to 18' },
   { value: '99', label: 'Everything' },
 ];
 
-/** The ratings a title can be given, and what each is called. */
+/**
+ * The ratings a title can be given, and what each is called.
+ *
+ * The numbers real systems actually use, rather than a tidy handful. Two
+ * buckets sounded simpler until the library hit it: R and TV-MA are 17, TV-14
+ * is 14, PG is 10, and rounding all of them to "13+" is not a simplification,
+ * it is telling a thirteen year old's tablet that Deadpool is fine.
+ *
+ * The label carries what the number means where there is a familiar name for
+ * it, because "17+" and "R" are the same fact and only one of them is what
+ * anybody has seen on a box.
+ */
 export const TITLE_AGES = [
   { value: '', label: 'Unrated' },
   { value: '0', label: 'E — everyone' },
   { value: '7', label: '7+' },
-  { value: '13', label: '13+' },
+  { value: '10', label: '10+ — PG' },
+  { value: '13', label: '13+ — PG-13' },
+  { value: '14', label: '14+ — TV-14' },
   { value: '16', label: '16+' },
+  { value: '17', label: '17+ — R, TV-MA' },
   { value: '18', label: '18+' },
 ];
 
@@ -71,6 +86,27 @@ interface Row {
   name: string;
 }
 
+interface Approval {
+  deviceId: string;
+  name: string;
+  streamPath: string;
+  title: string;
+  /** When it lapses, or 0 for never — which is what one title means. */
+  expiresAt: number;
+}
+
+/** "Just this title", or how much of the window is left. */
+function describeApproval(a: Approval): string {
+  if (a.expiresAt === 0) return a.title ? `Just ${a.title}` : 'One title';
+  const mins = Math.max(0, Math.round((a.expiresAt - Date.now()) / 60000));
+  const scope = a.streamPath === '*' ? 'Everything' : a.title || 'One title';
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    return `${scope} — ${h}h ${mins % 60}m left`;
+  }
+  return `${scope} — ${mins}m left`;
+}
+
 /**
  * The panel itself.
  *
@@ -83,12 +119,14 @@ export function Audience({ compact = false }: { compact?: boolean }) {
   const [trusted, setTrusted] = React.useState<Row[] | null>(null);
   const [blocked, setBlocked] = React.useState<Row[] | null>(null);
   const [ratings, setRatings] = React.useState<RatingsStatus | null>(null);
+  const [approvals, setApprovals] = React.useState<Approval[]>([]);
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
     void api.peers.trusted().then(setTrusted).catch(() => setTrusted([]));
     void api.peers.blocked().then(setBlocked).catch(() => setBlocked([]));
     void api.ratings.status().then(setRatings).catch(() => setRatings(null));
+    void api.ratings.approvals().then(setApprovals).catch(() => setApprovals([]));
   }, []);
   React.useEffect(load, [load]);
 
@@ -188,6 +226,42 @@ export function Audience({ compact = false }: { compact?: boolean }) {
           )}
         </div>
       </section>
+
+      {approvals.length > 0 && (
+        <section>
+          <SectionTitle>Let past the rating</SectionTitle>
+          {!compact && (
+            <p className="text-2xs text-muted leading-relaxed mb-2">
+              One-off permission, given from a title in Theatre. It does not
+              change what these devices are allowed — which is the point: the
+              limit is still there afterwards.
+            </p>
+          )}
+          <div className="panel divide-y divide-edge/60">
+            {approvals.map((a) => (
+              <Entry
+                key={`${a.deviceId}:${a.streamPath}`}
+                icon={<Clock size={13} className="text-gold" />}
+                name={a.name || 'Unknown device'}
+                hint={describeApproval(a)}
+                busy={busy === a.deviceId + a.streamPath}
+                action={
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      act(a.deviceId + a.streamPath, () =>
+                        api.ratings.revoke(a.deviceId, a.streamPath),
+                      )
+                    }
+                  >
+                    Withdraw
+                  </Button>
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {undecided.length > 0 && (
         <section>

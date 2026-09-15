@@ -91,6 +91,24 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             blocked_at INTEGER NOT NULL
         );
 
+        -- One-off permission to watch something the rating would refuse.
+        --
+        -- Raising a device's allowance is the wrong shape for yes, just this
+        -- once: it is a standing change made to answer a question about a
+        -- single evening, and nobody ever puts it back. So an approval names
+        -- what it covers and when it lapses, and the limit it steps around is
+        -- left exactly as it was.
+        --
+        -- A stream_path of '*' covers everything; an expires_at of 0 never
+        -- lapses, which is what approving one title means once it is given.
+        CREATE TABLE IF NOT EXISTS approvals (
+            device_id   TEXT NOT NULL,
+            stream_path TEXT NOT NULL,
+            expires_at  INTEGER NOT NULL,
+            granted_at  INTEGER NOT NULL,
+            PRIMARY KEY (device_id, stream_path)
+        );
+
         -- Devices the host has vouched for: the other half of `blocked`.
         --
         -- Persisted for the same reason a block is. Trust used to live on the

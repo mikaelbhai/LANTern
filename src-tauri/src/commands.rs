@@ -158,6 +158,24 @@ pub fn boot(app: AppHandle, state: AppState) {
                             trusted.extend(rows.flatten());
                         }
                     }
+                    // Approvals that have already lapsed are dropped on the
+                    // way in rather than carried around and skipped forever.
+                    let mut approvals = std::collections::HashMap::new();
+                    if let Ok(mut stmt) =
+                        conn.prepare("SELECT device_id, stream_path, expires_at FROM approvals")
+                    {
+                        if let Ok(rows) = stmt.query_map([], |r| {
+                            Ok((
+                                (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
+                                r.get::<_, i64>(2)? as u64,
+                            ))
+                        }) {
+                            let now = crate::model::now_ms();
+                            approvals.extend(rows.flatten().filter(|(_, expires)| {
+                                *expires == crate::rating::NEVER_EXPIRES || *expires > now
+                            }));
+                        }
+                    }
                     let mut device_ages = std::collections::HashMap::new();
                     if let Ok(mut stmt) = conn.prepare("SELECT device_id, max_age FROM device_ages")
                     {
@@ -180,6 +198,7 @@ pub fn boot(app: AppHandle, state: AppState) {
                     state.with(|s| {
                         s.blocked = blocked;
                         s.trusted = trusted;
+                        s.approvals = approvals;
                         s.control.load_allowed(allowed);
                         s.macs = macs;
                         s.device_ages = device_ages;
@@ -3674,6 +3693,117 @@ pub fn ratings_set_default(app: AppHandle, state: State<'_, AppState>, max_age: 
     });
     crate::library::spawn_refresh(&app, &state);
     Ok(())
+}
+
+/// Lets one device past the rating, for one title or for a while.
+///
+/// The alternative is raising that device's allowance, which is a standing
+/// change made to answer a question about a single evening - and nobody ever
+/// puts it back. This leaves the limit alone and records the exception, which
+/// is what "yes, just this once" actually is.
+///
+/// `stream_path` of `*` covers everything. `minutes` of `None` never lapses,
+/// which is what approving one title means once it is given: the film does not
+/// stop being approved halfway through.
+#[tauri::command]
+pub fn ratings_approve(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+    stream_path: String,
+    minutes: Option<u32>,
+) -> Res<()> {
+    let expires = match minutes {
+        Some(m) => crate::model::now_ms() + (m as u64) * 60_000,
+        None => crate::rating::NEVER_EXPIRES,
+    };
+    state.with(|s| {
+        s.approvals
+            .insert((device_id.clone(), stream_path.clone()), expires);
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO approvals (device_id, stream_path, expires_at, granted_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(device_id, stream_path) DO UPDATE SET expires_at = ?3, granted_at = ?4",
+                rusqlite::params![
+                    device_id,
+                    stream_path,
+                    expires as i64,
+                    crate::model::now_ms() as i64
+                ],
+            );
+        }
+    });
+    // What that device is shown depends on this, so their library is rebuilt
+    // rather than left looking locked until something else asks.
+    crate::library::spawn_refresh(&app, &state);
+    Ok(())
+}
+
+/// Takes an approval back.
+#[tauri::command]
+pub fn ratings_revoke(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+    stream_path: String,
+) -> Res<()> {
+    state.with(|s| {
+        s.approvals.remove(&(device_id.clone(), stream_path.clone()));
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "DELETE FROM approvals WHERE device_id = ?1 AND stream_path = ?2",
+                rusqlite::params![device_id, stream_path],
+            );
+        }
+    });
+    crate::library::spawn_refresh(&app, &state);
+    Ok(())
+}
+
+/// Every approval still standing, for the list that can take them back.
+///
+/// Lapsed ones are dropped as they are read rather than listed greyed out: an
+/// approval that has run out is not a thing anybody needs to act on, and a
+/// list full of them is a list nobody reads.
+#[tauri::command]
+pub fn ratings_approvals(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    let now = crate::model::now_ms();
+    state.with(|s| {
+        let mut out: Vec<serde_json::Value> = s
+            .approvals
+            .iter()
+            .filter(|(_, &expires)| expires == crate::rating::NEVER_EXPIRES || expires > now)
+            .map(|((device_id, stream_path), &expires)| {
+                let name = s
+                    .peers
+                    .values()
+                    .find(|p| &p.device_id == device_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                // The title as anybody would say it, rather than the path it
+                // is stored against.
+                let title = s
+                    .media
+                    .iter()
+                    .find(|m| m.get("streamPath").and_then(|v| v.as_str()) == Some(stream_path))
+                    .and_then(|m| m.get("title").and_then(|v| v.as_str()))
+                    .unwrap_or_default()
+                    .to_string();
+                serde_json::json!({
+                    "deviceId": device_id,
+                    "name": name,
+                    "streamPath": stream_path,
+                    "title": title,
+                    "expiresAt": expires,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a["name"].as_str().unwrap_or_default().cmp(b["name"].as_str().unwrap_or_default())
+        });
+        out
+    })
 }
 
 /// Rates many titles at once.

@@ -470,6 +470,28 @@ export const api = {
      */
     setTitles: (streamPaths: string[], minAge: number | null) =>
       call<number>('ratings_set_titles', { streamPaths, minAge }),
+    /**
+     * Lets one device past the rating without changing what it is allowed.
+     *
+     * `streamPath` of `*` covers everything; `minutes` of null never lapses,
+     * which is what approving a single title means — a film does not stop
+     * being approved halfway through.
+     */
+    approve: (deviceId: string, streamPath: string, minutes: number | null) =>
+      call<void>('ratings_approve', { deviceId, streamPath, minutes }),
+    revoke: (deviceId: string, streamPath: string) =>
+      call<void>('ratings_revoke', { deviceId, streamPath }),
+    /** Every approval still standing. Lapsed ones are not listed. */
+    approvals: () =>
+      call<
+        {
+          deviceId: string;
+          name: string;
+          streamPath: string;
+          title: string;
+          expiresAt: number;
+        }[]
+      >('ratings_approvals'),
   },
   /**
    * Rejoining a known network at startup.

@@ -174,6 +174,31 @@ async fn serve_path(
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
+    // The gate, before anything is decided about what kind of request this is.
+    //
+    // It used to sit further down, after the branches below had already
+    // returned - so a restricted title was refused at its plain address and
+    // handed over in full at the same address with `?audio=0` on the end,
+    // which remuxes and streams the whole file. `?subtitle=` gave out its
+    // subtitles and `?thumb=` a frame of it. One gate covering one of four
+    // doors is not a gate.
+    //
+    // Every variant is the same title, so they share one identity: the path,
+    // without the parameters that only say how to serve it.
+    let stream_path = format!("/{slug}/{path}");
+    if !crate::rating::may_serve(
+        &state,
+        params.get("k").map(String::as_str),
+        &stream_path,
+        &path,
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            "This device is not approved for that title",
+        )
+            .into_response();
+    }
+
     // `?subtitle=N` asks for one of the file's own subtitle tracks, converted
     // to WebVTT. The same URL without it streams the video, which keeps the
     // manifest simple: one address per file, and the track is a parameter.
@@ -204,26 +229,6 @@ async fn serve_path(
             .clamp(-5_000, 5_000);
         return serve_audio_selection(&state, &slug, &path, index, &codec, seek, delay_ms).await;
     }
-    // The gate, at the last point before bytes leave this machine.
-    //
-    // Not in the manifest alone: a title the far side was told about is a URL
-    // it can ask for again, from anything. Refusing here is what makes the
-    // restriction a restriction rather than a suggestion the viewer's app is
-    // free to ignore.
-    let stream_path = format!("/{slug}/{path}");
-    if !crate::rating::may_serve(
-        &state,
-        params.get("k").map(String::as_str),
-        &stream_path,
-        &path,
-    ) {
-        return (
-            StatusCode::FORBIDDEN,
-            "This device is not approved for that title",
-        )
-            .into_response();
-    }
-
     let key = params.get("k").cloned();
     respond(state, slug, path, &headers, key, params.contains_key("json")).await
 }
@@ -1129,6 +1134,109 @@ mod tests {
         let mut out = Vec::new();
         stream.read_to_end(&mut out).await.unwrap();
         String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// A share whose one file is rated far above what any caller is allowed.
+    ///
+    /// No key is presented, which is the household default - and the default
+    /// is twelve, so an eighteen is refused. That is the same door every
+    /// variant below knocks on.
+    async fn serve_restricted() -> std::net::SocketAddr {
+        let root = std::env::temp_dir().join(format!("lantern-gate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("film.mkv"), b"picture and sound").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            s.title_ages.insert("/test/film.mkv".to_string(), 18);
+            s.shares.push(Share {
+                id: "t".into(),
+                name: "Test".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "test".into(),
+                mode: ShareMode::Media,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                file_count: 1,
+                total_bytes: 17,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            })
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, router(state)).await;
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn a_restricted_title_is_refused_at_its_plain_address() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// The hole this was written for.
+    ///
+    /// `?audio=N` remuxes and streams the whole file, and it returned before
+    /// the gate was reached - so a title refused at its plain address was
+    /// handed over in full at the same address with four characters appended.
+    #[tokio::test]
+    async fn and_at_the_address_that_picks_an_audio_track() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv?audio=0", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+        assert!(!response.contains("picture and sound"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn and_at_the_address_that_asks_for_its_subtitles() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv?subtitle=0", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// A still frame is a frame of the film. Locked cards fall back to the
+    /// generated artwork, which is drawn from the title and shows nothing.
+    #[tokio::test]
+    async fn and_at_the_address_that_asks_for_a_frame_of_it() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv?thumb=1", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// Every parameter at once, in case the gate were somehow keyed on one.
+    #[tokio::test]
+    async fn and_with_every_parameter_at_once() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv?audio=0&subtitle=0&thumb=1&t=5", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+        assert!(!response.contains("picture and sound"), "{response}");
+    }
+
+    /// An empty key is nobody rather than somebody with no restrictions.
+    #[tokio::test]
+    async fn presenting_an_empty_key_does_not_get_past_it() {
+        let addr = serve_restricted().await;
+        let response = get(addr, "/test/film.mkv?k=", "").await;
+        assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// The gate has to be a gate, not a wall: a title nobody has restricted is
+    /// served exactly as before.
+    #[tokio::test]
+    async fn an_unrestricted_title_in_the_same_share_still_serves() {
+        let (addr, _root) = serve_fixture(ShareMode::Files).await;
+        let response = get(addr, "/test/hello.txt?audio=0", "").await;
+        assert!(!response.starts_with("HTTP/1.1 403"), "{response}");
     }
 
     #[tokio::test]
