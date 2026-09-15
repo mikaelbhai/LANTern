@@ -1066,6 +1066,15 @@ export const useStore = create<State>((set, get) => {
       const known = (await api.peers.list().catch(() => [] as Peer[])) ?? [];
       const seeded = Object.fromEntries(known.map((p) => [p.id, p]));
 
+      // Which of our addresses reaches each of them, for the same reason the
+      // list is seeded at all. A peer already linked when this runs will not
+      // fire `peer:joined`, so the two handlers above never see it, so calling
+      // it offered every address this machine has - and on two networks that
+      // share a range, the far side believes the wrong one is a neighbour and
+      // the call never connects. The peers that needed this most were exactly
+      // the ones that could not get it.
+      for (const p of known) rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
+
       // Transfers survive a reload the same way, for the same reason.
       const transfers = (await api.files.list().catch(() => [] as Transfer[])) ?? [];
 
