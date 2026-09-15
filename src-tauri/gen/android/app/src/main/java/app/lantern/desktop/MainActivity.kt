@@ -117,7 +117,7 @@ class MainActivity : TauriActivity() {
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    if (!isCallRunning()) return
+    if (!isCallRunning() && !isPlayingSomething()) return
     if (isInPictureInPictureMode) return
 
     runCatching {
@@ -135,6 +135,28 @@ class MainActivity : TauriActivity() {
       ?: return false
     return audio.mode == AudioManager.MODE_IN_COMMUNICATION ||
       audio.mode == AudioManager.MODE_IN_CALL
+  }
+
+  /**
+   * Whether a film is playing, asked the same way a call is.
+   *
+   * A desktop pops the video itself out into a floating window; Android's
+   * WebView cannot do that, so the whole app goes into the corner instead -
+   * which comes to the same thing for the one purpose either serves, which is
+   * carrying on watching while doing something else.
+   *
+   * Read from the audio stack rather than from the web layer, for the reason
+   * given above: there is no channel from Rust into this activity, and a film
+   * playing is a film making sound.
+   *
+   * Wrong in both directions occasionally - a muted film does not count, and
+   * music from another app briefly might - and neither costs anything. The
+   * window either appears when it need not have, or does not when it could.
+   */
+  private fun isPlayingSomething(): Boolean {
+    val audio = applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+      ?: return false
+    return runCatching { audio.isMusicActive }.getOrDefault(false)
   }
 
   /** Implemented in apkinstall.rs. */

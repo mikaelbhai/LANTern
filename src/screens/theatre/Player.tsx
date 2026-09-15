@@ -5,6 +5,7 @@ import {
   Maximize,
   Minimize,
   Pause,
+  PictureInPicture2,
   Play,
   RotateCcw,
   RotateCw,
@@ -96,6 +97,18 @@ export function Player({
   const [buffered, setBuffered] = React.useState(0);
   const [chrome, setChrome] = React.useState(true);
   const [fullscreen, setFullscreen] = React.useState(false);
+  const [pip, setPip] = React.useState(false);
+  /**
+   * Whether this webview has a floating window to offer at all.
+   *
+   * Read once, from the runtime rather than from the platform: asking "is this
+   * Android" would be guessing at the answer to a question the browser will
+   * answer plainly, and it is wrong on any desktop build that has it disabled.
+   */
+  const pipSupported =
+    typeof document !== 'undefined' &&
+    'pictureInPictureEnabled' in document &&
+    document.pictureInPictureEnabled;
   const [unreachable, setUnreachable] = React.useState(false);
   const [scrubbing, setScrubbing] = React.useState(false);
   // Index into item.subtitles, or -1 for off. Off by default: burning
@@ -420,6 +433,10 @@ export function Player({
         case 'f':
           void toggleFullscreen();
           break;
+        // The shortcut every other player uses for this.
+        case 'p':
+          void togglePip();
+          break;
         case 'a':
           setFit(otherFit(fit));
           break;
@@ -464,6 +481,65 @@ export function Player({
       /* as above */
     }
   };
+
+  /**
+   * Pops the picture out into a floating window.
+   *
+   * The film keeps playing above whatever you go to next, which is the one
+   * thing fullscreen cannot do: fullscreen is for giving a film the whole
+   * screen, and this is for giving it none of it while still watching.
+   *
+   * The browser owns the window - its size, where it sits, and the small set
+   * of controls on it. What LANTern draws over the video does not come along,
+   * so subtitles burnt into the picture stay and subtitles drawn as an overlay
+   * do not. That is the trade, and it is why the button says what it does
+   * rather than promising the player in miniature.
+   *
+   * Not offered where it does not exist. Android's WebView has no such thing -
+   * a phone puts the whole app in a corner instead, which the activity already
+   * does on its own when you leave mid-playback - and a button that silently
+   * fails is worse than one that was never there.
+   */
+  const togglePip = async () => {
+    const el = videoRef.current;
+    if (!el) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        // Fullscreen and a floating window are two answers to the same
+        // question, so asking for one puts the other away first. Chromium
+        // refuses the request outright otherwise.
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+          releaseOrientation();
+        }
+        await el.requestPictureInPicture();
+      }
+    } catch {
+      /* refused, or the video has no picture yet — nothing changes */
+    }
+  };
+
+  /**
+   * Whether the picture is currently out, however it got there.
+   *
+   * The window has a close button of its own and the browser can take it away
+   * without asking, so the button follows the video rather than the other way
+   * round.
+   */
+  React.useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const enter = () => setPip(true);
+    const leave = () => setPip(false);
+    el.addEventListener('enterpictureinpicture', enter);
+    el.addEventListener('leavepictureinpicture', leave);
+    return () => {
+      el.removeEventListener('enterpictureinpicture', enter);
+      el.removeEventListener('leavepictureinpicture', leave);
+    };
+  }, []);
 
   const toggleFullscreen = async () => {
     try {
@@ -1041,6 +1117,14 @@ export function Player({
                       <SkipForward size={15} />
                       Next episode
                     </button>
+                  )}
+                  {pipSupported && (
+                    <IconBtn
+                      label={pip ? 'Put the picture back' : 'Pop the picture out'}
+                      onClick={() => void togglePip()}
+                    >
+                      <PictureInPicture2 size={18} />
+                    </IconBtn>
                   )}
                   <IconBtn
                     label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
