@@ -2,13 +2,18 @@ package app.lantern.desktop
 
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.util.Rational
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.FileProvider
+import java.io.File
 
 /**
  * LANTern's Android entry point.
@@ -27,6 +32,13 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
 
     acquireMulticastLock()
+
+    // Hand the Java runtime to the Rust side, which has no other way to reach
+    // it. Everything it needs - the virtual machine, and a class reference
+    // resolved by *this* app's class loader - is only certainly available from
+    // in here, on this thread. See apkinstall.rs.
+    appContext = applicationContext
+    runCatching { nativeRegisterInstaller() }
 
     // Stay reachable once this window is no longer on screen. Without a
     // foreground service Android suspends the process on background, so the
@@ -125,6 +137,9 @@ class MainActivity : TauriActivity() {
       audio.mode == AudioManager.MODE_IN_CALL
   }
 
+  /** Implemented in apkinstall.rs. */
+  private external fun nativeRegisterInstaller()
+
   override fun onDestroy() {
     multicastLock?.let { lock ->
       if (lock.isHeld) {
@@ -133,5 +148,92 @@ class MainActivity : TauriActivity() {
     }
     multicastLock = null
     super.onDestroy()
+  }
+
+  companion object {
+    init {
+      // Ordinarily already loaded by `Rust`, whose own initialiser does this
+      // before the activity gets going. Repeating it costs nothing - the
+      // runtime loads a library once per class loader - and means the native
+      // methods below cannot be reached before the code behind them exists.
+      runCatching { System.loadLibrary("lantern_lib") }
+    }
+
+    /**
+     * Kept so the installer can be opened from the Rust side, which runs on
+     * threads that have no activity and no context of their own.
+     *
+     * The *application* context, not this activity: an activity reference
+     * held statically outlives the activity and leaks the whole window with
+     * it. Starting an activity from a non-activity context is what
+     * FLAG_ACTIVITY_NEW_TASK below is for.
+     */
+    private var appContext: Context? = null
+
+    /**
+     * Opens the system package installer on a staged APK.
+     *
+     * Returns an empty string if the installer was launched, or a description
+     * of what stopped it. It deliberately does not throw: the caller is JNI,
+     * where reading an exception costs far more than reading a string and
+     * tells nobody anything more.
+     *
+     * Launching it is the whole of this app's part. Android asks for the
+     * install permission if it does not have it, shows what is being
+     * replaced, and can be refused - and none of those answers come back
+     * here, so nothing downstream may assume an install happened.
+     */
+    @JvmStatic
+    fun installPackage(path: String): String {
+      val context = appContext ?: return "the app is not running"
+      return runCatching {
+        val file = File(path)
+        if (!file.isFile) return "the downloaded file is no longer there"
+
+        // Since Oreo, permission to install is granted per app, and an app
+        // that does not have it gets a dead end: a dialogue saying it is not
+        // allowed, and no obvious way to allow it. So the settings page that
+        // grants it is opened instead, and the update is left to be pressed
+        // again afterwards. The decision stays where it belongs - nothing is
+        // changed here, the user is only taken to where they can change it.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+          !context.packageManager.canRequestPackageInstalls()
+        ) {
+          val opened = runCatching {
+            context.startActivity(
+              Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}"),
+              ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+          }
+          opened.exceptionOrNull()?.let { Log.w("LANTern", "install settings", it) }
+          return if (opened.isSuccess) {
+            "allow LANTern to install apps, then press update again"
+          } else {
+            "allow LANTern to install apps in Settings, then press update again"
+          }
+        }
+
+        // The installer is another process and cannot read this app's private
+        // storage, so it is given a content URI carrying a read grant instead
+        // of a path it would only be refused.
+        val uri = FileProvider.getUriForFile(
+          context,
+          "${context.packageName}.fileprovider",
+          file,
+        )
+
+        val intent = Intent(Intent.ACTION_VIEW)
+          .setDataAndType(uri, "application/vnd.android.package-archive")
+          .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        context.startActivity(intent)
+        ""
+      }.getOrElse { error ->
+        Log.w("LANTern", "install", error)
+        error.message ?: error.toString()
+      }
+    }
   }
 }

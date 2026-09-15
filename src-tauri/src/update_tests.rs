@@ -95,3 +95,64 @@ async fn only_github_is_reachable() {
 
     assert!(!dest.exists(), "a refused address still wrote a file");
 }
+
+/// The staging directory, which holds the installer between downloading it and
+/// handing it to the system.
+#[cfg(test)]
+mod staging {
+    use crate::commands::prune_staged;
+
+    /// A directory of its own per test, so two running at once cannot delete
+    /// each other's files - which is the very thing being tested.
+    fn empty_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join("lantern-staging-tests").join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the scratch directory");
+        dir
+    }
+
+    fn names_in(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .expect("read the scratch directory")
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The fault this was written for: three installers from three attempts,
+    /// eighty megabytes, none of them ever deleted.
+    #[test]
+    fn leaves_only_the_file_being_fetched() {
+        let dir = empty_dir("three-attempts");
+        for name in ["LANTern-1.2.0.apk", "LANTern-1.2.5.apk", "LANTern-1.2.6.apk"] {
+            std::fs::write(dir.join(name), b"x").expect("write");
+        }
+
+        prune_staged(&dir, "LANTern-1.2.6.apk");
+
+        assert_eq!(names_in(&dir), vec!["LANTern-1.2.6.apk"]);
+    }
+
+    /// Pruning runs before the download, so the file being kept is usually not
+    /// there yet. That must not stop the rest being cleared.
+    #[test]
+    fn clears_up_even_when_the_kept_name_is_not_there_yet() {
+        let dir = empty_dir("nothing-to-keep");
+        std::fs::write(dir.join("LANTern-1.2.5.apk"), b"x").expect("write");
+
+        prune_staged(&dir, "LANTern-1.2.6.apk");
+
+        assert!(names_in(&dir).is_empty());
+    }
+
+    /// A missing directory is the state before the first update, not an error.
+    #[test]
+    fn says_nothing_about_a_directory_that_is_not_there() {
+        prune_staged(
+            &std::env::temp_dir().join("lantern-staging-tests-absent"),
+            "x.apk",
+        );
+    }
+}

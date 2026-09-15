@@ -92,7 +92,6 @@ strip = true
 # and no permission grant, which cannot install an APK. See apkinstall.rs.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
-ndk-context = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 enigo = "0.2"

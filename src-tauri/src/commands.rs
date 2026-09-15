@@ -2010,7 +2010,16 @@ pub async fn update_download(
         return Err("refusing an update file with a suspicious name".into());
     }
 
-    let path = update_dir(&app)?.join(&name);
+    let dir = update_dir(&app)?;
+    let path = dir.join(&name);
+
+    // Every earlier attempt left its installer behind - three of them, eighty
+    // megabytes, on a phone - because nothing ever deleted one. The staging
+    // directory holds exactly the update being fetched and nothing else: an
+    // older one is of no use to anybody, and the one place it could be picked
+    // up from again is here.
+    prune_staged(&dir, &name);
+
     let emitter = app.clone();
     fetch_update(&url, &path, expected.as_deref(), move |done, total| {
         let _ = emitter.emit(
@@ -2021,6 +2030,24 @@ pub async fn update_download(
     .await?;
 
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Clears out everything in the staging directory except `keep`.
+///
+/// Failures are ignored on purpose. A file that will not delete is a reason to
+/// leave a little rubbish behind, not a reason to refuse an update.
+pub(crate) fn prune_staged(dir: &std::path::Path, keep: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name() == std::ffi::OsStr::new(keep) {
+            continue;
+        }
+        if entry.file_type().is_ok_and(|t| t.is_file()) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Hands the installer to the operating system.

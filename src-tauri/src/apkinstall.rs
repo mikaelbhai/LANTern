@@ -16,17 +16,58 @@
 //! installer needs it. `file_paths.xml` already exposes `updates/` for exactly
 //! this.
 //!
-//! Written against JNI rather than by adding a Kotlin entry point, because a
-//! channel from Rust into the activity is machinery this app has done without
-//! everywhere else, and one intent does not justify inventing one.
+//! Two things about *reaching* Java from here were wrong before, and both had
+//! the same shape: assuming something is lying around that is not.
+//!
+//! - `ndk_context` was asked for the virtual machine and the context. Nothing
+//!   in this app's stack fills it in - it is populated by `ndk-glue`, which
+//!   belongs to a way of starting an Android app that Tauri does not use - so
+//!   it returned a pair of null pointers and the first call through them
+//!   failed with "the resource id is invalid". Instead the activity hands its
+//!   own runtime over as it starts, which is the one moment both are certainly
+//!   real.
+//!
+//! - `FileProvider` was looked up by name from this thread. A thread attached
+//!   from Rust gets the *system* class loader, which knows the framework and
+//!   nothing this app ships, so that lookup could only ever have failed too.
+//!   The class reference is therefore taken on the activity's own thread, at
+//!   registration, and the intent is built in Kotlin - on the far side of a
+//!   single static method - where the app's classes are simply in scope.
 
-use jni::objects::{JObject, JString, JValue};
+use jni::objects::{GlobalRef, JClass, JObject, JString};
+use std::sync::OnceLock;
 
-/// Read permission for the installer, and a task of its own to run in.
-const FLAG_GRANT_READ_URI_PERMISSION: i32 = 0x0000_0001;
-const FLAG_ACTIVITY_NEW_TASK: i32 = 0x1000_0000;
+/// What it takes to call back into the app, captured while the app is calling
+/// us and therefore known to be valid.
+struct Runtime {
+    vm: jni::JavaVM,
+    /// `MainActivity`, resolved through the app's class loader rather than the
+    /// system one a Rust thread would otherwise get.
+    activity: GlobalRef,
+}
 
-const APK_MIME: &str = "application/vnd.android.package-archive";
+static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Called once by `MainActivity` as it starts.
+///
+/// # Safety
+///
+/// Called by the Java runtime with arguments it constructed. Nothing else may
+/// call it.
+#[no_mangle]
+pub extern "system" fn Java_app_lantern_desktop_MainActivity_nativeRegisterInstaller(
+    env: jni::JNIEnv,
+    this: JObject,
+) {
+    let Ok(vm) = env.get_java_vm() else { return };
+    let Ok(class) = env.get_object_class(&this) else {
+        return;
+    };
+    let Ok(activity) = env.new_global_ref(&class) else {
+        return;
+    };
+    let _ = RUNTIME.set(Runtime { vm, activity });
+}
 
 /// Asks Android to install the package at `path`.
 ///
@@ -34,75 +75,31 @@ const APK_MIME: &str = "application/vnd.android.package-archive";
 /// installed: what happens next is a system dialogue this app cannot see the
 /// answer to, and must not pretend to.
 pub fn install(path: &std::path::Path) -> Result<(), String> {
-    let ctx = ndk_context::android_context();
+    let runtime = RUNTIME
+        .get()
+        .ok_or("this build cannot reach Android's installer")?;
 
-    // Safety: both pointers come from the runtime that is currently running
-    // this code, and are valid for as long as the process is.
-    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
-        .map_err(|e| format!("no Java runtime: {e}"))?;
-    let mut env = vm
+    let mut env = runtime
+        .vm
         .attach_current_thread()
         .map_err(|e| format!("could not reach the Java runtime: {e}"))?;
-    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
 
-    let result = (|| -> Result<(), jni::errors::Error> {
-        // new File(path)
-        let path_string = env.new_string(path.to_string_lossy().as_ref())?;
-        let file = env.new_object(
-            "java/io/File",
-            "(Ljava/lang/String;)V",
-            &[(&path_string).into()],
-        )?;
+    // Safety: the reference was taken from a live class and is held global,
+    // so it is valid until the process ends. `JClass` owns nothing and frees
+    // nothing, so nothing is released twice.
+    let class = unsafe { JClass::from_raw(runtime.activity.as_raw()) };
 
-        // The authority the manifest declares, which is the package name with
-        // a suffix. Read from the running app rather than written down here,
-        // so LANTV — a different package entirely — does not name LANTern's.
-        let package = env
-            .call_method(&context, "getPackageName", "()Ljava/lang/String;", &[])?
-            .l()?;
-        let package: String = env.get_string(&JString::from(package))?.into();
-        let authority = env.new_string(format!("{package}.fileprovider"))?;
-
-        // FileProvider.getUriForFile(context, authority, file)
-        let uri = env
+    let outcome = (|| -> Result<String, jni::errors::Error> {
+        let arg = env.new_string(path.to_string_lossy().as_ref())?;
+        let returned = env
             .call_static_method(
-                "androidx/core/content/FileProvider",
-                "getUriForFile",
-                "(Landroid/content/Context;Ljava/lang/String;Ljava/io/File;)Landroid/net/Uri;",
-                &[(&context).into(), (&authority).into(), (&file).into()],
+                &class,
+                "installPackage",
+                "(Ljava/lang/String;)Ljava/lang/String;",
+                &[(&arg).into()],
             )?
             .l()?;
-
-        // new Intent(Intent.ACTION_VIEW).setDataAndType(uri, apk).addFlags(..)
-        let action = env.new_string("android.intent.action.VIEW")?;
-        let intent = env.new_object(
-            "android/content/Intent",
-            "(Ljava/lang/String;)V",
-            &[(&action).into()],
-        )?;
-
-        let mime = env.new_string(APK_MIME)?;
-        env.call_method(
-            &intent,
-            "setDataAndType",
-            "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
-            &[(&uri).into(), (&mime).into()],
-        )?;
-        env.call_method(
-            &intent,
-            "addFlags",
-            "(I)Landroid/content/Intent;",
-            &[JValue::Int(FLAG_GRANT_READ_URI_PERMISSION | FLAG_ACTIVITY_NEW_TASK)],
-        )?;
-
-        env.call_method(
-            &context,
-            "startActivity",
-            "(Landroid/content/Intent;)V",
-            &[(&intent).into()],
-        )?;
-
-        Ok(())
+        Ok(env.get_string(&JString::from(returned))?.into())
     })();
 
     // A Java exception left pending poisons every later JNI call in this
@@ -113,5 +110,12 @@ pub fn install(path: &std::path::Path) -> Result<(), String> {
         return Err("Android refused the install request".into());
     }
 
-    result.map_err(|e| format!("could not start the installer: {e}"))
+    // Kotlin reports trouble by returning it, rather than by throwing across
+    // the boundary: an exception is far more expensive to read from here than
+    // a string is, and there is nothing useful to do with one that a message
+    // does not also say.
+    match outcome.map_err(|e| format!("could not start the installer: {e}"))? {
+        message if message.is_empty() => Ok(()),
+        message => Err(message),
+    }
 }
