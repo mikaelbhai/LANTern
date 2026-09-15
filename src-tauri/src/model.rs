@@ -68,6 +68,15 @@ pub struct Peer {
     pub ip: String,
     /// Every address this device is known to answer on.
     pub addresses: Vec<String>,
+    /// Which of *our* addresses actually reaches them.
+    ///
+    /// Taken from the signalling socket, so it is the routing table's answer
+    /// rather than a guess. It matters when two of this machine's interfaces
+    /// sit on networks that use the same addresses: the other candidate is not
+    /// merely unreachable, it may be a different machine entirely on the
+    /// peer's side of the world.
+    #[serde(default)]
+    pub local_address: String,
     pub port: u16,
     pub layer: ConnLayer,
     pub latency_ms: f64,

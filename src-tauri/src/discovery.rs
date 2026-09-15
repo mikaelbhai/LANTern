@@ -118,7 +118,9 @@ pub fn start(
                                     trusted: true,
                                     scope: PeerScope::Local,
                                     initiated_by: Initiator::Us,
-                                };
+        // Filled in when a link is established; unknown until then.
+        local_address: String::new(),
+    };
                                 s.peers.insert(peer_id.clone(), peer.clone());
                                 (peer, true)
                             }

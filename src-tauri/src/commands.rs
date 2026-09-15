@@ -482,6 +482,8 @@ pub fn net_add_manual_peer(
         trusted: true,
         scope: PeerScope::Local,
         initiated_by: Initiator::Us,
+        // Filled in when a link is established; unknown until then.
+        local_address: String::new(),
     };
     state.with(|s| s.peers.insert(peer.id.clone(), peer.clone()));
     let _ = app.emit("peer:joined", &peer);

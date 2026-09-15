@@ -21,6 +21,13 @@ export type PeerScope = 'local' | 'upstream' | 'downstream';
 export type Initiator = 'us' | 'them';
 
 export interface Peer {
+  /**
+   * Which of *our* addresses reaches this peer, from the signalling socket.
+   *
+   * Only meaningful with a live link, and only interesting when this machine
+   * has more than one interface — which is when it matters most.
+   */
+  localAddress?: string;
   id: string;
   /** Stable across address changes — the thing that makes a peer one peer. */
   deviceId: string;

@@ -79,22 +79,46 @@ impl Links {
         generation
     }
 
-    /// Registers a link unless a preferred one already holds the slot.
+    /// Registers a link, replacing whatever held the slot.
     ///
     /// Checking `has` and then inserting cannot work: they take the lock
-    /// twice, and between them the other direction can register. Both ends
-    /// then decide *they* are the duplicate and drop, leaving the peer with a
-    /// TCP connection that is established but registered nowhere — which
-    /// looks, from the UI, like "no live link" to a device sitting right
-    /// there. One lock, one decision.
+    /// twice, and between them the other direction can register. One lock,
+    /// one decision.
+    ///
+    /// The newest connection always wins, and that is the whole rule. There
+    /// used to be a second one - keep the link dialled by the lower device id,
+    /// refuse the other - and it made calls and messages travel in one
+    /// direction only.
+    ///
+    /// Two ids decide it: with `8f5df0eb…` calling `d3f05c7c…`, the dialler
+    /// computes `me < peer` and the accepter computes `me > peer`, and for a
+    /// link dialled by the *higher* id both come out false. Neither end is
+    /// preferred, so whichever one already held an entry - a live link, or a
+    /// dead one nothing had cleared - refused the connection and dropped it,
+    /// while the other end accepted it. One end was then registered on a
+    /// socket the other had just closed, and everything it sent went nowhere.
+    /// A stale entry could wedge that direction permanently.
+    ///
+    /// Preferring one link was never needed for delivery. Both ends pump
+    /// every connection they hold, so a receiver reads whichever socket the
+    /// sender writes to, no matter which one it registered for its own
+    /// traffic. The rule only ever avoided a duplicate connection, and it cost
+    /// far more than it saved.
+    ///
+    /// Replacing freely is safe because teardown is generation-guarded: the
+    /// link that has just been replaced cannot evict its replacement on the
+    /// way out, and `reconcile` does not dial a peer that already has a link,
+    /// so this does not churn.
     pub fn claim(
         &self,
         device_id: &str,
         tx: mpsc::UnboundedSender<String>,
-        preferred: bool,
+        inbound: bool,
     ) -> Option<u64> {
         let mut map = self.map.lock().expect("links poisoned");
-        if map.contains_key(device_id) && !preferred {
+        if !inbound && map.contains_key(device_id) {
+            // Something already carries traffic to them, and it was opened
+            // from their side. Leave it be and read this one anyway.
             return None;
         }
         let generation = self.next.fetch_add(1, Ordering::Relaxed);
@@ -263,6 +287,12 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    let local_address = envelope
+        .payload
+        .get("localAddress")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
 
     let (peer, is_new) = state.with(|s| {
         let port = s.net.port;
@@ -272,6 +302,11 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                 existing.status = crate::model::PeerStatus::Available;
                 if !address.is_empty() && !existing.addresses.contains(&address) {
                     existing.addresses.push(address.clone());
+                }
+                // Always the newest link's answer: the route can change under
+                // us, and a stale one is worse than none.
+                if !local_address.is_empty() {
+                    existing.local_address = local_address.clone();
                 }
                 (existing.clone(), false)
             }
@@ -303,6 +338,7 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                     trusted: false,
                     scope: crate::model::PeerScope::Local,
                     initiated_by: crate::model::Initiator::Them,
+                    local_address: local_address.clone(),
                 };
                 s.peers.insert(peer_id.clone(), peer.clone());
                 (peer, true)
@@ -404,6 +440,13 @@ async fn handle(
         .peer_addr()
         .map(|a| a.ip().to_string())
         .unwrap_or_default();
+    // Which of our addresses the routing table actually used to reach them.
+    // Guessing this from the interface list is exactly what cannot be done
+    // when two of them share a network's addresses.
+    let local_address = stream
+        .local_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half).lines();
 
@@ -469,23 +512,18 @@ async fn handle(
             .await?;
     }
 
-    // Both sides dial, so one peer can produce two links. Keep the one dialled
-    // by the lower device id: each end computes that from the two ids alone
-    // and reaches the same answer, so exactly one survives.
+    // Both sides dial, so one peer can produce two links, and the one *they*
+    // opened is the one to send over. It proves they can reach us and were
+    // alive a moment ago; dialling out proves only that a socket opened.
     //
-    // The claim is conditional rather than absolute, because a peer that can
-    // dial out but cannot be dialled — the NAT case this module exists for —
-    // offers only one direction, and refusing it on principle would strand it.
-    let preferred = if we_dialled {
-        me.as_str() < peer_id.as_str()
-    } else {
-        me.as_str() > peer_id.as_str()
-    };
-
+    // A connection that does not take the slot is still read to the end, so
+    // they can reach us over it either way. Dropping it is what used to wedge
+    // a direction permanently.
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
-    let Some(generation) = links.claim(&peer_id, tx, preferred) else {
-        return Ok(());
-    };
+    let claim = links.claim(&peer_id, tx, !we_dialled);
+    // A generation nothing can match, so the guarded removal below is a no-op
+    // for a connection that never held the slot.
+    let generation = claim.unwrap_or(u64::MAX);
 
     // A peer we are talking to is a peer we know about, whether or not mDNS
     // ever found it. Multicast is unreliable in exactly the conditions this
@@ -499,7 +537,11 @@ async fn handle(
         v: PROTOCOL_VERSION,
         from: peer_id.clone(),
         kind: LINKED.into(),
-        payload: serde_json::json!({ "name": peer_name, "address": address }),
+        payload: serde_json::json!({
+            "name": peer_name,
+            "address": address,
+            "localAddress": local_address,
+        }),
     });
 
     // A socket can die without either end being told - a Wi-Fi adapter that
@@ -540,7 +582,13 @@ async fn handle(
         let links = links.clone();
         let peer_id = peer_id.clone();
         let me = me.clone();
+        let carries_traffic = claim.is_some();
         tokio::spawn(async move {
+            // Only the link that holds the slot needs proving; the other one
+            // is read-only and has nothing to fail on.
+            if !carries_traffic {
+                return;
+            }
             loop {
                 tokio::time::sleep(HEARTBEAT).await;
                 let still_linked = links.send(
@@ -946,6 +994,42 @@ mod tests {
     }
 
     /// The bug this guards against made a peer look connected while every
+    /// A new connection always takes the slot, however it was dialled.
+    ///
+    /// The old rule kept the link dialled by the lower device id and refused
+    /// the other, which sounds symmetric and is not: for a link dialled by the
+    /// *higher* id, neither end computes itself preferred. Whichever end
+    /// already held an entry - live or long dead - refused the connection and
+    /// dropped it while the other end accepted it, leaving one end writing to
+    /// a socket the other had closed. Calls rang in one direction and messages
+    /// travelled in one direction, which is exactly how it presented.
+    #[test]
+    fn a_link_the_peer_opened_takes_the_slot() {
+        let links = Links::default();
+
+        // A link this machine opened, of the kind that can point at nothing.
+        let (stale_tx, stale_rx) = mpsc::unbounded_channel();
+        let stale = links.claim("peer", stale_tx, false).expect("an empty slot takes any link");
+        drop(stale_rx);
+
+        // Then the peer reaches us, which is worth more than our own attempt.
+        let (live_tx, mut live_rx) = mpsc::unbounded_channel();
+        let live = links.claim("peer", live_tx, true).expect("an inbound link always takes the slot");
+        assert_ne!(stale, live, "each registration needs its own generation");
+
+        let envelope = Envelope {
+            v: PROTOCOL_VERSION,
+            from: "me".into(),
+            kind: "chat".into(),
+            payload: serde_json::json!({ "body": "routed" }),
+        };
+        assert!(links.send("peer", &envelope), "nothing was registered to send to");
+        assert!(
+            live_rx.try_recv().is_ok(),
+            "the stale entry kept the slot and the message went nowhere",
+        );
+    }
+
     /// A dead socket deregisters itself, and must not take a live one with it.
     ///
     /// The writer now removes the link when a write fails, because a half-open

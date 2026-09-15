@@ -20,6 +20,48 @@ import type { CallKind } from './types';
 /** Host candidates only — see the note above about staying offline. */
 const RTC_CONFIG: RTCConfiguration = { iceServers: [] };
 
+/**
+ * Which of our addresses reaches each peer, as the routing table answered.
+ *
+ * Filled in from the signalling socket, which is the only thing that actually
+ * knows. Empty until a link exists, and everything below treats not knowing as
+ * a reason to change nothing.
+ */
+const peerRoutes = new Map<string, string>();
+
+export function setPeerRoute(peerId: string, localAddress?: string): void {
+  if (peerId && localAddress) peerRoutes.set(peerId, localAddress);
+}
+
+/**
+ * Whether a candidate is worth offering to this peer.
+ *
+ * ICE trades raw addresses, and that is fine until two networks use the same
+ * ones. With an interface on each, this machine offers a host candidate from
+ * both - and the far side, being on that same range itself, believes the
+ * wrong one is a neighbour. It sends its connectivity checks to whatever holds
+ * that address on *its* network, which is a different machine or nothing at
+ * all, and the pair never validates. Calls fail while messages, which ride the
+ * link that is already established, carry on working.
+ *
+ * So a host candidate is only offered from the address that reaches them.
+ * Reflexive and relayed candidates are left alone: they describe a path
+ * through something else and are not ours to second-guess. So are mDNS
+ * (`.local`) and IPv6 candidates, which carry no address to compare.
+ *
+ * Knowing nothing changes nothing - a single-interface machine offers exactly
+ * what it did before.
+ */
+function worthSending(peerId: string, candidate: RTCIceCandidateInit): boolean {
+  const route = peerRoutes.get(peerId);
+  const line = candidate.candidate ?? '';
+  if (!route || !line) return true;
+  if (!/ typ host/.test(line)) return true;
+  const address = line.split(' ')[4] ?? '';
+  if (!address || address.includes(':') || address.endsWith('.local')) return true;
+  return address === route;
+}
+
 export interface SignalMessage {
   /** Stamped by the Rust delivery path; the authenticated sender. */
   from: string;
@@ -160,7 +202,9 @@ function createSession(peerId: string, callId: string, kind: CallKind): Session 
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      void send(peerId, { callId, kind, type: 'ice', candidate: e.candidate.toJSON() });
+      const candidate = e.candidate.toJSON();
+      if (!worthSending(peerId, candidate)) return;
+      void send(peerId, { callId, kind, type: 'ice', candidate });
     }
   };
 
@@ -689,11 +733,13 @@ function createScreenSession(peerId: string): Session {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) {
+      const candidate = e.candidate.toJSON();
+      if (!worthSending(peerId, candidate)) return;
       void send(peerId, {
         callId: session.callId,
         kind: 'video',
         type: 'screen-ice',
-        candidate: e.candidate.toJSON(),
+        candidate,
       });
     }
   };

@@ -701,13 +701,15 @@ export const useStore = create<State>((set, get) => {
       initialised = true;
 
       on('peer:joined', (p: Peer) => {
+        rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
         set((s) => ({ peers: { ...s.peers, [p.id]: p } }));
         get().pushActivity({ kind: 'peer', text: `${p.name} joined the network`, peerId: p.id });
         if (get().settings.notifications.sound) sfx.peerJoin();
       });
-      on('peer:updated', (p: Peer) =>
-        set((s) => (s.peers[p.id] ? { peers: { ...s.peers, [p.id]: { ...s.peers[p.id], ...p } } } : {})),
-      );
+      on('peer:updated', (p: Peer) => {
+        rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
+        set((s) => (s.peers[p.id] ? { peers: { ...s.peers, [p.id]: { ...s.peers[p.id], ...p } } } : {}));
+      });
       on('peer:left', (id: string) => {
         const p = get().peers[id];
         set((s) => {
