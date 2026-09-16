@@ -16,12 +16,12 @@
  * leave. Nothing depends on the watching app agreeing to behave.
  */
 import React from 'react';
-import { ShieldCheck, ShieldX, Baby, Clock } from 'lucide-react';
+import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe } from 'lucide-react';
 
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
-import { Button, SectionTitle, Select, Spinner } from './ui';
-import type { RatingsStatus } from '../lib/types';
+import { Button, Checkbox, SectionTitle, Select, Spinner } from './ui';
+import type { RatingsStatus, Share } from '../lib/types';
 
 /**
  * The allowances a host can hand out.
@@ -120,6 +120,9 @@ export function Audience({ compact = false }: { compact?: boolean }) {
   const [blocked, setBlocked] = React.useState<Row[] | null>(null);
   const [ratings, setRatings] = React.useState<RatingsStatus | null>(null);
   const [approvals, setApprovals] = React.useState<Approval[]>([]);
+  const [shares, setShares] = React.useState<Share[]>([]);
+  /** Which folder's device list is open. One at a time; they get long. */
+  const [opened, setOpened] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const load = React.useCallback(() => {
@@ -127,6 +130,7 @@ export function Audience({ compact = false }: { compact?: boolean }) {
     void api.peers.blocked().then(setBlocked).catch(() => setBlocked([]));
     void api.ratings.status().then(setRatings).catch(() => setRatings(null));
     void api.ratings.approvals().then(setApprovals).catch(() => setApprovals([]));
+    void api.host.list().then(setShares).catch(() => setShares([]));
   }, []);
   React.useEffect(load, [load]);
 
@@ -348,6 +352,110 @@ export function Audience({ compact = false }: { compact?: boolean }) {
           </p>
         )}
       </section>
+
+      {shares.length > 0 && (
+        <section>
+          <SectionTitle>Published folders</SectionTitle>
+          {!compact && (
+            <p className="text-2xs text-muted leading-relaxed mb-2">
+              A folder is listed to everyone on the network. Unlisted is the
+              strictest setting there is: everyone is refused unless you name
+              them, and nothing else lifts it — not being allowed, not being
+              allowed every rating. The folder stops appearing in the index
+              and in what peers are told this device publishes, and asking
+              for it by name gets the same answer as asking for something
+              that was never there.
+            </p>
+          )}
+          <div className="panel divide-y divide-edge/60">
+            {shares.map((sh) => {
+              const chosen = sh.audience ?? [];
+              // Unlisted is its own state, not "the list happens to be
+              // empty". Reading emptiness as no restriction would turn the
+              // strictest setting into the loosest the moment it was
+              // switched on.
+              const unlisted = !!sh.unlisted;
+              return (
+                <div key={sh.id}>
+                  <Entry
+                    icon={
+                      unlisted ? (
+                        <EyeOff size={13} className="text-gold" />
+                      ) : (
+                        <Globe size={13} className="text-muted" />
+                      )
+                    }
+                    name={sh.name}
+                    hint={
+                      unlisted
+                        ? chosen.length === 0
+                          ? 'Unlisted — nobody named'
+                          : `Unlisted — ${chosen.length} device${chosen.length === 1 ? '' : 's'}`
+                        : 'Listed to everyone on the network'
+                    }
+                    busy={busy === sh.id}
+                    action={
+                      <Select
+                        value={unlisted ? 'chosen' : 'everyone'}
+                        onChange={(v) => {
+                          if (v === 'everyone') {
+                            setOpened(null);
+                            void act(sh.id, () =>
+                              api.host.setAudience(sh.id, false, []),
+                            );
+                          } else {
+                            setOpened(sh.id);
+                            void act(sh.id, () =>
+                              api.host.setAudience(sh.id, true, chosen),
+                            );
+                          }
+                        }}
+                        options={[
+                          { value: 'everyone', label: 'Everyone' },
+                          { value: 'chosen', label: 'Only chosen devices' },
+                        ]}
+                        className="w-44"
+                      />
+                    }
+                  />
+
+                  {(opened === sh.id || unlisted) && (
+                    <div className="px-3 pb-3 -mt-1 space-y-1.5">
+                      {allDevices(peers, trusted ?? [], blocked ?? [], ratings).length === 0 ? (
+                        <p className="text-2xs text-dim">
+                          No other devices yet. Anyone who joins can be named here.
+                        </p>
+                      ) : (
+                        allDevices(peers, trusted ?? [], blocked ?? [], ratings).map((d) => (
+                          <Checkbox
+                            key={d.deviceId}
+                            checked={chosen.includes(d.deviceId)}
+                            label={d.name || 'Device'}
+                            onChange={(on) => {
+                              const next = on
+                                ? [...chosen, d.deviceId]
+                                : chosen.filter((x) => x !== d.deviceId);
+                              void act(sh.id, () =>
+                                api.host.setAudience(sh.id, true, next),
+                              );
+                            }}
+                          />
+                        ))
+                      )}
+                      {unlisted && chosen.length === 0 && (
+                        <p className="text-2xs text-gold/80">
+                          Nobody is named, so nobody can see this folder — not
+                          even devices you have allowed. Tick somebody.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

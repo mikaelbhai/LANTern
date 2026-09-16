@@ -21,7 +21,7 @@
 import React from 'react';
 
 import { api, on } from '../../lib/bridge';
-import { useStore } from '../../lib/store';
+import { useStore, useSeatId } from '../../lib/store';
 import type { GameSession } from '../../lib/types';
 
 /** The local player's identifier inside a session. */
@@ -84,7 +84,7 @@ export function useTurnGame<S, M>({
   /** Whose turn it is in this position. */
   turnOf: (state: S, players: string[]) => string;
 }): TurnGame<S, M> {
-  const myId = useStore((s) => s.profile.id);
+  const myId = useSeatId();
   const players = React.useMemo(() => seats(session, myId), [session, myId]);
   const seed = session?.seed ?? 0;
 

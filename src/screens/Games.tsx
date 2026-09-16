@@ -23,7 +23,7 @@ import { Crossy } from './games/Crossy';
 import { Deal } from './games/Deal';
 import { Uno } from './games/Uno';
 import { api } from '../lib/bridge';
-import { useStore } from '../lib/store';
+import { useStore, useSeatId } from '../lib/store';
 import { cn } from '../lib/utils';
 import { GAME_NAMES } from '../lib/games';
 import { standings } from '../lib/scores';
@@ -202,6 +202,31 @@ function GamesHub() {
    * deals the identical board. Nothing else about the game crosses the wire —
    * only how far along each person is.
    */
+  /**
+   * Challenges one device to a game, and tells it so.
+   *
+   * This used to open a board and send nothing at all: the card offered to
+   * challenge anyone on the network, and the other device never heard about
+   * it. A session is what makes the invitation exist - it is what the far side
+   * is offered, what seats the two players, and what their moves travel on.
+   *
+   * The challenger is dealt first, and first seat is white.
+   */
+  const challenge_ = async (kind: GameKind, peerId: string) => {
+    const seed = Math.floor(Math.random() * 1_000_000);
+    try {
+      const session = await api.game.start(kind, [peerId], seed);
+      setGameSession(session);
+    } catch {
+      toast({
+        kind: 'error',
+        title: 'Could not reach them',
+        body: 'Opening the board here; they have not been invited.',
+      });
+    }
+    setActiveGame({ kind, opponentId: peerId });
+  };
+
   const playTogether = async (kind: GameKind) => {
     const seed = Math.floor(Math.random() * 1_000_000);
     // A game with a seat limit takes the first few rather than everybody, and
@@ -329,14 +354,14 @@ function GamesHub() {
           <Records />
         </div>
 
-        <Lobby onChallenge={(peerId) => setActiveGame({ kind: 'chess', opponentId: peerId })} />
+        <Lobby onChallenge={(peerId) => void challenge_('chess', peerId)} />
       </div>
 
       <ChallengeModal
         game={challenge}
         onClose={() => setChallenge(null)}
         onPick={(peerId) => {
-          setActiveGame({ kind: challenge!, opponentId: peerId });
+          void challenge_(challenge!, peerId);
           setChallenge(null);
         }}
       />
@@ -356,7 +381,7 @@ function GamesHub() {
  */
 function Records() {
   const scores = useStore((s) => s.scores);
-  const me = useStore((s) => s.profile.id);
+  const me = useSeatId();
   const table = standings(scores);
 
   if (!table.length) return null;
@@ -436,7 +461,7 @@ function NextMatch() {
   const nearby = useStore((s) => s.nearbyGame);
   const session = useStore((s) => s.gameSession);
   const peers = useStore((s) => s.peers);
-  const me = useStore((s) => s.profile.id);
+  const me = useSeatId();
   const join = useStore((s) => s.joinNextMatch);
   const leave = useStore((s) => s.leaveNextMatch);
   const propose = useStore((s) => s.proposeNextGame);

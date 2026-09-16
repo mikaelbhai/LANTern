@@ -200,12 +200,13 @@ pub fn save(state: &AppState, share: &Share) {
         let _ = db.execute(
             "INSERT INTO shares
                 (id, name, path, slug, mode, running, require_phrase, phrase,
-                 allow_upload, file_count, total_bytes, created_at, requests, bytes_served)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 allow_upload, file_count, total_bytes, created_at, requests, bytes_served,
+                 unlisted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 name = ?2, path = ?3, slug = ?4, mode = ?5, running = ?6,
                 require_phrase = ?7, phrase = ?8, allow_upload = ?9,
-                file_count = ?10, total_bytes = ?11",
+                file_count = ?10, total_bytes = ?11, unlisted = ?15",
             rusqlite::params![
                 share.id,
                 share.name,
@@ -221,6 +222,7 @@ pub fn save(state: &AppState, share: &Share) {
                 share.created_at as i64,
                 share.requests as i64,
                 share.bytes_served as i64,
+                share.unlisted as i64,
             ],
         );
     });
@@ -245,7 +247,8 @@ pub fn restore(state: &AppState) -> Vec<Share> {
         };
         let Ok(mut stmt) = db.prepare(
             "SELECT id, name, path, slug, mode, running, require_phrase, phrase,
-                    allow_upload, file_count, total_bytes, created_at, requests, bytes_served
+                    allow_upload, file_count, total_bytes, created_at, requests, bytes_served,
+                    unlisted
              FROM shares",
         ) else {
             return Vec::new();
@@ -262,6 +265,10 @@ pub fn restore(state: &AppState) -> Vec<Share> {
                 require_phrase: row.get::<_, i64>(6)? != 0,
                 phrase: row.get(7)?,
                 allow_upload: row.get::<_, i64>(8)? != 0,
+                unlisted: row.get::<_, i64>(14).unwrap_or(0) != 0,
+                // Filled in below: one query for all of them beats one per
+                // share, and a share is read back before its audience exists.
+                audience: Vec::new(),
                 file_count: row.get::<_, i64>(9)? as u64,
                 total_bytes: row.get::<_, i64>(10)? as u64,
                 created_at: row.get::<_, i64>(11)? as u64,
@@ -272,14 +279,48 @@ pub fn restore(state: &AppState) -> Vec<Share> {
             })
         });
 
-        match rows {
+        let mut shares: Vec<Share> = match rows {
             Ok(iter) => iter
                 .flatten()
                 .filter(|sh| Path::new(&sh.path).is_dir())
                 .collect(),
             Err(_) => Vec::new(),
+        };
+
+        // Who each one is for. Read in one pass rather than per share: this
+        // runs at startup, before anything is being served, and a restriction
+        // that is not yet loaded is a restriction that is not in force.
+        if let Ok(mut stmt) = db.prepare("SELECT share_id, device_id FROM share_audience") {
+            if let Ok(rows) =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            {
+                for (share_id, device_id) in rows.flatten() {
+                    if let Some(share) = shares.iter_mut().find(|sh| sh.id == share_id) {
+                        share.audience.push(device_id);
+                    }
+                }
+            }
         }
+
+        shares
     })
+}
+
+/// Records which devices a folder is for. Empty means everyone.
+pub fn save_audience(state: &AppState, share_id: &str, devices: &[String]) {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else { return };
+        let _ = db.execute(
+            "DELETE FROM share_audience WHERE share_id = ?1",
+            rusqlite::params![share_id],
+        );
+        for device in devices {
+            let _ = db.execute(
+                "INSERT OR IGNORE INTO share_audience (share_id, device_id) VALUES (?1, ?2)",
+                rusqlite::params![share_id, device],
+            );
+        }
+    });
 }
 
 fn mode_str(share: &Share) -> &'static str {

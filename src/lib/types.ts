@@ -313,6 +313,15 @@ export interface Share {
   phrase?: string;
   /** Let visitors upload into the folder. */
   allowUpload: boolean;
+  /**
+   * The highest tier of restriction: everyone is refused unless named.
+   *
+   * Separate from `audience` because they are separate facts. Unlisted with
+   * nobody named shows nobody, not everybody.
+   */
+  unlisted?: boolean;
+  /** Which devices an unlisted folder is for. Ignored while it is listed. */
+  audience?: string[];
   fileCount: number;
   totalBytes: number;
   createdAt: number;

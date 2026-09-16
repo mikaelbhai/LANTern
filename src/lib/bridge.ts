@@ -254,7 +254,37 @@ export const api = {
     sync: () => call<void>('hud_sync'),
   },
   /** The built-in static server that publishes folders to the LAN. */
+  /**
+   * What this device is called by everything that names devices.
+   *
+   * Not the profile id, which is minted in the browser and means nothing to
+   * anyone else. Peers are seated by this.
+   */
+  identity: {
+    deviceId: () => call<string>('identity_device_id'),
+  },
+  /**
+   * Whether a film is on screen.
+   *
+   * Only Android acts on it, where leaving the app mid-film puts the whole
+   * application into a floating window because the WebView cannot pop out the
+   * video alone. Everywhere else the player has a button and this does
+   * nothing. A call answers for itself, from the audio mode.
+   */
+  pip: {
+    setPlaying: (playing: boolean) => call<void>('pip_set_playing', { playing }),
+  },
   host: {
+    /**
+     * Narrows a published folder to named devices, or (with an empty list)
+     * puts it back to everyone.
+     *
+     * Unlisted rather than refused: the folder stops being mentioned at all,
+     * because a folder that announces itself and then says no has told
+     * everyone it exists.
+     */
+    setAudience: (shareId: string, unlisted: boolean, deviceIds: string[]) =>
+      call<void>('host_set_audience', { shareId, unlisted, deviceIds }),
     list: () => call<Share[]>('host_list'),
     create: (input: {
       name: string;

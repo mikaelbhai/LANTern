@@ -29,6 +29,7 @@ import { cn } from './lib/utils';
 import { useBackDismiss } from './lib/hooks';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
+import { IncomingGame } from './components/IncomingGame';
 import { useHud } from './lib/useHud';
 import { RejoinBanner } from './screens/games/LeaveGuard';
 
@@ -201,6 +202,7 @@ export default function App() {
         */}
         {call && <CallOverlay />}
         <IncomingFile />
+        <IncomingGame />
         <SystemPromptHost />
         <ControlConsent />
         <Toasts />
@@ -251,6 +253,7 @@ export default function App() {
 
       {/* Follows you across screens: a file offer should not wait behind one. */}
       <IncomingFile />
+      <IncomingGame />
       <RejoinBanner />
       </div>
 

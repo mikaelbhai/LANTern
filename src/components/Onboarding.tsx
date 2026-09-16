@@ -1,9 +1,11 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Baby, FolderOpen } from 'lucide-react';
 import { Wordmark } from './Logo';
 import { Avatar } from './Avatar';
-import { Button, Input } from './ui';
+import { Button, Input, Select } from './ui';
+import { AGES } from './Audience';
+import { api } from '../lib/bridge';
 import { AVATAR_COLORS, useStore } from '../lib/store';
 import { cn } from '../lib/utils';
 
@@ -18,10 +20,27 @@ export function Onboarding() {
   const [color, setColor] = React.useState(AVATAR_COLORS[0]);
   const [emoji, setEmoji] = React.useState('🏮');
 
+  /**
+   * Who you are, then what the network may watch.
+   *
+   * The second half was never asked. It has a default, and a default nobody
+   * chose is the one that gets blamed later: too low and a peer's Theatre is
+   * full of locked doors nobody explained, too high and the limit exists
+   * without ever having been set. It is one question and it belongs here,
+   * where the answer is cheap and there is nothing yet to go wrong.
+   */
+  const [step, setStep] = React.useState<'you' | 'watching'>('you');
+  const [maxAge, setMaxAge] = React.useState('13');
+
   const canGo = name.trim().length > 0;
 
   const submit = () => {
     if (!canGo) return;
+    // Recorded before the window opens, so the first peer to ask is answered
+    // by a limit somebody chose rather than by whatever the default was.
+    void api.ratings.setDefault(Number(maxAge)).catch(() => {
+      /* a limit that would not save is not a reason to block setting up */
+    });
     complete({
       name: name.trim(),
       color,
@@ -46,6 +65,8 @@ export function Onboarding() {
         </div>
 
         <div className="panel p-5 space-y-5">
+          {step === 'you' ? (
+          <>
           <div className="flex justify-center">
             <Avatar name={name || '?'} color={color} emoji={emoji} size={64} />
           </div>
@@ -109,11 +130,60 @@ export function Onboarding() {
             size="lg"
             full
             disabled={!canGo}
-            onClick={submit}
+            onClick={() => canGo && setStep('watching')}
             icon={<ArrowRight size={15} />}
           >
-            Light the lantern
+            Continue
           </Button>
+          </>
+          ) : (
+          <>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="h-7 w-7 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-gold shrink-0">
+                <Baby size={13} />
+              </span>
+              <label className="label !mb-0">What other devices may watch</label>
+            </div>
+            <p className="text-2xs text-muted leading-relaxed">
+              Anything you publish is checked against this before a file
+              leaves — by this device, every time, not by the app doing the
+              watching. Each device can be given its own limit later, and any
+              one title can be let past without changing it.
+            </p>
+            <Select value={maxAge} onChange={setMaxAge} options={AGES} className="w-full" />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="h-7 w-7 rounded-full bg-raised border border-edge grid place-items-center text-muted shrink-0">
+                <FolderOpen size={13} />
+              </span>
+              <label className="label !mb-0">Then publish something</label>
+            </div>
+            <p className="text-2xs text-muted leading-relaxed">
+              Nothing is shared until you say so. Point Theatre at a folder of
+              videos, or Files at any folder, and it appears on every device on
+              the network — and in a plain browser, with no app needed.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <Button size="lg" onClick={() => setStep('you')}>
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              full
+              onClick={submit}
+              icon={<ArrowRight size={15} />}
+            >
+              Light the lantern
+            </Button>
+          </div>
+          </>
+          )}
         </div>
 
         <p className="text-2xs text-muted text-center mt-4">

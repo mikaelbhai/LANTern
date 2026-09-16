@@ -91,6 +91,19 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
             blocked_at INTEGER NOT NULL
         );
 
+        -- Devices a published folder is for, when it is not for everyone.
+        --
+        -- No rows for a share means everyone, which is what publishing has
+        -- always meant here and stays the default. Rows mean the folder is
+        -- unlisted: it is absent from the index and from what peers are told
+        -- this device publishes, and asking for it by name gets the same
+        -- answer as asking for something that was never there.
+        CREATE TABLE IF NOT EXISTS share_audience (
+            share_id  TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            PRIMARY KEY (share_id, device_id)
+        );
+
         -- One-off permission to watch something the rating would refuse.
         --
         -- Raising a device's allowance is the wrong shape for yes, just this
@@ -183,5 +196,68 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         );
     }
 
+    // Ratings and approvals are keyed by a title's path, and that path used to
+    // be written down exactly as it appears in an address - brackets and
+    // spaces escaped. The server checks them against the path its router hands
+    // over, which is already unescaped, so the two only ever matched for a
+    // filename with nothing in it worth escaping. Every restriction on a title
+    // with a bracket or a space in its name was silently not in force.
+    //
+    // Rewriting them is the only way an existing library keeps the ratings
+    // somebody already set: a fresh scan would not put them back, because
+    // nothing rescans a rating.
+    decode_title_paths(conn);
+
+    // Whether a published folder is unlisted, which is a different fact from
+    // who it is for. Added after the table shipped, so it runs as an
+    // alteration; a duplicate-column error is the expected outcome on every
+    // run after the first and means the schema is already current.
+    //
+    // Kept apart from `share_audience` deliberately. An empty audience used to
+    // stand for everyone, which conflated two states: a folder published to
+    // the network, and an unlisted folder nobody has been named on yet. The
+    // second must show nobody, not everybody.
+    let _ = conn.execute(
+        "ALTER TABLE shares ADD COLUMN unlisted INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
     Ok(())
+}
+
+/// Rewrites rating and approval keys from escaped paths to plain ones.
+///
+/// Runs on every start and does nothing after the first: a path that is
+/// already plain decodes to itself. Rows that would collide with one already
+/// carrying the right spelling are dropped rather than replacing it - the
+/// plain one is the one in force, and keeping it is what makes this safe to
+/// run twice.
+fn decode_title_paths(conn: &Connection) {
+    for (table, column) in [("title_ages", "stream_path"), ("approvals", "stream_path")] {
+        let Ok(mut stmt) = conn.prepare(&format!("SELECT DISTINCT {column} FROM {table}")) else {
+            continue;
+        };
+        let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) else {
+            continue;
+        };
+        let paths: Vec<String> = rows.flatten().collect();
+        for path in paths {
+            let plain = crate::rating::decode(&path);
+            if plain == path {
+                continue;
+            }
+            let moved = conn.execute(
+                &format!("UPDATE OR IGNORE {table} SET {column} = ?1 WHERE {column} = ?2"),
+                rusqlite::params![plain, path],
+            );
+            // Left behind by OR IGNORE because the plain spelling was already
+            // there. The escaped one is then a duplicate of a row in force.
+            if moved.is_ok() {
+                let _ = conn.execute(
+                    &format!("DELETE FROM {table} WHERE {column} = ?1"),
+                    rusqlite::params![path],
+                );
+            }
+        }
+    }
 }

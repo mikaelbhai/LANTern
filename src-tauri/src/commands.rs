@@ -453,6 +453,29 @@ pub fn host_os() -> String {
     std::env::consts::OS.to_string()
 }
 
+/// Tells the window layer that a film is on screen, or is no longer.
+///
+/// Only Android acts on it, where leaving the app mid-film puts the whole
+/// application in a floating window - it has no way to pop out the video
+/// alone. Everywhere else the player has a button for that and this does
+/// nothing.
+#[tauri::command]
+pub fn pip_set_playing(playing: bool) {
+    crate::pip::set_playing(playing);
+}
+
+/// What this device is called by everything that names devices.
+///
+/// The window had no way to ask. It had a profile id - minted in the browser,
+/// meaningful only on this machine - and used that wherever it needed to say
+/// "me", including where it was comparing against a list of *device* ids that
+/// peers had been seated under. The two never match, so a device could be
+/// dealt into a game and not know it was playing.
+#[tauri::command]
+pub fn identity_device_id(state: State<'_, AppState>) -> String {
+    state.with(|s| s.device_id.clone())
+}
+
 /* ------------------------------------------------------------------ net */
 
 #[tauri::command]
@@ -2441,6 +2464,10 @@ pub fn host_create(
         require_phrase,
         phrase: require_phrase.then(|| "copper signal quiet river".to_string()),
         allow_upload,
+        // Published to everyone, which is what publishing has meant here all
+        // along. Narrowing it is a deliberate act afterwards.
+        unlisted: false,
+        audience: Vec::new(),
         file_count: if real { scanned.files } else { file_count },
         total_bytes: if real { scanned.bytes } else { total_bytes },
         created_at: now_ms(),
@@ -3691,6 +3718,51 @@ pub fn ratings_set_default(app: AppHandle, state: State<'_, AppState>, max_age: 
             );
         }
     });
+    crate::library::spawn_refresh(&app, &state);
+    Ok(())
+}
+
+/// Makes a published folder unlisted, for named devices only.
+///
+/// Unlisted is the highest tier of restriction: everyone is refused unless
+/// named, and nothing else lifts it - not being vouched for, not being allowed
+/// every rating. Those say what a device may watch; this says whether the
+/// folder exists for them at all.
+///
+/// The flag is kept apart from the list because they are separate facts. An
+/// unlisted folder with nobody named shows nobody, and reading an empty list
+/// as "no restriction" would turn the strictest setting into the loosest at
+/// exactly the moment it was switched on.
+///
+/// Unlisted rather than refused: the folder is absent from the index and from
+/// what peers are told this device publishes, and asking for it by name gets
+/// the same answer as asking for something that was never there. A folder that
+/// announced itself and then said no would tell everyone it exists, which is
+/// most of what anybody wanted to keep back.
+#[tauri::command]
+pub fn host_set_audience(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    share_id: String,
+    unlisted: bool,
+    device_ids: Vec<String>,
+) -> Res<()> {
+    shares::save_audience(&state, &share_id, &device_ids);
+    let updated = state.with(|s| {
+        let share = s.shares.iter_mut().find(|sh| sh.id == share_id).map(|share| {
+            share.unlisted = unlisted;
+            share.audience = device_ids.clone();
+            share.clone()
+        });
+        share
+    });
+    if let Some(share) = updated.as_ref() {
+        shares::save(&state, share);
+    }
+    let all = state.with(|s| s.shares.clone());
+    let _ = app.emit("host:changed", &all);
+    // What a peer is shown depends on this, so their view is rebuilt rather
+    // than left until something else happens to ask.
     crate::library::spawn_refresh(&app, &state);
     Ok(())
 }

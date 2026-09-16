@@ -347,16 +347,63 @@ export function Player({
     }
   }, [volume, muted]);
 
+  /**
+   * Where the viewer has got to, for the saver below to read.
+   *
+   * A ref rather than the dependency of an effect. Keying the saver on `time`
+   * re-ran it four times a second, and every re-run fired its own cleanup -
+   * so the position was written on every tick rather than every five seconds,
+   * and any momentary wrong value was in the database before the next frame.
+   */
+  /**
+   * Tells Android a film is on screen, for as long as one is.
+   *
+   * That is what decides whether leaving the app puts it in a floating window.
+   * It used to be guessed from whether the device was making any sound at all,
+   * which is true of a game's effects and of another app's music - so leaving
+   * LANTern during a game popped the whole application out.
+   */
+  React.useEffect(() => {
+    void api.pip.setPlaying(true).catch(() => {});
+    return () => {
+      void api.pip.setPlaying(false).catch(() => {});
+    };
+  }, []);
+
+  const latestTime = React.useRef(time);
+  latestTime.current = time;
+
+  /**
+   * True while the stream is being replaced.
+   *
+   * Changing the audio track, the delay, or scrubbing a remuxed stream all
+   * mean asking the far side for the file again from a new point. In between,
+   * the element reports a position belonging to no stream in particular -
+   * zero, usually, briefly. Writing that down is how switching language lost
+   * an hour of a film: the clock recovered a moment later, and the saved
+   * position did not.
+   */
+  const swapping = React.useRef(false);
+  React.useEffect(() => {
+    swapping.current = true;
+  }, [source]);
+
   // Remember where the viewer got to, so Continue watching is accurate.
   React.useEffect(() => {
-    const id = setInterval(() => {
-      void api.media.setProgress(item.id, Math.floor(time));
-    }, 5000);
+    const save = () => {
+      if (swapping.current) return;
+      const at = Math.floor(latestTime.current);
+      // A position before the point the stream was asked to start at cannot
+      // be real, whatever the element says.
+      if (at < Math.floor(sourceOffset)) return;
+      void api.media.setProgress(item.id, at);
+    };
+    const id = setInterval(save, 5000);
     return () => {
       clearInterval(id);
-      void api.media.setProgress(item.id, Math.floor(time));
+      save();
     };
-  }, [item.id, time]);
+  }, [item.id, sourceOffset]);
 
   /* -------------------------------------------------------- watch party */
 
@@ -687,13 +734,24 @@ export function Player({
               if (audioTrack < 0 && item.progressSec > 0) {
                 el.currentTime = item.progressSec;
               }
+              // A remuxed stream's own clock starts at zero however far in it
+              // begins, so the offset is the position until it reports one.
+              // Set here rather than waiting for the first tick: that tick is
+              // what the saver would otherwise have written down.
+              if (audioTrack >= 0) setTime(sourceOffset);
+              swapping.current = false;
             }}
             // Deliberately no crossOrigin: the player does not read pixels,
             // and requiring a CORS-checked fetch here turned a perfectly
             // reachable file into "Can't reach". The thumbnail grabber sets it
             // because a canvas read needs it; this does not.
             onTimeUpdate={(e) => {
-              if (!scrubbing) setTime(sourceOffset + e.currentTarget.currentTime);
+              if (scrubbing) return;
+              // Between asking for a new stream and it being ready, the
+              // element still ticks against the old one. Those readings belong
+              // to a position that no longer exists.
+              if (swapping.current) return;
+              setTime(sourceOffset + e.currentTarget.currentTime);
             }}
             onProgress={(e) => {
               const el = e.currentTarget;

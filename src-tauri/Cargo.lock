@@ -2732,6 +2732,7 @@ dependencies = [
  "jni",
  "mdns-sd",
  "notify",
+ "percent-encoding",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

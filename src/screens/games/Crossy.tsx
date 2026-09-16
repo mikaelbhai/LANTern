@@ -28,7 +28,7 @@ import {
 } from '../../lib/crossy';
 import type { Direction, Player } from '../../lib/crossy';
 import { api, on } from '../../lib/bridge';
-import { useStore } from '../../lib/store';
+import { useStore, useSeatId } from '../../lib/store';
 import { sfx } from '../../lib/audio';
 import { claimArrowKeys } from '../../lib/tv';
 import { GameShell } from './GameShell';
@@ -62,7 +62,7 @@ interface Ghost {
 export function Crossy({ onExit }: { onExit: () => void }) {
   const session = useStore((s) => s.gameSession);
   const active = session && session.game === 'crossy' ? session : null;
-  const myId = useStore((s) => s.profile.id);
+  const myId = useSeatId();
 
   const players = React.useMemo(() => {
     if (!active) return [myId];

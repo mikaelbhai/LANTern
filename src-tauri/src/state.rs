@@ -76,6 +76,17 @@ pub struct Inner {
     /// One-off permission to watch past a rating: (device, path) -> when it
     /// lapses, where 0 never does and a path of `*` covers everything.
     pub approvals: std::collections::HashMap<(String, String), u64>,
+    /// Whether a request from this machine is treated as the publisher's own.
+    ///
+    /// True in the application, where it is what stops the host being caught
+    /// by the restrictions it set: an age limit meant for a child's tablet
+    /// refusing the person who set it, or an unlisted folder vanishing from
+    /// the Theatre of the device publishing it.
+    ///
+    /// Off in the gate tests, which reach the server over loopback and would
+    /// otherwise all look like the host - leaving nothing asserting that a
+    /// guest is refused, which is the thing those tests exist for.
+    pub trust_local_requests: bool,
     /// Who may drive this machine's pointer and keyboard, and who does now.
     pub control: crate::input::Control,
     /// Held open while a device is driving this one, so a finger dragging at
@@ -174,6 +185,7 @@ impl AppState {
             held_keys: std::collections::HashMap::new(),
             trusted: std::collections::HashSet::new(),
             approvals: std::collections::HashMap::new(),
+            trust_local_requests: true,
             device_ages: std::collections::HashMap::new(),
             title_ages: std::collections::HashMap::new(),
         })))

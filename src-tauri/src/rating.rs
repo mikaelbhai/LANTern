@@ -211,6 +211,14 @@ pub fn min_age_for(state: &AppState, stream_path: &str, name: &str) -> crate::ra
 /// Any query string is dropped: `?adelay=` and `?k=` describe how to serve a
 /// file, not which file it is, and a rating that missed because of a delay
 /// setting would be a restriction that silently lifted.
+///
+/// And it is percent-*decoded*, which is the whole of a fault worth writing
+/// down. Ratings were stored as they appear in an address - brackets and
+/// spaces escaped - while the server checks them against the path its router
+/// hands over, which is already decoded. The two only matched for a filename
+/// with nothing in it worth escaping, so a title called `Chronicle.2012.mp4`
+/// was correctly refused and every one with a bracket or a space in its name
+/// was served to anybody. Almost every file in a real library has one.
 pub fn stream_path(stream_url: &str) -> String {
     let after_scheme = stream_url
         .split_once("://")
@@ -220,7 +228,15 @@ pub fn stream_path(stream_url: &str) -> String {
         .split_once('/')
         .map(|(_, p)| format!("/{p}"))
         .unwrap_or_default();
-    path.split('?').next().unwrap_or_default().to_string()
+    let raw = path.split('?').next().unwrap_or_default();
+    decode(raw)
+}
+
+/// The one spelling a title is known by here: its path, unescaped.
+pub fn decode(path: &str) -> String {
+    percent_encoding::percent_decode_str(path)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 /// Writes what a title is rated, and who said so, onto a library entry.
@@ -339,8 +355,38 @@ mod tests {
     fn a_stream_address_reduces_to_its_path() {
         assert_eq!(
             stream_path("http://192.168.100.67:7981/media/Movies/A%20Film.mkv"),
-            "/media/Movies/A%20Film.mkv",
+            "/media/Movies/A Film.mkv",
         );
+    }
+
+    /// Unescaped, and that is the whole of a fault worth keeping a test for.
+    ///
+    /// Ratings were written down as a path appears in an address and checked
+    /// against the path the router hands over, which is already unescaped. The
+    /// two only matched for a filename with nothing in it worth escaping, so
+    /// `Chronicle.2012.mp4` was correctly refused and every title with a
+    /// bracket or a space in its name was served to anybody. Nearly every file
+    /// in a real library has one.
+    #[test]
+    fn and_is_spelled_the_way_the_server_will_see_it() {
+        assert_eq!(
+            stream_path("http://h:1/media/Movies/Deadpool.2016-%5BYTS.AG%5D.mp4"),
+            "/media/Movies/Deadpool.2016-[YTS.AG].mp4",
+        );
+        // A path with nothing to unescape is already itself, which is why the
+        // fault hid: those titles were refused correctly all along.
+        assert_eq!(
+            stream_path("http://h:1/media/Movies/Chronicle.2012.mp4"),
+            "/media/Movies/Chronicle.2012.mp4",
+        );
+    }
+
+    /// Running the rewrite twice must not mangle a name that really does
+    /// contain a percent sign.
+    #[test]
+    fn decoding_something_already_plain_leaves_it_alone() {
+        let plain = "/media/Movies/100% Wolf.mkv";
+        assert_eq!(decode(plain), plain);
     }
 
     /// The reason this is not a `split('?')` at the call site: a query string

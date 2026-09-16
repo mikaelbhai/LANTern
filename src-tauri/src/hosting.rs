@@ -9,13 +9,14 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, Query, State};
+use axum::extract::{ConnectInfo, Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
 use crate::model::{now_ms, ShareMode};
+use std::net::SocketAddr;
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -36,6 +37,81 @@ pub fn router(state: AppState) -> Router {
         .route("/:slug", get(serve_root))
         .route("/:slug/*path", get(serve_path))
         .with_state(Arc::new(state))
+}
+
+/// Whether this request came from the machine doing the publishing.
+///
+/// The host is not one of its own guests. It sets the restrictions; being
+/// caught by them is how a library becomes unwatchable on the device holding
+/// it - an age limit meant for a child's tablet stopping the person who set
+/// it, and an unlisted folder disappearing from the Theatre of the device that
+/// published it.
+///
+/// Recognised by where the connection came from: loopback, or an address this
+/// machine answers on. The window fetches from this device's own LAN address,
+/// because the manifest it reads is the same one peers read.
+fn from_this_machine(state: &AppState, addr: SocketAddr) -> bool {
+    let ip = addr.ip();
+    let mine = ip.to_string();
+    state.with(|s| {
+        s.trust_local_requests
+            && (ip.is_loopback() || s.net.interfaces.iter().any(|i| i.ip == mine))
+    })
+}
+
+/// Whether a published folder is for the device behind this request.
+///
+/// A folder with no audience is for everyone, which is what publishing has
+/// always meant here. One with an audience is unlisted: absent from the index,
+/// absent from what peers are told this device publishes, and absent when
+/// asked for by name.
+///
+/// Unidentified callers - a browser typing the address in - are not on any
+/// list, so an unlisted folder is invisible to them. That is the whole point;
+/// the plain-HTTP library stays open for everything nobody has narrowed.
+///
+/// Takes what it needs already worked out rather than looking it up: this is
+/// called from inside the lock that reads the share list, and reaching for
+/// that lock again from in here is a deadlock - which is precisely what it
+/// was, and what hung every request for the index and the share list.
+fn for_this_caller(share: &crate::model::Share, asker: Option<&str>, mine: bool) -> bool {
+    if !share.unlisted {
+        return true;
+    }
+    // See `from_this_machine`: the publisher is not one of its own guests.
+    if mine {
+        return true;
+    }
+    // Unlisted is the highest tier: everyone is refused unless named, and
+    // being named here is the only thing that lifts it. Nothing else does -
+    // not being vouched for, not being allowed every rating. Those say what a
+    // device may watch; this says whether the folder exists for them at all.
+    //
+    // Nobody named therefore means nobody, not everybody. Reading an empty
+    // list as "no restriction" would turn the strictest setting into the
+    // loosest at exactly the moment it was switched on.
+    match asker {
+        Some(device) => share.audience.iter().any(|d| d == device),
+        None => false,
+    }
+}
+
+/// The same question, asked by slug.
+fn slug_for_this_caller(
+    state: &AppState,
+    slug: &str,
+    key: Option<&str>,
+    from: Option<SocketAddr>,
+) -> bool {
+    // Both worked out before the share list is read, for the reason above.
+    let mine = from.map(|a| from_this_machine(state, a)).unwrap_or(false);
+    let asker = crate::rating::requester(state, key);
+    let share = state.with(|s| s.shares.iter().find(|sh| sh.slug == slug).cloned());
+    match share {
+        Some(share) => for_this_caller(&share, asker.as_deref(), mine),
+        // Nothing by that name; the ordinary not-found path can say so.
+        None => true,
+    }
 }
 
 /// This device's profile picture, if one is set.
@@ -60,11 +136,19 @@ async fn serve_avatar(State(state): State<Arc<AppState>>) -> Response {
 ///
 /// Only running shares, and only the fields a peer needs: enough to fetch a
 /// media manifest, nothing about where the files live on disk.
-async fn shares_json(State(state): State<Arc<AppState>>) -> Response {
+async fn shares_json(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let key = params.get("k").map(String::as_str);
+    let mine = from_this_machine(&state, from);
+    let asker = crate::rating::requester(&state, key);
     let shares = state.with(|s| {
         s.shares
             .iter()
             .filter(|sh| sh.running)
+            .filter(|sh| for_this_caller(sh, asker.as_deref(), mine))
             .map(|sh| {
                 serde_json::json!({
                     "slug": sh.slug,
@@ -128,11 +212,19 @@ async fn serve_transfer(
 }
 
 /// Landing page listing everything currently published.
-async fn index(State(state): State<Arc<AppState>>) -> Response {
+async fn index(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let key = params.get("k").map(String::as_str);
+    let mine = from_this_machine(&state, from);
+    let asker = crate::rating::requester(&state, key);
     let shares = state.with(|s| {
         s.shares
             .iter()
             .filter(|sh| sh.running)
+            .filter(|sh| for_this_caller(sh, asker.as_deref(), mine))
             .map(|sh| (sh.slug.clone(), sh.name.clone()))
             .collect::<Vec<_>>()
     });
@@ -160,20 +252,35 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
 
 async fn serve_root(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
     AxumPath(slug): AxumPath<String>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
     let key = params.get("k").cloned();
+    // Unlisted means unlisted. Not found, rather than refused: a folder that
+    // announces itself and then says no has told everyone it exists, which is
+    // most of what anybody wanted to keep back.
+    if !slug_for_this_caller(&state, &slug, key.as_deref(), Some(from)) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
     respond(state, slug, String::new(), &headers, key, params.contains_key("json")).await
 }
 
 async fn serve_path(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
     AxumPath((slug, path)): AxumPath<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
+    // Whether this folder is for them at all, before what it holds is
+    // considered. Every branch below is behind this as well as behind the
+    // rating check, for the reason the rating check was moved up here.
+    if !slug_for_this_caller(&state, &slug, params.get("k").map(String::as_str), Some(from)) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
     // The gate, before anything is decided about what kind of request this is.
     //
     // It used to sit further down, after the branches below had already
@@ -186,12 +293,14 @@ async fn serve_path(
     // Every variant is the same title, so they share one identity: the path,
     // without the parameters that only say how to serve it.
     let stream_path = format!("/{slug}/{path}");
-    if !crate::rating::may_serve(
-        &state,
-        params.get("k").map(String::as_str),
-        &stream_path,
-        &path,
-    ) {
+    if !from_this_machine(&state, from)
+        && !crate::rating::may_serve(
+            &state,
+            params.get("k").map(String::as_str),
+            &stream_path,
+            &path,
+        )
+    {
         return (
             StatusCode::FORBIDDEN,
             "This device is not approved for that title",
@@ -1071,7 +1180,12 @@ fn mime_for(path: &Path) -> &'static str {
 /// Binds the host port and serves until the process exits.
 pub async fn serve(state: AppState, port: u16) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    axum::serve(listener, router(state)).await
+    // With connect info, so the server can tell its own machine from a guest.
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1102,6 +1216,8 @@ mod tests {
                 require_phrase: false,
                 phrase: None,
                 allow_upload: false,
+                unlisted: false,
+                audience: Vec::new(),
                 file_count: 3,
                 total_bytes: 34,
                 created_at: now_ms(),
@@ -1115,7 +1231,11 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let _ = axum::serve(listener, router(state)).await;
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
         });
         (addr, root)
     }
@@ -1148,6 +1268,9 @@ mod tests {
 
         let state = AppState::new();
         state.with(|s| {
+            // Reached over loopback, so the host check has to be off or
+            // every one of these would look like the publisher itself.
+            s.trust_local_requests = false;
             s.title_ages.insert("/test/film.mkv".to_string(), 18);
             s.shares.push(Share {
                 id: "t".into(),
@@ -1159,6 +1282,8 @@ mod tests {
                 require_phrase: false,
                 phrase: None,
                 allow_upload: false,
+                unlisted: false,
+                audience: Vec::new(),
                 file_count: 1,
                 total_bytes: 17,
                 created_at: now_ms(),
@@ -1172,7 +1297,11 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let _ = axum::serve(listener, router(state)).await;
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
         });
         addr
     }
@@ -1237,6 +1366,246 @@ mod tests {
         let (addr, _root) = serve_fixture(ShareMode::Files).await;
         let response = get(addr, "/test/hello.txt?audio=0", "").await;
         assert!(!response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// A folder published to one device only.
+    ///
+    /// That device holds `key-theirs`; everybody else holds nothing, which is
+    /// what a browser typing the address in looks like.
+    async fn serve_unlisted() -> std::net::SocketAddr {
+        let root = std::env::temp_dir().join(format!("lantern-unlisted-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), b"private body").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            // Reached over loopback, so the host check has to be off or
+            // every one of these would look like the publisher itself.
+            s.trust_local_requests = false;
+            s.issued_keys.insert("theirs".into(), "key-theirs".into());
+            s.issued_keys.insert("someone-else".into(), "key-other".into());
+            s.shares.push(Share {
+                id: "t".into(),
+                name: "Private".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "private".into(),
+                mode: ShareMode::Files,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: true,
+                audience: vec!["theirs".into()],
+                file_count: 1,
+                total_bytes: 12,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            })
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_folder_is_absent_from_the_index() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/", "").await;
+        assert!(!response.contains("Private"), "{response}");
+        assert!(!response.contains("private"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn and_absent_from_what_peers_are_told_is_published() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/shares.json", "").await;
+        assert!(!response.contains("private"), "{response}");
+    }
+
+    /// Not found rather than refused. A folder that announces itself and then
+    /// says no has told everyone it exists.
+    #[tokio::test]
+    async fn and_not_there_when_asked_for_by_name() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/private/notes.txt", "").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+        assert!(!response.contains("private body"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn nor_at_its_root() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/private", "").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    }
+
+    /// Somebody else's key is not a key to this.
+    #[tokio::test]
+    async fn another_devices_key_does_not_open_it() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/private/notes.txt?k=key-other", "").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+        assert!(!response.contains("private body"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn nor_does_a_key_nobody_was_issued() {
+        let addr = serve_unlisted().await;
+        let response = get(addr, "/private/notes.txt?k=made-up", "").await;
+        assert!(response.starts_with("HTTP/1.1 404"), "{response}");
+    }
+
+    /// And the device it is for sees it, in all three places.
+    #[tokio::test]
+    async fn the_device_it_is_published_to_sees_it() {
+        let addr = serve_unlisted().await;
+
+        let listed = get(addr, "/shares.json?k=key-theirs", "").await;
+        assert!(listed.contains("private"), "{listed}");
+
+        let index = get(addr, "/?k=key-theirs", "").await;
+        assert!(index.contains("Private"), "{index}");
+
+        let file = get(addr, "/private/notes.txt?k=key-theirs", "").await;
+        assert!(file.starts_with("HTTP/1.1 200"), "{file}");
+        assert!(file.contains("private body"), "{file}");
+    }
+
+    /// The case the first version of this got wrong.
+    ///
+    /// Unlisted with nobody named means nobody. Reading emptiness as "no
+    /// restriction" turned the strictest setting into the loosest at exactly
+    /// the moment it was switched on.
+    #[tokio::test]
+    async fn unlisted_with_nobody_named_shows_nobody() {
+        let root = std::env::temp_dir().join(format!("lantern-nobody-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), b"private body").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            // Reached over loopback, so the host check has to be off or
+            // every one of these would look like the publisher itself.
+            s.trust_local_requests = false;
+            s.issued_keys.insert("someone".into(), "key-someone".into());
+            s.shares.push(Share {
+                id: "t".into(),
+                name: "Private".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "private".into(),
+                mode: ShareMode::Files,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: true,
+                audience: Vec::new(),
+                file_count: 1,
+                total_bytes: 12,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            })
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+
+        let anon = get(addr, "/private/notes.txt", "").await;
+        assert!(anon.starts_with("HTTP/1.1 404"), "{anon}");
+
+        // Not even a device this machine has issued a key to.
+        let known = get(addr, "/private/notes.txt?k=key-someone", "").await;
+        assert!(known.starts_with("HTTP/1.1 404"), "{known}");
+        assert!(!known.contains("private body"), "{known}");
+
+        let index = get(addr, "/?k=key-someone", "").await;
+        assert!(!index.contains("Private"), "{index}");
+    }
+
+    /// The publisher is not one of its own guests.
+    ///
+    /// Without this the restrictions a host sets catch the host: an age limit
+    /// meant for a child's tablet refuses the person who set it, and a folder
+    /// published to nobody disappears from the Theatre of the device
+    /// publishing it - which reads as "can't reach" rather than as a
+    /// restriction, because from that side it is not one.
+    #[tokio::test]
+    async fn the_device_doing_the_publishing_is_not_shut_out_of_it() {
+        let root = std::env::temp_dir().join(format!("lantern-self-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("film.mkv"), b"picture and sound").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            // Rated far above what anyone is allowed, and published to nobody.
+            s.title_ages.insert("/private/film.mkv".to_string(), 18);
+            s.shares.push(Share {
+                id: "t".into(),
+                name: "Private".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "private".into(),
+                mode: ShareMode::Files,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: true,
+                audience: Vec::new(),
+                file_count: 1,
+                total_bytes: 17,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            })
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+
+        // Reached over loopback, which is this machine by definition. Both
+        // restrictions are the host's own and neither applies to it.
+        let file = get(addr, "/private/film.mkv", "").await;
+        assert!(file.starts_with("HTTP/1.1 200"), "{file}");
+        assert!(file.contains("picture and sound"), "{file}");
+
+        let index = get(addr, "/", "").await;
+        assert!(index.contains("Private"), "{index}");
+    }
+
+    /// A folder nobody has narrowed is still for everybody, with no key.
+    #[tokio::test]
+    async fn a_folder_with_no_audience_is_still_for_everyone() {
+        let (addr, _root) = serve_fixture(ShareMode::Files).await;
+        let response = get(addr, "/test/hello.txt", "").await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     }
 
     #[tokio::test]

@@ -30,6 +30,7 @@ mod model;
 mod mp4;
 mod net;
 mod phrase;
+mod pip;
 pub mod shares;
 mod sidecar;
 #[cfg(test)]
@@ -130,6 +131,8 @@ pub fn run() {
             commands::profile_announce,
             commands::profile_set_avatar,
             commands::profile_has_avatar,
+            commands::identity_device_id,
+            commands::pip_set_playing,
             commands::net_info,
             commands::net_set_relay_hub,
             commands::net_set_port,
@@ -203,6 +206,7 @@ pub fn run() {
             commands::ratings_set_default,
             commands::ratings_set_title,
             commands::ratings_set_titles,
+            commands::host_set_audience,
             commands::ratings_approve,
             commands::ratings_revoke,
             commands::ratings_approvals,

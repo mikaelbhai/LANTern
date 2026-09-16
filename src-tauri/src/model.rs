@@ -260,6 +260,16 @@ pub struct Share {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phrase: Option<String>,
     pub allow_upload: bool,
+    /// The highest tier of restriction: everyone is refused unless named.
+    ///
+    /// Separate from `audience` because they are separate facts. An unlisted
+    /// folder with nobody named shows nobody — not everybody, which is what
+    /// reading emptiness as "no restriction" would have meant.
+    #[serde(default)]
+    pub unlisted: bool,
+    /// Which devices an unlisted folder is for. Ignored while it is listed.
+    #[serde(default)]
+    pub audience: Vec<String>,
     pub file_count: u64,
     pub total_bytes: u64,
     pub created_at: u64,

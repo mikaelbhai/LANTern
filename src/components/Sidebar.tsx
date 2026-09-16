@@ -170,7 +170,19 @@ export function Sidebar({
                   transition={{ type: 'spring', stiffness: 260, damping: 26 }}
                 />
               )}
-              <span className="relative z-10 flex items-center gap-2.5 w-full">
+              {/*
+                Not `w-full` when collapsed. The button centres its contents,
+                but a child that fills the button is already centred - so the
+                icon aligned to the start of that full-width span and sat
+                jammed against the left edge of the rail, which is what the
+                collapsed sidebar looked like.
+              */}
+              <span
+                className={cn(
+                  'relative z-10 flex items-center gap-2.5',
+                  collapsed ? 'justify-center' : 'w-full',
+                )}
+              >
                 <Icon size={16} className="shrink-0" />
                 {!collapsed && <span className="text-xs font-medium">{item.label}</span>}
                 {!collapsed && badge && (

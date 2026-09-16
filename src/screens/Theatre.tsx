@@ -410,6 +410,41 @@ function seriesOrder(items: MediaItem[], of: MediaItem): MediaItem[] {
     );
 }
 
+/**
+ * One row per series in Continue watching, rather than one per episode.
+ *
+ * A show watched over a week put every part-finished episode on the shelf side
+ * by side - "S1 E1", "S1 E2", the same artwork twice over - which is a list of
+ * everything except the one thing being asked for, which is where to carry on.
+ *
+ * The furthest in is the one kept: episode three half-watched means one and
+ * two are behind you, whatever their own progress bars say. Films are
+ * untouched; each is its own thing and belongs on the shelf in its own right.
+ */
+function oneEpisodePerSeries(items: MediaItem[]): MediaItem[] {
+  const furthest = new Map<string, MediaItem>();
+  const out: MediaItem[] = [];
+
+  for (const item of items) {
+    if (!item.series) {
+      out.push(item);
+      continue;
+    }
+    const held = furthest.get(item.series);
+    if (!held || isLater(item, held)) furthest.set(item.series, item);
+  }
+
+  return [...out, ...furthest.values()];
+}
+
+/** Later in a series: by season, then by episode. */
+function isLater(a: MediaItem, b: MediaItem): boolean {
+  const season = (i: MediaItem) => i.season ?? 0;
+  const episode = (i: MediaItem) => i.episode ?? 0;
+  if (season(a) !== season(b)) return season(a) > season(b);
+  return episode(a) > episode(b);
+}
+
 function pickHero(items: MediaItem[]): MediaItem | null {
   if (!items.length) return null;
   // Prefer something part-watched, then the newest full-length title.
@@ -444,9 +479,9 @@ function buildRows(
     collection,
   });
 
-  const continued = items
-    .filter((i) => i.progressSec > 30 && i.progressSec < i.durationSec * 0.95)
-    .sort((a, b) => b.progressSec / b.durationSec - a.progressSec / a.durationSec);
+  const continued = oneEpisodePerSeries(
+    items.filter((i) => i.progressSec > 30 && i.progressSec < i.durationSec * 0.95),
+  ).sort((a, b) => b.progressSec / b.durationSec - a.progressSec / a.durationSec);
   if (continued.length) {
     rows.push({ label: 'Continue watching', entries: continued.map(asItem) });
   }

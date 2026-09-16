@@ -69,6 +69,28 @@ pub extern "system" fn Java_app_lantern_desktop_MainActivity_nativeRegisterInsta
     let _ = RUNTIME.set(Runtime { vm, activity });
 }
 
+/// Runs something against the activity, when Android has handed it over.
+///
+/// The registration above is the only route from here into the app's own
+/// classes, so anything else that needs one borrows it rather than asking for
+/// a second. `None` means the activity has not started yet, or this is not
+/// Android at all, and the caller decides what that means.
+pub(crate) fn with_activity<R>(
+    run: impl FnOnce(&mut jni::AttachGuard<'_>, &JClass) -> R,
+) -> Option<R> {
+    let runtime = RUNTIME.get()?;
+    let mut env = runtime.vm.attach_current_thread().ok()?;
+    // Safety: as in `install` - a global reference to a live class, and
+    // `JClass` owns nothing, so nothing is released twice.
+    let class = unsafe { JClass::from_raw(runtime.activity.as_raw()) };
+    let out = run(&mut env, &class);
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+    Some(out)
+}
+
 /// Asks Android to install the package at `path`.
 ///
 /// Returning `Ok` means the installer was launched, not that anything was

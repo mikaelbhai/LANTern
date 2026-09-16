@@ -139,7 +139,15 @@ pub async fn peer_shares(state: &AppState, peer_id: &str) -> Vec<serde_json::Val
     let Some((host, port)) = reachable_address(state, peer_id).await else {
         return Vec::new();
     };
-    let Ok(body) = get(&host, port, "/shares.json").await else {
+    // Present the key they issued us, so a folder published only to this
+    // device is listed for it. Without it we are an anonymous caller and an
+    // unlisted folder is invisible - which is correct, and is why it is sent.
+    let key = state.with(|s| s.held_keys.get(peer_id).cloned());
+    let path = match key {
+        Some(key) => format!("/shares.json?k={key}"),
+        None => "/shares.json".to_string(),
+    };
+    let Ok(body) = get(&host, port, &path).await else {
         return Vec::new();
     };
     let Ok(shares) = serde_json::from_str::<Vec<serde_json::Value>>(&body) else {

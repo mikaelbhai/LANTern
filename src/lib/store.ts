@@ -195,6 +195,23 @@ interface State {
   ready: boolean;
   onboarded: boolean;
   profile: Profile;
+  /**
+   * What peers call this device. Empty until the native side answers.
+   *
+   * Distinct from `profile.id`, which is minted in the browser and means
+   * nothing to anybody else. Seats in a game are dealt by this.
+   */
+  deviceId: string;
+  /**
+   * A game somebody has dealt this device into and not yet been answered.
+   *
+   * There was no such thing: being invited produced a toast, which fades, and
+   * a session in a screen you might not be looking at. The invitation was
+   * real and there was nothing to say yes on.
+   */
+  gameInvite: { session: GameSession; from: string } | null;
+  acceptGameInvite: () => void;
+  declineGameInvite: () => void;
   settings: Settings;
 
   peers: Record<string, Peer>;
@@ -551,10 +568,45 @@ export const useStore = create<State>((set, get) => {
     activity: persisted.activity ?? [],
     toasts: [],
     activeGame: null,
+    /**
+     * What peers call this device, as opposed to what it calls itself.
+     *
+     * A game seats its players by device id, so this is what "me" has to mean
+     * anywhere a seat is being checked. The profile id is minted in the
+     * browser and is nobody else's idea of this machine: comparing a seat
+     * against it meant a device could be dealt into a game and never know it
+     * was playing, which is exactly what happened to every invitation sent to
+     * a phone.
+     *
+     * Empty until the native side answers. Everything below falls back to the
+     * profile id in the meantime, which is what it always used.
+     */
+    deviceId: '',
+
+    gameInvite: null,
+    acceptGameInvite: () => {
+      const invite = get().gameInvite;
+      if (!invite) return;
+      // Chess is played against somebody rather than at a table, so it needs
+      // to be told who. The seat that is not this one is the answer, and for
+      // a two-player game there is only ever one of those.
+      const mine = seatId(get());
+      const opponentId = invite.session.players.find((p) => p !== mine) ?? invite.from;
+      set({ gameInvite: null, activeGame: { kind: invite.session.game, opponentId } });
+    },
+    declineGameInvite: () => {
+      const invite = get().gameInvite;
+      set({ gameInvite: null });
+      // Tell the table, so the host is not left holding a seat for somebody
+      // who has already said no.
+      if (invite) void api.game.leave(invite.session.id).catch(() => {});
+      set({ gameSession: null });
+    },
+
     gameSession: null,
     setGameSession: (session) =>
       // A session minted here has this device as its host.
-      set({ gameSession: session ? qualify(session, get().profile.id) : null }),
+      set({ gameSession: session ? qualify(session, seatId(get())) : null }),
 
     heldGame: null,
     /** A minute is long enough to answer a door and short enough not to strand anyone. */
@@ -568,7 +620,7 @@ export const useStore = create<State>((set, get) => {
       }
       // The minute you were away is long enough for the host to have gone,
       // and the seat you are going back to only exists on their device.
-      const me = get().profile.id;
+      const me = seatId(get());
       const host = held.session.hostId;
       if (host !== 'me' && host !== me && !get().peers[host]) {
         set({ heldGame: null });
@@ -588,7 +640,7 @@ export const useStore = create<State>((set, get) => {
     scores: persisted.scores ?? emptyScores(),
 
     recordResult(result) {
-      const me = get().profile.id;
+      const me = seatId(get());
       const peers = get().peers;
       // Names are captured now so a record still reads properly after the
       // person it belongs to has gone home.
@@ -617,7 +669,7 @@ export const useStore = create<State>((set, get) => {
     proposeNextGame(game) {
       const session = get().nearbyGame ?? get().gameSession;
       if (!session) return;
-      const me = get().profile.id;
+      const me = seatId(get());
       // The host changes it directly; everybody else has to ask.
       if (session.hostId === 'me' || session.hostId === me) {
         void api.game
@@ -631,7 +683,7 @@ export const useStore = create<State>((set, get) => {
 
     substitute(out, incoming) {
       const session = get().gameSession;
-      const me = get().profile.id;
+      const me = seatId(get());
       if (!session || session.hostId !== me) return;
 
       const waiting = session.waiting ?? [];
@@ -658,7 +710,7 @@ export const useStore = create<State>((set, get) => {
 
     askToSubOut() {
       const session = get().gameSession;
-      const me = get().profile.id;
+      const me = seatId(get());
       if (!session) return;
       if (session.hostId === me) {
         // The host does not have to ask anybody.
@@ -671,7 +723,7 @@ export const useStore = create<State>((set, get) => {
 
     async startNextMatch() {
       const session = get().gameSession;
-      const me = get().profile.id;
+      const me = seatId(get());
       if (!session) return;
       if (session.hostId !== 'me' && session.hostId !== me) return;
 
@@ -775,8 +827,24 @@ export const useStore = create<State>((set, get) => {
           return;
         }
 
-        const me = get().profile.id;
+        const me = seatId(get());
         const host = session.hostId === 'me' ? (session.from ?? me) : session.hostId;
+
+        /*
+         * Our own game, coming back to us.
+         *
+         * `game_start` announces the session to the table and emits it here
+         * too, so the device that dealt receives its own deal. Without this it
+         * invites itself: the board opens, and an invitation to the game
+         * already on screen opens on top of it.
+         *
+         * Recognised by there being no sender - a locally emitted session has
+         * nobody it came from - and by the host being us either way.
+         */
+        if (!session.from || host === me) {
+          set({ nearbyGame: null, gameSession: qualify(session, me) });
+          return;
+        }
         // Everything below reads a session whose "me" has been spelled out,
         // so a seat means the same person on every device.
         const full = qualify(session, host);
@@ -813,13 +881,18 @@ export const useStore = create<State>((set, get) => {
         const alreadyPlaying = get().activeGame?.kind === session.game;
 
         if (inCall && !alreadyPlaying) {
-          set({ activeGame: { kind: session.game } });
-        } else if (!inCall && !alreadyPlaying) {
-          get().toast({
-            kind: 'info',
-            title: 'Game invitation',
-            body: `${get().peers[session.from ?? '']?.name ?? 'Someone'} started ${gameName(session.game)}`,
+          // Mid-conversation, being dealt in is the point of playing together
+          // and a dialogue asking about it is a step nobody wants.
+          set({
+            activeGame: {
+              kind: session.game,
+              opponentId: full.players.find((p) => p !== me) ?? session.from,
+            },
           });
+        } else if (!inCall && !alreadyPlaying) {
+          // Outside a call it is an invitation, and an invitation needs
+          // somewhere to say yes. A toast fades whether or not it was read.
+          set({ gameInvite: { session: full, from: session.from ?? host } });
         }
       }),
 
@@ -830,7 +903,7 @@ export const useStore = create<State>((set, get) => {
        */
       on('game:lobby', (msg: { from?: string; t?: string; game?: GameKind }) => {
         const session = get().gameSession;
-        const me = get().profile.id;
+        const me = seatId(get());
         if (!session || !msg?.from) return;
         if (session.hostId !== 'me' && session.hostId !== me) return;
 
@@ -1063,6 +1136,10 @@ export const useStore = create<State>((set, get) => {
       // reject, and then the catch never runs. That threw here on every start
       // in the browser, inside init and before `ready` was ever set — so the
       // app came up half-initialised with no error anyone would see.
+      // What peers call this device, needed before a game seat can be
+      // recognised as this device's own.
+      const deviceId = await api.identity.deviceId().catch(() => '');
+
       const known = (await api.peers.list().catch(() => [] as Peer[])) ?? [];
       const seeded = Object.fromEntries(known.map((p) => [p.id, p]));
 
@@ -1080,6 +1157,7 @@ export const useStore = create<State>((set, get) => {
 
       set({
         net,
+        deviceId: deviceId ?? '',
         peers: seeded,
         transfers: Object.fromEntries(transfers.map((t) => [t.id, t])),
         ready: true,
@@ -1536,8 +1614,34 @@ export function useDirectory() {
   return { peers, profile };
 }
 
+/**
+ * What "me" means where devices are being named.
+ *
+ * The device id, which is what peers seat each other by, falling back to the
+ * profile id until the native side has answered. A game dealt out by device id
+ * and checked against a browser-minted profile id seats nobody: the invitation
+ * arrives, the device decides it is not playing, and nothing is shown.
+ */
+function seatId(s: { deviceId: string; profile: { id: string } }): string {
+  return s.deviceId || s.profile.id;
+}
+
+/**
+ * What "me" is called at a game table, as a hook.
+ *
+ * Every game module read the profile id for this, which is minted in the
+ * browser: the host deals seats by device id, so each player was checking its
+ * own seat against a name nobody else uses. On one device - the host's - the
+ * two happened to line up, which is why this only ever failed for the guest.
+ */
+export function useSeatId(): string {
+  return useStore((s) => s.deviceId || s.profile.id);
+}
+
 export function displayName(id: string): string {
   const s = useStore.getState();
-  if (id === s.profile.id) return s.profile.name || 'You';
+  if (id === s.profile.id || (s.deviceId && id === s.deviceId)) {
+    return s.profile.name || 'You';
+  }
   return s.peers[id]?.name ?? 'Unknown';
 }

@@ -138,26 +138,20 @@ class MainActivity : TauriActivity() {
   }
 
   /**
-   * Whether a film is playing, asked the same way a call is.
+   * Whether a film is on screen.
    *
    * A desktop pops the video itself out into a floating window; Android's
    * WebView cannot do that, so the whole app goes into the corner instead -
    * which comes to the same thing for the one purpose either serves, which is
    * carrying on watching while doing something else.
    *
-   * Read from the audio stack rather than from the web layer, for the reason
-   * given above: there is no channel from Rust into this activity, and a film
-   * playing is a film making sound.
-   *
-   * Wrong in both directions occasionally - a muted film does not count, and
-   * music from another app briefly might - and neither costs anything. The
-   * window either appears when it need not have, or does not when it could.
+   * Told to us by the player rather than sniffed from the audio stack.
+   * `isMusicActive` is true of *any* sound on the device - a game's effects,
+   * another app's music - so leaving LANTern while a game beeped put the whole
+   * application in a floating window, which is picture-in-picture for
+   * something with no picture worth keeping.
    */
-  private fun isPlayingSomething(): Boolean {
-    val audio = applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-      ?: return false
-    return runCatching { audio.isMusicActive }.getOrDefault(false)
-  }
+  private fun isPlayingSomething(): Boolean = mediaPlaying
 
   /** Implemented in apkinstall.rs. */
   private external fun nativeRegisterInstaller()
@@ -191,6 +185,21 @@ class MainActivity : TauriActivity() {
      * FLAG_ACTIVITY_NEW_TASK below is for.
      */
     private var appContext: Context? = null
+
+    /**
+     * Set by the player while a film is on screen. See `isPlayingSomething`.
+     *
+     * Volatile because it is written from whichever thread the Rust side
+     * happens to be on and read on the main thread as the app is left.
+     */
+    @Volatile
+    private var mediaPlaying = false
+
+    /** Called from pip.rs when the player opens and when it closes. */
+    @JvmStatic
+    fun setMediaPlaying(playing: Boolean) {
+      mediaPlaying = playing
+    }
 
     /**
      * Opens the system package installer on a staged APK.

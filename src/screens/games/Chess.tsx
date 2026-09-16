@@ -26,7 +26,8 @@ import {
   squareName,
   toSan,
 } from '../../lib/chess';
-import { useStore } from '../../lib/store';
+import { api, on } from '../../lib/bridge';
+import { useStore, useSeatId } from '../../lib/store';
 import { useLocalStorage } from '../../lib/hooks';
 import { sfx } from '../../lib/audio';
 import { cn, formatDuration } from '../../lib/utils';
@@ -51,8 +52,22 @@ interface Ply {
 export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () => void }) {
   const peers = useStore((s) => s.peers);
   const profile = useStore((s) => s.profile);
+  const seat = useSeatId();
   const opponent = opponentId ? peers[opponentId] : null;
   const lan = !!opponent;
+
+  /**
+   * The match this board belongs to, when it is being played across the
+   * network rather than across a table.
+   *
+   * Chess had none of this. The card offered to "challenge anyone on the
+   * network", the challenge opened a board, and nothing was ever sent: both
+   * devices sat in front of their own game. Every other game here runs on
+   * `useTurnGame`; chess cannot, because its rules and its history are not a
+   * pure function of a seed, so it uses the same two primitives directly.
+   */
+  const session = useStore((st) => st.gameSession);
+  const match = session && session.game === 'chess' ? session : null;
 
   const [position, setPosition] = React.useState<Position>(initialPosition);
   const [history, setHistory] = React.useState<Ply[]>([]);
@@ -87,9 +102,21 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
   const [customBase, setCustomBase] = useLocalStorage('lantern.chess.customBase', 900);
   const [customInc, setCustomInc] = useLocalStorage('lantern.chess.customInc', 10);
 
-  // In a LAN game you always play your own colour; pass-and-play flips freely.
-  const myColor: Color = 'w';
+  /**
+   * In a LAN game you always play your own colour; pass-and-play flips freely.
+   *
+   * Seat order decides it, which both devices already agree on: the player who
+   * issued the challenge is first in the list and takes white. This was `'w'`
+   * unconditionally, so across a network both players believed they were
+   * white, and both boards refused the other's moves.
+   */
+  const myColor: Color = match && match.players[0] !== seat ? 'b' : 'w';
   const [flipped, setFlipped] = React.useState(false);
+
+  // Black sees the board from black's side without having to ask.
+  React.useEffect(() => {
+    if (myColor === 'b') setFlipped(true);
+  }, [myColor]);
 
   const tc =
     tcId === 'custom'
@@ -113,10 +140,10 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
     // Chess is challenged rather than hosted, so the pairing is the match.
     matchId: opponentId ? `chess:${opponentId}` : null,
     over: gameOver,
-    players: opponentId ? [profile.id, opponentId] : [],
+    players: opponentId ? [seat, opponentId] : [],
     winners:
       outcome.kind === 'checkmate' || outcome.kind === 'timeout'
-        ? [outcome.winner === myColor ? profile.id : (opponentId ?? '')].filter(Boolean)
+        ? [outcome.winner === myColor ? seat : (opponentId ?? '')].filter(Boolean)
         : [],
   });
 
@@ -161,8 +188,19 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
     : -1;
 
   const commit = React.useCallback(
-    (move: Move) => {
+    (move: Move, from: 'here' | 'them' = 'here') => {
       const san = toSan(position, move);
+
+      // Only our own moves travel. A move that arrived from the other side is
+      // applied and not sent back, or the two boards would volley it forever.
+      if (from === 'here' && match) {
+        void api.game
+          .move(match.id, { from: move.from, to: move.to, promotion: move.promotion ?? null })
+          .catch(() => {
+            /* a lost move is visible on the board; there is nothing to say */
+          });
+      }
+
       const after = applyMove(position, move);
       const nextKeys = [...keys, positionKey(after)];
       const nextHistory = [...history, { move, san, positionAfter: after }];
@@ -193,8 +231,37 @@ export function Chess({ opponentId, onExit }: { opponentId?: string; onExit: () 
         sfx.check();
       }
     },
-    [position, history, keys, timed, tc.inc, myColor],
+    [position, history, keys, timed, tc.inc, myColor, match],
   );
+
+  /**
+   * A move from the other side.
+   *
+   * Matched against this board's own legal moves rather than trusted as sent:
+   * the two positions should be identical, and if they are not, a move that
+   * does not exist here is dropped rather than corrupting the board.
+   */
+  React.useEffect(() => {
+    if (!match) return;
+    return on(
+      'game:move',
+      (msg: {
+        sessionId?: string;
+        move?: { from: number; to: number; promotion?: string | null };
+        from?: string;
+      }) => {
+        if (msg.sessionId !== match.id || !msg.move || msg.from === seat) return;
+        const wanted = msg.move;
+        const legal = legalMoves(position).find(
+          (m) =>
+            m.from === wanted.from &&
+            m.to === wanted.to &&
+            (wanted.promotion ? m.promotion === wanted.promotion : !m.promotion),
+        );
+        if (legal) commit(legal, 'them');
+      },
+    );
+  }, [match, position, commit, seat]);
 
   // A queued premove fires as soon as it becomes legal.
   React.useEffect(() => {

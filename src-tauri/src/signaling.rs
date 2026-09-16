@@ -260,6 +260,36 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 continue;
             }
 
+            // Being dealt into a game is what gives this device a session.
+            //
+            // Only the host ran `game_start`, so only the host had one - and
+            // `game_move` refuses to send for a session it does not hold. So
+            // every guest's move was dropped here, at the last step before the
+            // wire, in every game: moves travelled from the host and never
+            // back. Writing it down on arrival is what makes the guest a
+            // player rather than an audience.
+            if envelope.kind == "game" {
+                if let Ok(mut session) =
+                    serde_json::from_value::<crate::model::GameSession>(envelope.payload.clone())
+                {
+                    // The host wrote itself down as "me", which means the host
+                    // where it was written and this device everywhere else.
+                    // Spelling it out here keeps the host-only checks honest:
+                    // `game_lobby` refuses anyone whose session does not say
+                    // "me", and a guest holding the host's word for it would
+                    // have been able to drive the table.
+                    if session.host_id == "me" {
+                        session.host_id = envelope.from.clone();
+                    }
+                    for seat in session.players.iter_mut() {
+                        if seat == "me" {
+                            *seat = envelope.from.clone();
+                        }
+                    }
+                    state.with(|s| s.session = Some(session));
+                }
+            }
+
             deliver(&app, &envelope);
         }
     });
@@ -806,6 +836,71 @@ pub fn reconcile(app: AppHandle, state: AppState, links: Links) {
 
 #[cfg(test)]
 mod tests {
+    /// Being dealt into a game, from the guest's side.
+    ///
+    /// `game_move` refuses to send for a session the native layer does not
+    /// hold, and only the host ever ran `game_start` - so every guest's move
+    /// was dropped one step before the wire, in every game. Moves travelled
+    /// out from the host and never came back.
+    mod dealt_in {
+        use crate::model::GameSession;
+
+        /// What the dispatch does with an inbound `game` envelope, in the one
+        /// respect that matters: whose table it says this is.
+        fn qualify(mut session: GameSession, from: &str) -> GameSession {
+            if session.host_id == "me" {
+                session.host_id = from.to_string();
+            }
+            for seat in session.players.iter_mut() {
+                if seat == "me" {
+                    *seat = from.to_string();
+                }
+            }
+            session
+        }
+
+        fn dealt_by(host: &str, guest: &str) -> GameSession {
+            // Exactly what the host puts on the wire: itself as "me".
+            let announced = GameSession {
+                id: "s1".into(),
+                game: "chess".into(),
+                seed: 7,
+                host_id: "me".into(),
+                players: vec!["me".into(), guest.into()],
+                started_at: 0,
+                progress: std::collections::HashMap::new(),
+                winner_id: None,
+                waiting: Vec::new(),
+                next_game: None,
+            };
+            qualify(announced, host)
+        }
+
+        #[test]
+        fn the_guest_ends_up_holding_the_same_session_id() {
+            let session = dealt_by("host-device", "guest-device");
+            // Which is all `game_move` compares, and all it needed.
+            assert_eq!(session.id, "s1");
+        }
+
+        /// The host-only gate reads `host_id == "me"`. A guest that stored the
+        /// host's word for it verbatim would have passed that gate and been
+        /// able to drive the table.
+        #[test]
+        fn but_does_not_come_to_believe_it_is_the_host() {
+            let session = dealt_by("host-device", "guest-device");
+            assert_ne!(session.host_id, "me");
+            assert_eq!(session.host_id, "host-device");
+        }
+
+        #[test]
+        fn and_the_seats_name_real_devices() {
+            let session = dealt_by("host-device", "guest-device");
+            assert_eq!(session.players, vec!["host-device", "guest-device"]);
+            assert!(!session.players.iter().any(|p| p == "me"));
+        }
+    }
+
     /// Reads the next envelope a peer actually sent.
     ///
     /// The delivery channel also carries `__linked`, produced locally when a

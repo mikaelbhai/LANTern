@@ -17,7 +17,7 @@
 import React from 'react';
 
 import { api, on } from '../../lib/bridge';
-import { useStore } from '../../lib/store';
+import { useStore, useSeatId } from '../../lib/store';
 import type { GameSession } from '../../lib/types';
 
 export interface Hosted<S, V, I> {
@@ -61,7 +61,7 @@ export function useHostedGame<S, V, I>({
    */
   rename?: (state: S, from: string, to: string) => S;
 }): Hosted<S, V, I> {
-  const myId = useStore((s) => s.profile.id);
+  const myId = useSeatId();
 
   // Seats in the session's own order, which every device has the same copy of.
   // Not sorted: a sorted seat can move when its occupant changes, and a
