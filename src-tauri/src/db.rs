@@ -222,6 +222,23 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         [],
     );
 
+    // What kind of machine it is, so the offer to wake it can be withheld
+    // from the ones that cannot be woken. A phone never answers a magic
+    // packet - its radio is off in deep sleep and Android does not implement
+    // Wake-on-LAN at all - so offering the button there is offering something
+    // that silently does nothing.
+    let _ = conn.execute(
+        "ALTER TABLE device_macs ADD COLUMN os TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    // And what the machine calls itself, as opposed to what its owner is
+    // called. A row reading `Rehan` when three of his boxes are asleep says
+    // nothing about which one you are looking at.
+    let _ = conn.execute(
+        "ALTER TABLE device_macs ADD COLUMN device_name TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+
     Ok(())
 }
 

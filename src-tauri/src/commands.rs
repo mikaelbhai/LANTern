@@ -3514,14 +3514,22 @@ pub fn wake_device(state: State<'_, AppState>, mac: String) -> Res<usize> {
 /// only consulted for devices that are answering right now, and looking one
 /// up costs a subprocess.
 fn remember_macs(state: &AppState) {
-    let seen: Vec<(String, String, String)> = state.with(|s| {
+    let seen: Vec<(String, String, String, String, String)> = state.with(|s| {
         s.peers
             .values()
-            .map(|p| (p.device_id.clone(), p.ip.clone(), p.name.clone()))
+            .map(|p| {
+                (
+                    p.device_id.clone(),
+                    p.ip.clone(),
+                    p.name.clone(),
+                    p.device_name.clone(),
+                    p.os.clone(),
+                )
+            })
             .collect()
     });
 
-    for (device_id, ip, name) in seen {
+    for (device_id, ip, name, device_name, os) in seen {
         let Some(mac) = crate::wol::mac_for(&ip) else {
             continue;
         };
@@ -3529,13 +3537,52 @@ fn remember_macs(state: &AppState) {
             s.macs.insert(device_id.clone(), mac.clone());
             if let Some(db) = s.db.as_ref() {
                 let _ = db.execute(
-                    "INSERT INTO device_macs (device_id, mac, name, seen_at) VALUES (?1, ?2, ?3, ?4)
-                     ON CONFLICT(device_id) DO UPDATE SET mac = ?2, name = ?3, seen_at = ?4",
-                    rusqlite::params![device_id, mac, name, crate::model::now_ms() as i64],
+                    "INSERT INTO device_macs (device_id, mac, name, device_name, os, seen_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(device_id) DO UPDATE SET
+                        mac = ?2, name = ?3, device_name = ?4, os = ?5, seen_at = ?6",
+                    rusqlite::params![
+                        device_id,
+                        mac,
+                        name,
+                        device_name,
+                        os,
+                        crate::model::now_ms() as i64
+                    ],
                 );
             }
         });
     }
+}
+
+/// Whether a magic packet has any chance of reaching this kind of machine.
+///
+/// A phone does not answer one. Its radio is powered down in deep sleep and
+/// Android does not implement Wake-on-LAN in the first place, so the button
+/// was an offer that quietly did nothing - the worst kind, because nothing
+/// acknowledges a wake packet either, so there is no way to tell a phone that
+/// cannot be woken from a desktop whose BIOS setting is off.
+///
+/// Desktops can, when it is enabled in firmware and the adapter is wired.
+/// Android televisions usually can over Ethernet, and they are the other
+/// device in a house anybody wants to wake from the sofa - so they are
+/// offered on the name, which is the only thing that distinguishes a TV from
+/// a phone on this network.
+fn can_be_woken(os: &str, name: &str, device_name: &str) -> bool {
+    if matches!(os, "windows" | "linux" | "macos") {
+        return true;
+    }
+    if os == "android" {
+        let haystack = format!("{device_name} {name}").to_lowercase();
+        return ["tv", "television", "shield", "chromecast", "firestick", "projector"]
+            .iter()
+            .any(|word| {
+                haystack
+                    .split(|c: char| !c.is_alphanumeric())
+                    .any(|part| part == *word)
+            });
+    }
+    false
 }
 
 /// Where to fetch a peer's screen from, once it has granted control.
@@ -3561,22 +3608,62 @@ pub async fn control_screen_url(
 pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
     remember_macs(&state);
     state.with(|s| {
-        let mut out: Vec<serde_json::Value> = s
-            .macs
-            .iter()
-            .map(|(device_id, mac)| {
-                let peer = s.peers.values().find(|p| &p.device_id == device_id);
-                serde_json::json!({
-                    "deviceId": device_id,
-                    "mac": mac,
-                    "name": peer.map(|p| p.name.clone()).unwrap_or_default(),
-                    "online": peer.is_some(),
-                })
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        /*
+         * Read back from the table, not from the peers that are here.
+         *
+         * The name used to be taken from the live peer, which exists only
+         * while the device is awake - so a sleeping machine had no name and
+         * the interface fell back to printing its hardware address. A list of
+         * MAC addresses is the one thing this screen must never be: nobody
+         * knows which box `9C:2D:CD:1A:44:07` is, and the name has been
+         * written down on every sighting since this table existed.
+         */
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut q) = db.prepare(
+            "SELECT device_id, mac, name, device_name, os FROM device_macs ORDER BY name, device_name",
+        ) else {
+            return Vec::new();
+        };
+
+        let rows = q.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3).unwrap_or_default(),
+                row.get::<_, String>(4).unwrap_or_default(),
+            ))
         });
+        let Ok(rows) = rows else {
+            return Vec::new();
+        };
+
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for row in rows.flatten() {
+            let (device_id, mac, name, device_name, os) = row;
+            let peer = s.peers.values().find(|p| p.device_id == device_id);
+
+            // A peer that is here is the better source: it may have been
+            // renamed since it was last written down.
+            let name = peer.map(|p| p.name.clone()).filter(|n| !n.is_empty()).unwrap_or(name);
+            let device_name = peer
+                .map(|p| p.device_name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or(device_name);
+            let os = peer.map(|p| p.os.clone()).filter(|o| !o.is_empty()).unwrap_or(os);
+
+            out.push(serde_json::json!({
+                "deviceId": device_id,
+                "mac": mac,
+                "name": name,
+                "deviceName": device_name,
+                "os": os,
+                "online": peer.is_some(),
+                "wakeable": can_be_woken(&os, &name, &device_name),
+            }));
+        }
         out
     })
 }
