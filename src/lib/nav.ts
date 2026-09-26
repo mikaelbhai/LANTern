@@ -9,7 +9,7 @@ export type Screen =
   | 'settings';
 
 export const SCREEN_TITLES: Record<Screen, string> = {
-  home: 'Home',
+  home: 'House',
   chats: 'Chats',
   calls: 'Calls',
   files: 'Files',

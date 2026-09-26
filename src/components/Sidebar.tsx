@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import {
-  Home,
+  Users,
   MessageSquare,
   Phone,
   FolderOpen,
@@ -26,7 +26,7 @@ export const NAV_ITEMS: {
   label: string;
   icon: React.ElementType;
 }[] = [
-  { id: 'home', label: 'Home', icon: Home },
+  { id: 'home', label: 'House', icon: Users },
   { id: 'chats', label: 'Chats', icon: MessageSquare },
   { id: 'calls', label: 'Calls', icon: Phone },
   { id: 'files', label: 'Files', icon: FolderOpen },
@@ -34,6 +34,20 @@ export const NAV_ITEMS: {
   { id: 'games', label: 'Games', icon: Gamepad2 },
   { id: 'network', label: 'Network', icon: Flashlight },
 ];
+
+/**
+ * What fits along the bottom of a phone.
+ *
+ * Four, not the first five of the list above. A phone tab bar with five
+ * labels is a row of truncated words, and the fifth was Theatre - which is
+ * one of the two things anybody opens the app to do.
+ *
+ * Files and Network are absent on purpose rather than deprioritised. A
+ * transfer shows on the device receiving it in the house list, and the
+ * network only speaks when something is wrong, from the strip under the
+ * title bar. Both are still a tap away in the drawer.
+ */
+const PHONE_TABS: Screen[] = ['home', 'calls', 'theatre', 'games'];
 
 export function Sidebar({
   screen,
@@ -316,7 +330,7 @@ export function MobileTabBar({
 }) {
   const rooms = useStore((s) => s.rooms);
   const unread = Object.values(rooms).reduce((n, r) => n + r.unread, 0);
-  const items = NAV_ITEMS.slice(0, 5);
+  const items = PHONE_TABS.map((id) => NAV_ITEMS.find((n) => n.id === id)!).filter(Boolean);
 
   return (
     // The gesture-bar inset is padding on the bar; the row keeps its own
