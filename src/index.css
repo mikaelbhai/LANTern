@@ -9,9 +9,35 @@
     --c-raised: 28 35 48;
     --c-edge: 37 46 63;
     --c-edge-strong: 46 59 82;
-    --c-gold: 245 166 35;
-    --c-glow: 255 209 122;
+    /*
+     * The accent. Still called `gold` everywhere because renaming a token
+     * used at four hundred sites is a worse trade than a stale name, and
+     * Settings has let it be any colour since long before it was green.
+     * These two are only what is painted before the theme effect runs.
+     */
+    --c-gold: 43 217 124;
+    --c-glow: 140 240 185;
+    /*
+     * What goes on top of an accent fill.
+     *
+     * Near-black here because the accent is bright against a dark page. In
+     * light mode the accent is darkened until it is legible as text, which
+     * makes it far too dark to put black on - a filled button then had dark
+     * text on a dark fill, which is worse than the problem the darkening
+     * fixed. So the pairing flips with the mode.
+     */
+    --c-on-gold: 7 26 15;
     --c-cyan: 57 217 200;
+    /*
+     * Warning amber, which is NOT the accent.
+     *
+     * The network strip used to be painted in `--c-gold`, back when the
+     * accent was gold and the two happened to coincide. The accent is now
+     * green and is also whatever somebody picks in Settings, so a fault
+     * drawn in it came out green - the colour every other part of the
+     * interface uses for "fine". A warning has to be a fixed colour.
+     */
+    --c-warn: 232 168 58;
     --c-danger: 224 92 92;
     --c-txt: 230 234 243;
     --c-dim: 140 151 174;
@@ -25,9 +51,11 @@
     --c-raised: 241 244 249;
     --c-edge: 223 228 238;
     --c-edge-strong: 199 208 224;
-    --c-gold: 199 124 8;
-    --c-glow: 232 160 40;
+    --c-gold: 26 131 75;
+    --c-glow: 34 160 92;
+    --c-on-gold: 255 250 245;
     --c-cyan: 13 148 136;
+    --c-warn: 146 94 12;
     --c-danger: 197 51 51;
     --c-txt: 22 28 39;
     --c-dim: 88 100 122;
@@ -95,6 +123,33 @@
 }
 
 @layer components {
+  /*
+   * The cinema.
+   *
+   * Theatre is a dark room whether or not the rest of the app is, the way
+   * every video app is. What it was not, was a dark room: the title bar above
+   * it and the tab bar below it stayed white in light mode, so a black screen
+   * between two white bars read as a block pasted in by mistake rather than
+   * as a decision.
+   *
+   * Redeclaring the palette on the shell takes the chrome with it, and every
+   * `bg-surface` and `text-dim` inside goes on working untouched. The accent
+   * comes back at full strength because the reason it is darkened - a
+   * near-white page - is not true in here.
+   */
+  .cinema {
+    --c-base: 8 9 12;
+    --c-surface: 16 18 23;
+    --c-raised: 26 30 38;
+    --c-edge: 38 43 54;
+    --c-edge-strong: 52 59 73;
+    --c-txt: 234 237 243;
+    --c-dim: 150 158 174;
+    --c-muted: 112 121 138;
+    --c-gold: var(--c-accent-bright, 43 217 124);
+    --c-on-gold: 7 26 15;
+  }
+
   .panel {
     @apply bg-surface border border-edge rounded-card;
   }

@@ -7,6 +7,7 @@ import {
   Hash,
   Images,
   MessageSquare,
+  MoreVertical,
   Phone,
   Pin,
   Plus,
@@ -18,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { ScreenHeader } from '../components/ScreenHeader';
 import {
   Badge,
   Button,
@@ -32,6 +34,7 @@ import { MessageList } from './chat/MessageList';
 import { Composer } from './chat/Composer';
 import { ThreadPanel } from './chat/ThreadPanel';
 import { MediaGallery } from './chat/MediaGallery';
+import { useClickOutside } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { useIsMobile } from '../lib/hooks';
 import { attachmentFromFile } from '../lib/actions';
@@ -41,6 +44,7 @@ import {
   download,
   fileToDataUrl,
   mimeKind,
+  whenLabel,
   relativeTime,
 } from '../lib/utils';
 import type { Message, Room } from '../lib/types';
@@ -205,25 +209,31 @@ function RoomList({
 
   return (
     <aside className={cn('flex flex-col bg-surface/40 min-w-0', className)}>
-      <header className="h-11 shrink-0 border-b border-edge flex items-center px-3 gap-1">
-        <span className="text-sm font-semibold flex-1">Chats</span>
-        <IconButton label="Saved messages" size="sm" onClick={() => setSavedOpen(true)}>
-          <Bookmark size={14} />
-        </IconButton>
-        <IconButton label="Search all rooms" size="sm" onClick={onOpenSearch}>
-          <Search size={14} />
-        </IconButton>
-        <IconButton label="New room" size="sm" variant="primary" onClick={() => setNewOpen(true)}>
-          <Plus size={14} />
-        </IconButton>
-      </header>
+      <ScreenHeader
+        icon={<MessageSquare size={15} />}
+        title="Chats"
+        actions={
+          <>
+            <IconButton label="Saved messages" onClick={() => setSavedOpen(true)}>
+              <Bookmark size={17} />
+            </IconButton>
+            <IconButton label="Search all rooms" onClick={onOpenSearch}>
+              <Search size={17} />
+            </IconButton>
+            <IconButton label="New room" onClick={() => setNewOpen(true)}>
+              <Plus size={19} />
+            </IconButton>
+          </>
+        }
+      />
 
-      <div className="p-2 space-y-2 shrink-0 border-b border-edge">
+      <div className="px-4 pt-2.5 pb-2 space-y-2.5 shrink-0">
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter rooms…"
-          icon={<Search size={12} />}
+          icon={<Search size={15} />}
+          className="h-11 rounded-full bg-raised border-transparent pl-10 text-sm"
         />
         <Segmented
           value={filter}
@@ -261,10 +271,9 @@ function RoomList({
                   <button
                     onClick={() => openRoom(r.id)}
                     className={cn(
-                      'w-full flex items-center gap-2.5 px-3 h-14 text-left transition-colors border-l-2',
-                      on
-                        ? 'bg-gold/10 border-gold'
-                        : 'border-transparent hover:bg-raised/50',
+                      'w-full flex items-center gap-3 pl-4 pr-3 py-2.5 text-left transition-colors',
+                      'border-b border-edge/70',
+                      on ? 'bg-gold/[0.08]' : 'hover:bg-raised/50',
                     )}
                   >
                     {r.kind === 'dm' ? (
@@ -272,33 +281,32 @@ function RoomList({
                         name={dmPeer?.name ?? r.name}
                         color={dmPeer?.color}
                         emoji={dmPeer?.emoji}
-                        size={32}
-                        status={dmPeer?.status}
+                        size={44}
                       />
                     ) : (
                       <span
                         className={cn(
-                          'h-8 w-8 rounded-full grid place-items-center border shrink-0',
-                          r.kind === 'broadcast'
-                            ? 'bg-danger/10 border-danger/40 text-danger'
-                            : 'bg-raised border-edge text-dim',
+                          'h-11 w-11 rounded-full grid place-items-center border border-edge',
+                          'bg-raised text-dim shrink-0',
                         )}
                       >
-                        {r.kind === 'broadcast' ? <Radio size={14} /> : <Hash size={14} />}
+                        {r.kind === 'broadcast' ? <Radio size={20} /> : <Hash size={20} />}
                       </span>
                     )}
 
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-medium truncate flex-1">{r.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[15px] leading-tight font-medium truncate flex-1">
+                          {r.name}
+                        </span>
                         {last && (
-                          <span className="text-[10px] text-muted shrink-0">
-                            {relativeTime(last.ts)}
+                          <span className="text-2xs text-muted shrink-0">
+                            {whenLabel(last.ts)}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-2xs text-muted truncate flex-1">
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-dim truncate flex-1">
                           {last
                             ? last.deleted
                               ? 'Message deleted'
@@ -311,8 +319,8 @@ function RoomList({
                             : 'No messages yet'}
                         </span>
                         {r.unread > 0 && (
-                          <span className="min-w-[16px] h-4 px-1 grid place-items-center rounded-full bg-gold text-[#1a1206] text-[9px] font-bold shrink-0">
-                            {r.unread}
+                          <span className="min-w-[20px] h-5 px-1.5 grid place-items-center rounded-full bg-gold text-on-gold text-2xs font-semibold shrink-0">
+                            {r.unread > 99 ? '99+' : r.unread}
                           </span>
                         )}
                       </div>
@@ -385,10 +393,16 @@ function RoomHeader({
   };
 
   return (
-    <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-3 gap-2">
+    /*
+      On a phone this IS the title bar - the app's own stands down while a
+      room is open, because two bars and a composer left about four messages
+      of screen. Hence the status-bar inset and the height, which only apply
+      when it is doing that job.
+    */
+    <header className="shrink-0 border-b border-edge bg-surface flex items-center px-2 gap-2 h-14 md:h-11 md:px-3 safe-t md:pt-0">
       {onBack && (
-        <IconButton label="Back" size="sm" onClick={onBack}>
-          <ArrowLeft size={15} />
+        <IconButton label="Back" onClick={onBack}>
+          <ArrowLeft size={18} />
         </IconButton>
       )}
 
@@ -397,18 +411,17 @@ function RoomHeader({
           name={dmPeer?.name ?? room.name}
           color={dmPeer?.color}
           emoji={dmPeer?.emoji}
-          size={24}
-          status={dmPeer?.status}
+          size={34}
         />
       ) : (
-        <span className="text-dim">
-          {room.kind === 'broadcast' ? <Radio size={15} /> : <Hash size={15} />}
+        <span className="h-[34px] w-[34px] shrink-0 rounded-full grid place-items-center bg-raised border border-edge text-dim">
+          {room.kind === 'broadcast' ? <Radio size={16} /> : <Hash size={16} />}
         </span>
       )}
 
-      <div className="min-w-0">
-        <div className="text-xs font-semibold truncate">{room.name}</div>
-        <div className="text-[10px] text-muted truncate">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold truncate">{room.name}</div>
+        <div className="text-2xs text-muted truncate">
           {room.kind === 'dm'
             ? dmPeer
               ? `${dmPeer.ip} · ${dmPeer.latencyMs.toFixed(1)} ms`
@@ -417,7 +430,7 @@ function RoomHeader({
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-1">
+      <div className="ml-auto flex items-center gap-0.5 shrink-0">
         <AnimatePresence>
           {searching && (
             <motion.div initial={{ width: 0 }} animate={{ width: 180 }} exit={{ width: 0 }}>
@@ -434,7 +447,11 @@ function RoomHeader({
         </AnimatePresence>
 
         {!searching && (
-          <IconButton label="Search this room" onClick={() => setSearching(true)}>
+          <IconButton
+            label="Search this room"
+            className="hidden md:inline-flex"
+            onClick={() => setSearching(true)}
+          >
             <Search size={15} />
           </IconButton>
         )}
@@ -452,48 +469,90 @@ function RoomHeader({
 
         {room.pinned.length > 0 && (
           <Tooltip content={`${room.pinned.length} pinned`}>
-            <IconButton label="Pinned messages" active={pinnedOpen} onClick={onPinned}>
+            <IconButton
+              label="Pinned messages"
+              className="hidden md:inline-flex"
+              active={pinnedOpen}
+              onClick={onPinned}
+            >
               <Pin size={15} />
             </IconButton>
           </Tooltip>
         )}
 
-        <IconButton label="Media gallery" active={galleryOpen} onClick={onGallery}>
+        <IconButton
+          label="Media gallery"
+          className="hidden md:inline-flex"
+          active={galleryOpen}
+          onClick={onGallery}
+        >
           <Images size={15} />
         </IconButton>
 
+        {/* The two that stay on a phone. Calling the person you are typing to
+            is the reason anybody looks at the top of a conversation. */}
         {room.kind !== 'broadcast' && (
           <>
             <IconButton
               label="Voice call"
               onClick={() => startCall('voice', room.members, room.id)}
             >
-              <Phone size={15} />
+              <Phone size={17} />
             </IconButton>
             <IconButton
               label="Video call"
               onClick={() => startCall('video', room.members, room.id)}
             >
-              <Video size={15} />
+              <Video size={17} />
             </IconButton>
           </>
         )}
 
         {room.kind !== 'dm' && (
-          <IconButton label="Members" onClick={() => setMembersOpen(true)}>
+          <IconButton
+            label="Members"
+            className="hidden md:inline-flex"
+            onClick={() => setMembersOpen(true)}
+          >
             <Users size={15} />
           </IconButton>
         )}
 
         <Tooltip content="Export history">
-          <IconButton label="Export as text" onClick={() => exportRoom('txt')}>
+          <IconButton
+            label="Export as text"
+            className="hidden md:inline-flex"
+            onClick={() => exportRoom('txt')}
+          >
             <Download size={15} />
           </IconButton>
         </Tooltip>
 
-        <IconButton label="Delete room" onClick={() => setConfirmDelete(true)}>
+        <IconButton
+          label="Delete room"
+          className="hidden md:inline-flex"
+          onClick={() => setConfirmDelete(true)}
+        >
           <Trash2 size={15} />
         </IconButton>
+
+        {/*
+          Everything above, on a phone, behind one glyph.
+
+          Nine buttons across 375px left each of them about thirty pixels and
+          the name of the person truncated to make room for a delete button
+          nobody was reaching for mid-conversation.
+        */}
+        <RoomMenu
+          room={room}
+          className="md:hidden"
+          onSearch={() => setSearching(true)}
+          onPinned={onPinned}
+          onGallery={onGallery}
+          onMembers={() => setMembersOpen(true)}
+          onExport={() => exportRoom('txt')}
+          onDelete={() => setConfirmDelete(true)}
+        />
       </div>
 
       <Modal
@@ -893,5 +952,79 @@ function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => void })
         </ul>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The rest of a room's actions, on a phone.
+ *
+ * Search, pins, the gallery, members, export and delete were nine buttons
+ * across the top of a 375px conversation, each about thirty pixels wide,
+ * with the name of the person being pushed out to make room for them. Calls
+ * stay on the bar; everything else is here, where it costs one tap and is
+ * readable.
+ */
+function RoomMenu({
+  room,
+  className,
+  onSearch,
+  onPinned,
+  onGallery,
+  onMembers,
+  onExport,
+  onDelete,
+}: {
+  room: Room;
+  className?: string;
+  onSearch: () => void;
+  onPinned: () => void;
+  onGallery: () => void;
+  onMembers: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const close = React.useCallback(() => setOpen(false), []);
+  const ref = useClickOutside<HTMLDivElement>(close);
+
+  const items: { label: string; icon: React.ReactNode; run: () => void; danger?: boolean }[] = [
+    { label: 'Search this room', icon: <Search size={14} />, run: onSearch },
+    ...(room.pinned.length
+      ? [{ label: `Pinned (${room.pinned.length})`, icon: <Pin size={14} />, run: onPinned }]
+      : []),
+    { label: 'Photos and files', icon: <Images size={14} />, run: onGallery },
+    ...(room.kind !== 'dm'
+      ? [{ label: 'Members', icon: <Users size={14} />, run: onMembers }]
+      : []),
+    { label: 'Export history', icon: <Download size={14} />, run: onExport },
+    { label: 'Delete room', icon: <Trash2 size={14} />, run: onDelete, danger: true },
+  ];
+
+  return (
+    <div ref={ref} className={cn('relative', className)}>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 z-40 w-52 glass border border-edge-strong rounded-card shadow-xl overflow-hidden">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              onClick={() => {
+                setOpen(false);
+                item.run();
+              }}
+              className={cn(
+                'w-full flex items-center gap-2.5 px-3 h-11 text-left text-xs hover:bg-raised',
+                item.danger ? 'text-danger' : 'text-txt',
+              )}
+            >
+              <span className={item.danger ? 'text-danger' : 'text-dim'}>{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <IconButton label="More" active={open} onClick={() => setOpen(!open)}>
+        <MoreVertical size={18} />
+      </IconButton>
+    </div>
   );
 }

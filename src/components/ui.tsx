@@ -10,7 +10,7 @@ export const spring = { type: 'spring' as const, stiffness: 180, damping: 20 };
 /* ------------------------------------------------------------------ Button */
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: 'primary' | 'ghost' | 'outline' | 'danger' | 'subtle' | 'cyan';
+  variant?: 'primary' | 'accent' | 'ghost' | 'outline' | 'danger' | 'subtle' | 'cyan';
   size?: 'xs' | 'sm' | 'md' | 'lg';
   icon?: React.ReactNode;
   full?: boolean;
@@ -37,7 +37,12 @@ export function Button({
 
   const variants = {
     primary:
-      'bg-gold text-[#1a1206] font-semibold hover:bg-glow shadow-glow disabled:opacity-40',
+      'bg-gold text-on-gold font-semibold hover:bg-glow shadow-glow disabled:opacity-40',
+    // An outline in the accent rather than a fill: an offer, not the thing
+    // the screen is for. Wake is the case it was added for - it sits on a row
+    // whose subject is somebody being absent, where a solid green button
+    // would read as the point of the row.
+    accent: 'bg-transparent border border-gold/45 text-gold font-medium hover:bg-gold/10',
     cyan: 'bg-cyan text-[#04211e] font-semibold hover:brightness-110 shadow-glow-cyan',
     danger:
       'bg-danger text-white font-medium hover:brightness-110 shadow-glow-danger',
@@ -298,7 +303,7 @@ export function Toggle({
           transition={spring}
           className={cn(
             'absolute top-[2px] h-[12px] w-[12px] rounded-full',
-            checked ? 'left-[16px] bg-[#1a1206]' : 'left-[2px] bg-dim',
+            checked ? 'left-[16px] bg-on-gold' : 'left-[2px] bg-dim',
           )}
         />
       </button>
@@ -418,7 +423,7 @@ export function Segmented<T extends string>({
             className={cn(
               'relative rounded-[4px] transition-colors whitespace-nowrap',
               size === 'xs' ? 'px-2 h-5 text-2xs' : 'px-2.5 h-6 text-xs',
-              on ? 'text-[#1a1206]' : 'text-dim hover:text-txt',
+              on ? 'text-on-gold' : 'text-dim hover:text-txt',
             )}
           >
             {on && (
@@ -536,7 +541,7 @@ export function Checkbox({
           checked ? 'bg-gold border-gold' : 'bg-raised border-edge hover:border-edge-strong',
         )}
       >
-        {checked && <Check size={11} className="text-[#1a1206]" strokeWidth={3} />}
+        {checked && <Check size={11} className="text-on-gold" strokeWidth={3} />}
       </button>
       {label && <span className="text-xs text-txt">{label}</span>}
     </label>

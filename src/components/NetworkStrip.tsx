@@ -65,14 +65,18 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
   return (
     <button
       onClick={() => onNavigate('network')}
-      className="w-full shrink-0 flex items-center gap-2.5 px-4 py-2 bg-gold/[0.10] border-b border-gold/25 text-left"
+      className="w-full shrink-0 flex items-center gap-2.5 px-4 py-2.5 bg-warn/[0.14] border-b border-warn/30 text-left"
     >
-      <span className="text-gold shrink-0">{fault.icon}</span>
+      <span className="text-warn shrink-0">{fault.icon}</span>
       <span className="min-w-0 flex-1">
-        <span className="block text-xs text-txt truncate">{fault.title}</span>
-        <span className="block text-2xs text-dim truncate">{fault.body}</span>
+        {/* The fault in the first line, what it costs in the second, both
+            in warning amber. Not the accent: the accent is green and is
+            also whatever Settings has been set to, and a warning painted
+            in the colour of "everything is fine" is not a warning. */}
+        <span className="block text-xs text-warn font-medium truncate">{fault.title}</span>
+        <span className="block text-2xs text-warn/80 truncate">{fault.body}</span>
       </span>
-      <span className="text-xs text-gold shrink-0">Fix</span>
+      <span className="text-xs text-warn font-semibold shrink-0">Fix</span>
     </button>
   );
 }
@@ -106,13 +110,13 @@ function firstFault(
    */
   const clash = net?.sameSubnet?.[0];
   if (clash && net) {
-    // The network they share, taken from the interface rather than from
-    // `net.subnet` - which is the mask, and printing 255.255.255.0 at
-    // somebody tells them nothing about which addresses are ambiguous.
-    const shared = net.interfaces.find((i) => i.name === clash.a)?.cidr ?? net.subnet;
     return {
-      title: `Two networks share ${shared}`,
-      body: `${clash.a} and ${clash.b} reach different places by the same addresses`,
+      title: `Two networks share ${networkOf(net, clash.a)}`,
+      // The cost, not the mechanism. `Wi-Fi and Ethernet reach different
+      // places by the same addresses` is the true sentence and it ran off
+      // the right edge of a phone, which made it no sentence at all. Which
+      // two interfaces clash is on the Network screen, one tap away.
+      body: 'Calls may not connect until one is turned off',
       icon: <AlertTriangle size={15} />,
     };
   }
@@ -126,14 +130,24 @@ function firstFault(
     };
   }
 
-  // Nothing found at all, once there has been time to look.
-  if (net && peerCount === 0) {
-    return {
-      title: 'Nothing else on this network yet',
-      body: `Listening on ${net.subnet}`,
-      icon: <WifiOff size={15} />,
-    };
-  }
-
+  /*
+   * An empty network is not a fault.
+   *
+   * This used to say "nothing else on this network yet", which is the same
+   * sentence the house list says underneath it in its own empty state, in
+   * more words. A strip that speaks when nothing is wrong is a strip people
+   * learn to look past, and then it is no use on the day something is.
+   */
   return null;
+}
+
+/**
+ * The network an interface is on, in the form somebody can act on.
+ *
+ * Not `net.subnet`, which is the mask. Printing 255.255.255.0 at somebody
+ * says nothing about which addresses are involved, and it shipped that way
+ * once already.
+ */
+function networkOf(net: NonNullable<ReturnType<typeof useStore.getState>['net']>, name: string): string {
+  return net.interfaces.find((i) => i.name === name)?.cidr ?? net.interfaces[0]?.cidr ?? net.subnet;
 }

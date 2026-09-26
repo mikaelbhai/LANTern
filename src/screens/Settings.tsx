@@ -64,7 +64,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'about', label: 'About', icon: Info },
 ];
 
-const ACCENTS = ['#F5A623', '#39D9C8', '#9B8CFF', '#E05C5C', '#7BD88F', '#FF8FC7', '#5BA9F5'];
+const ACCENTS = ['#2BD97C', '#39D9C8', '#5BA9F5', '#9B8CFF', '#FF8FC7', '#F5A623', '#E05C5C'];
 
 export function Settings() {
   const [tab, setTab] = React.useState<Tab>('profile');
@@ -99,7 +99,7 @@ export function Settings() {
               onClick={() => setTab(t.id)}
               className={cn(
                 'shrink-0 h-7 px-2.5 rounded-input text-xs',
-                tab === t.id ? 'bg-gold text-[#1a1206] font-medium' : 'text-dim',
+                tab === t.id ? 'bg-gold text-on-gold font-medium' : 'text-dim',
               )}
             >
               {t.label}

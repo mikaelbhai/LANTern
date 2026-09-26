@@ -17,6 +17,7 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Avatar } from '../components/Avatar';
 import { Badge, Button, Empty, IconButton, Input, Modal, Select, Spinner } from '../components/ui';
 import { Audience, TITLE_AGES, ratingLabel } from '../components/Audience';
@@ -220,48 +221,57 @@ export function Theatre() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-[#08090C]">
-      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-3">
-        <Film size={15} className="text-gold" />
-        <span className="text-sm font-semibold">Theatre</span>
-        <span className="text-2xs text-muted hidden md:block">
-          Everything published on the network, streamed straight from the device holding it
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search titles…"
-            icon={<Search size={12} />}
-            className="w-44"
-          />
-          <IconButton
-            label="Rescan the network"
-            onClick={() => {
-              setLoading(true);
-              void api.media.scan().then((l) => {
-                setItems(l);
-                setLoading(false);
-              });
-            }}
-          >
-            <RefreshCw size={14} />
-          </IconButton>
-          {/* Publishing is deciding who it is for, so the two sit together
-              rather than one of them being three screens away in Settings. */}
-          <IconButton label="Who can watch" onClick={() => setAudienceOpen(true)}>
-            <ShieldCheck size={14} />
-          </IconButton>
-          <Button
-            size="xs"
-            variant="primary"
-            icon={<Plus size={12} />}
-            onClick={() => setPublishOpen(true)}
-          >
-            Add videos
-          </Button>
-        </div>
-      </header>
+    // The palette is redeclared by the shell while this screen is showing, so
+    // `bg-base` here is the cinema's near-black and the bar above and tabs
+    // below are dark with it. It used to be a hardcoded #08090C between two
+    // white bars. See `.cinema` in index.css.
+    <div className="h-full flex flex-col bg-base">
+      <ScreenHeader
+        icon={<Film size={15} />}
+        title="Theatre"
+        hint="Everything published on the network, streamed straight from the device holding it"
+        actions={
+          <>
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search titles…"
+              icon={<Search size={12} />}
+              className="w-44 hidden md:flex"
+            />
+            <IconButton
+              label="Rescan the network"
+              onClick={() => {
+                setLoading(true);
+                void api.media.scan().then((l) => {
+                  setItems(l);
+                  setLoading(false);
+                });
+              }}
+            >
+              <RefreshCw size={16} />
+            </IconButton>
+            {/* Publishing is deciding who it is for, so the two sit together
+                rather than one of them being three screens away in Settings. */}
+            <IconButton label="Who can watch" onClick={() => setAudienceOpen(true)}>
+              <ShieldCheck size={16} />
+            </IconButton>
+            <IconButton label="Add videos" onClick={() => setPublishOpen(true)}>
+              <Plus size={18} />
+            </IconButton>
+          </>
+        }
+      />
+
+      <div className="shrink-0 px-4 py-2.5 md:hidden">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search titles…"
+          icon={<Search size={15} />}
+          className="h-11 rounded-full bg-raised border-transparent pl-10 text-sm"
+        />
+      </div>
 
       {unreachable.length > 0 && (
         <div className="shrink-0 mx-4 mt-3 rounded-card border border-gold/30 bg-gold/10 px-3 py-2">

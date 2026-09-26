@@ -11,6 +11,8 @@ export default {
         edge: 'rgb(var(--c-edge) / <alpha-value>)',
         'edge-strong': 'rgb(var(--c-edge-strong) / <alpha-value>)',
         gold: 'rgb(var(--c-gold) / <alpha-value>)',
+        'warn': 'rgb(var(--c-warn) / <alpha-value>)',
+        'on-gold': 'rgb(var(--c-on-gold) / <alpha-value>)',
         glow: 'rgb(var(--c-glow) / <alpha-value>)',
         cyan: 'rgb(var(--c-cyan) / <alpha-value>)',
         danger: 'rgb(var(--c-danger) / <alpha-value>)',

@@ -144,7 +144,7 @@ const defaultSettings: Settings = {
    * unless you went and asked.
    */
   theme: 'system',
-  accent: '#F5A623',
+  accent: '#2BD97C',
   fontSize: 'medium',
   density: 'cozy',
   sidebarCollapsed: false,

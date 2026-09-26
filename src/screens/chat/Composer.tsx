@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  Plus,
   Bold,
   Clock,
   Code,
@@ -43,6 +44,8 @@ export function Composer({
   const peers = useStore((s) => s.peers);
 
   const [picker, setPicker] = React.useState<'emoji' | 'sticker' | 'motion' | null>(null);
+  // The phone-only overflow behind the composer's + button.
+  const [more, setMore] = React.useState(false);
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [mentionQuery, setMentionQuery] = React.useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = React.useState(0);
@@ -284,11 +287,6 @@ export function Composer({
             <IconButton label="Attach files" onClick={() => fileRef.current?.click()}>
               <Paperclip size={15} />
             </IconButton>
-            <VoiceRecorder
-              onSend={(voice) => {
-                sendMessage(room.id, { voice, threadRoot });
-              }}
-            />
           </div>
 
           <textarea
@@ -336,7 +334,7 @@ export function Composer({
                 ? 'Broadcast to everyone…'
                 : `Message ${room.name}`
             }
-            className="flex-1 min-h-[34px] max-h-40 bg-raised border border-edge rounded-card px-3 py-2 text-sm resize-none focus:border-gold/60 focus:ring-1 focus:ring-gold/30 placeholder:text-muted"
+            className="flex-1 min-w-0 min-h-[38px] max-h-40 bg-raised border border-edge rounded-[19px] px-3.5 py-2 text-sm resize-none focus:border-gold/60 focus:ring-1 focus:ring-gold/30 placeholder:text-muted"
           />
 
           <div ref={pickerRef} className="relative flex gap-0.5 pb-1">
@@ -359,6 +357,7 @@ export function Composer({
             </IconButton>
             <IconButton
               label="Stickers"
+              className="hidden sm:inline-flex"
               active={picker === 'sticker'}
               onClick={() => setPicker(picker === 'sticker' ? null : 'sticker')}
             >
@@ -366,6 +365,7 @@ export function Composer({
             </IconButton>
             <IconButton
               label="Motion pack"
+              className="hidden sm:inline-flex"
               active={picker === 'motion'}
               onClick={() => setPicker(picker === 'motion' ? null : 'motion')}
             >
@@ -373,19 +373,68 @@ export function Composer({
             </IconButton>
             <IconButton
               label="Schedule message"
+              className="hidden sm:inline-flex"
               disabled={!canSend}
               onClick={() => setScheduleOpen(true)}
             >
               <Clock size={15} />
             </IconButton>
-            <IconButton
-              label="Send"
-              variant={canSend ? 'primary' : 'ghost'}
-              disabled={!canSend}
-              onClick={() => send()}
-            >
-              <Send size={15} />
-            </IconButton>
+
+            {/*
+              The same three, behind one glyph, on a phone.
+
+              Seven buttons and a text field do not fit across 375px: the
+              field lost, shrank to about ninety pixels, and wrapped its own
+              placeholder onto two lines. Nothing is dropped - a phone is
+              where stickers get used - it just costs one more tap.
+            */}
+            <div className="relative sm:hidden">
+              {more && (
+                <div className="absolute bottom-full right-0 mb-2 z-40 w-44 glass border border-edge-strong rounded-card shadow-xl overflow-hidden">
+                  {[
+                    { label: 'Stickers', icon: <StickerIcon size={14} />, run: () => setPicker('sticker') },
+                    { label: 'Motion pack', icon: <Film size={14} />, run: () => setPicker('motion') },
+                    { label: 'Send later', icon: <Clock size={14} />, run: () => setScheduleOpen(true) },
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => {
+                        setMore(false);
+                        item.run();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-3 h-10 text-left text-xs hover:bg-raised"
+                    >
+                      <span className="text-dim">{item.icon}</span>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <IconButton label="More" active={more} onClick={() => setMore(!more)}>
+                <Plus size={16} />
+              </IconButton>
+            </div>
+            {/*
+              Send when there is something to send, the microphone when there
+              is not - one slot, not two.
+
+              The recorder used to sit beside the paperclip, which meant six
+              buttons permanently flanking the field. On a phone that left it
+              171px wide and it could not show its own placeholder. Nothing
+              here is ever both available at once: a held key and a typed
+              message are alternatives.
+            */}
+            {canSend ? (
+              <IconButton label="Send" variant="primary" onClick={() => send()}>
+                <Send size={15} />
+              </IconButton>
+            ) : (
+              <VoiceRecorder
+                onSend={(voice) => {
+                  sendMessage(room.id, { voice, threadRoot });
+                }}
+              />
+            )}
           </div>
         </div>
       </div>

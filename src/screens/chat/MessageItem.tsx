@@ -595,7 +595,7 @@ function VoiceBubble({ clip }: { clip: VoiceClip }) {
       <button
         onClick={toggle}
         aria-label={playing ? 'Pause' : 'Play'}
-        className="h-7 w-7 rounded-full bg-gold text-[#1a1206] grid place-items-center shrink-0"
+        className="h-7 w-7 rounded-full bg-gold text-on-gold grid place-items-center shrink-0"
       >
         {playing ? <Pause size={13} /> : <Play size={13} className="ml-[1px]" />}
       </button>

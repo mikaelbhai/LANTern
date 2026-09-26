@@ -20,6 +20,8 @@ export function Avatar({
   className,
   ring,
   src,
+  icon,
+  muted,
 }: {
   name: string;
   color?: string;
@@ -31,8 +33,19 @@ export function Avatar({
   ring?: boolean;
   /** A profile picture. Falls back to the emoji or initial when absent. */
   src?: string | null;
+  /** A glyph instead of initials, for things that are not people. */
+  icon?: React.ReactNode;
+  /** Neutral fill: asleep, or a row that stands for nobody in particular. */
+  muted?: boolean;
 }) {
-  const fontSize = Math.round(size * 0.45);
+  const fontSize = Math.round(size * 0.38);
+  // A solid disc with the fill carrying the colour, not a tinted outline
+  // around coloured text. The old translucent version put the name's colour
+  // on a near-transparent background, which is the one place in the
+  // interface where a user-chosen colour had to pass contrast on its own -
+  // and half of them did not.
+  const fill = muted ? 'rgb(var(--c-raised))' : color;
+  const ink = muted ? 'rgb(var(--c-muted))' : '#fff';
   // A picture that fails to load is the normal case for a peer that has none,
   // or one that has gone away mid-render. Fall back rather than show a broken
   // image in a circle.
@@ -57,9 +70,9 @@ export function Avatar({
           width: size,
           height: size,
           fontSize,
-          background: `linear-gradient(145deg, ${color}33, ${color}18)`,
-          border: `1px solid ${color}66`,
-          color,
+          background: fill,
+          border: muted ? '1px solid rgb(var(--c-edge))' : 'none',
+          color: ink,
         }}
         title={name}
       >
@@ -73,7 +86,7 @@ export function Avatar({
             onError={() => setBroken(true)}
           />
         ) : (
-          (emoji ?? name.slice(0, 1).toUpperCase())
+          (icon || emoji || initials(name))
         )}
       </span>
       {status && (
@@ -89,4 +102,18 @@ export function Avatar({
       )}
     </span>
   );
+}
+
+/**
+ * Up to two letters, from the first two words.
+ *
+ * One letter is ambiguous the moment two people in a house share it, which
+ * on a home network is most houses.
+ */
+function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  const first = words[0][0] ?? '';
+  const second = words.length > 1 ? (words[1][0] ?? '') : (words[0][1] ?? '');
+  return (first + second).toUpperCase();
 }

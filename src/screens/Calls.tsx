@@ -9,6 +9,7 @@ import {
   Video,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Empty, IconButton, Modal, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
 import { cn, exactTime, formatDuration, relativeTime } from '../lib/utils';
@@ -29,21 +30,32 @@ export function Calls() {
 
   return (
     <div className="h-full flex flex-col relative">
-      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-2">
-        <Phone size={15} className="text-gold" />
-        <span className="text-sm font-semibold">Calls</span>
-        <div className="ml-auto">
-          <Button
-            size="xs"
-            variant="primary"
-            icon={<Users size={12} />}
-            onClick={() => setGroupOpen(true)}
-            disabled={!peerList.length}
-          >
-            New group call
-          </Button>
-        </div>
-      </header>
+      <ScreenHeader
+        icon={<Phone size={15} />}
+        title="Calls"
+        actions={
+          <>
+            <Button
+              size="xs"
+              variant="primary"
+              icon={<Users size={12} />}
+              onClick={() => setGroupOpen(true)}
+              disabled={!peerList.length}
+              className="hidden md:inline-flex"
+            >
+              New group call
+            </Button>
+            <IconButton
+              label="New group call"
+              className="md:hidden"
+              disabled={!peerList.length}
+              onClick={() => setGroupOpen(true)}
+            >
+              <Users size={18} />
+            </IconButton>
+          </>
+        }
+      />
 
       <div className="flex-1 min-h-0 flex">
         <div className="w-[300px] shrink-0 border-r border-edge scroll-y p-3 hidden md:block">

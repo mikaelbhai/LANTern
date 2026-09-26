@@ -37,6 +37,7 @@ import {
   Toggle,
   Tooltip,
 } from '../components/ui';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { validatePhrase } from '../lib/phrase';
@@ -55,26 +56,38 @@ export function Network() {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-2">
-        <Flashlight size={15} className="text-gold" />
-        <span className="text-sm font-semibold">Network</span>
-        <span className="text-2xs text-muted hidden sm:block">
-          Connectivity, NAT traversal and pairing
-        </span>
-        <div className="ml-auto flex gap-2">
-          <Button size="xs" icon={<QrIcon size={12} />} onClick={() => setInviteOpen(true)}>
-            Invite
-          </Button>
-          <Button
-            size="xs"
-            variant="primary"
-            icon={<Plus size={12} />}
-            onClick={() => setAddOpen(true)}
-          >
-            Add peer
-          </Button>
-        </div>
-      </header>
+      <ScreenHeader
+        icon={<Flashlight size={15} />}
+        title="Network"
+        hint="Connectivity, NAT traversal and pairing"
+        actions={
+          <>
+            <Button
+              size="xs"
+              icon={<QrIcon size={12} />}
+              onClick={() => setInviteOpen(true)}
+              className="hidden md:inline-flex"
+            >
+              Invite
+            </Button>
+            <Button
+              size="xs"
+              variant="primary"
+              icon={<Plus size={12} />}
+              onClick={() => setAddOpen(true)}
+              className="hidden md:inline-flex"
+            >
+              Add peer
+            </Button>
+            <IconButton label="Invite" className="md:hidden" onClick={() => setInviteOpen(true)}>
+              <QrIcon size={18} />
+            </IconButton>
+            <IconButton label="Add peer" className="md:hidden" onClick={() => setAddOpen(true)}>
+              <Plus size={19} />
+            </IconButton>
+          </>
+        }
+      />
 
       <div className="flex-1 scroll-y p-4 space-y-5">
         <MyNetworkCard onFirewall={() => setFirewallOpen(true)} />
@@ -1117,7 +1130,7 @@ function AddPeerModal({ open, onClose }: { open: boolean; onClose: () => void })
             key={k}
             onClick={() => setTab(k)}
             className={`flex-1 h-7 rounded-[4px] text-xs transition-colors ${
-              tab === k ? 'bg-gold text-[#1a1206] font-medium' : 'text-dim hover:text-txt'
+              tab === k ? 'bg-gold text-on-gold font-medium' : 'text-dim hover:text-txt'
             }`}
           >
             {label}

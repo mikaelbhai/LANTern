@@ -44,6 +44,32 @@ export function relativeTime(ts: number, now = Date.now()): string {
   return new Date(ts).toLocaleDateString();
 }
 
+/**
+ * The right-hand timestamp on a list row.
+ *
+ * Not `relativeTime`: "4h ago" beside every row turns a list into arithmetic.
+ * A list wants the same answer a phone's message list gives - a clock time
+ * today, a word for the last week, a date beyond that.
+ */
+export function whenLabel(ts: number, now = Date.now()): string {
+  if (!ts) return '';
+  const age = now - ts;
+  if (age < 60_000) return 'now';
+
+  const d = new Date(ts);
+  const today = new Date(now);
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, today)) return clockTime(ts);
+
+  const yesterday = new Date(now);
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(d, yesterday)) return 'Yesterday';
+
+  if (age < 7 * 86_400_000) return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { day: 'numeric', month: 'numeric', year: '2-digit' });
+}
+
 export function clockTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

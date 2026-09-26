@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Menu, Flashlight, Settings as SettingsIcon, X } from 'lucide-react';
+import { Flashlight, MoreVertical, Search, Settings as SettingsIcon, X } from 'lucide-react';
 import { MobileTabBar, NAV_ITEMS, Sidebar } from './components/Sidebar';
 import { Onboarding } from './components/Onboarding';
 import { Toasts } from './components/Toasts';
@@ -26,6 +26,7 @@ import { prepareCallAlerts } from './lib/ringer';
 import { useIsMobile } from './lib/hooks';
 import { SCREEN_TITLES, type Screen } from './lib/nav';
 import { cn } from './lib/utils';
+import { HeaderSlot } from './components/ScreenHeader';
 import { useBackDismiss } from './lib/hooks';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
@@ -52,6 +53,7 @@ export default function App() {
    * to move between them - accepting a game invitation has to open the game.
    */
   const screen = useStore((s) => s.screen);
+  const activeRoomId = useStore((s) => s.activeRoomId);
   const navigate = useStore((s) => s.navigate);
   const goBack = useStore((s) => s.goBack);
 
@@ -113,6 +115,12 @@ export default function App() {
        */
       const rgb = hexToRgb(settings.accent, !dark);
       if (rgb) root.style.setProperty('--c-gold', rgb);
+      // The same colour undarkened, for the surfaces that are dark whatever
+      // the mode is - the cinema, the call overlay, the player. Darkening it
+      // for a white page and then painting it on black gave Theatre a green
+      // that was almost invisible against its own background.
+      const bright = hexToRgb(settings.accent, false);
+      if (bright) root.style.setProperty('--c-accent-bright', bright);
     };
     apply();
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
@@ -252,12 +260,27 @@ export default function App() {
         <Sidebar screen={screen} onNavigate={go} onOpenProfile={() => setProfileOpen(true)} />
       )}
 
-      <div className="flex-1 min-w-0 flex flex-col">
-        {isMobile && (
+      {/*
+        Theatre darkens everything around it.
+
+        A cinema screen between a white title bar and a white tab bar read as
+        a block pasted in by mistake rather than as a decision. The class
+        redeclares the palette for this column, so the bar above and the tabs
+        below follow the screen and the sidebar - which is navigation, not
+        the room - does not. See `.cinema` in index.css.
+      */}
+      <div className={cn('flex-1 min-w-0 flex flex-col', screen === 'theatre' && 'cinema bg-base')}>
+        {/*
+          An open conversation brings its own bar - back, who you are talking
+          to, and whether they are here - so the app bar stands down rather
+          than stacking a second one on top of it. Two bars and a composer
+          left a phone about four messages of room.
+        */}
+        {isMobile && !(screen === 'chats' && activeRoomId) && (
           <MobileHeader
             screen={screen}
             onMenu={() => setDrawerOpen(true)}
-            onProfile={() => setProfileOpen(true)}
+            onNavigate={go}
           />
         )}
 
@@ -306,34 +329,63 @@ export default function App() {
   );
 }
 
+/**
+ * One bar for the whole phone: the product, a way to search it, and a menu.
+ *
+ * It used to be a hamburger, the name of the screen you were already looking
+ * at, and your own avatar. None of the three was worth a tap - the screen
+ * announces itself by the tab that is lit, and nobody opens their own profile
+ * from the top of every screen. What was missing was search, which is the
+ * first thing anybody reaches for in a list of people.
+ *
+ * The search button does not open a screen. Home already carries the field;
+ * this focuses it, and from anywhere else it goes to Home and focuses it
+ * there. An event rather than a store field because focus is a moment, not
+ * a state, and a state would have to be cleared again afterwards.
+ */
 function MobileHeader({
   screen,
   onMenu,
-  onProfile,
+  onNavigate,
 }: {
   screen: Screen;
   onMenu: () => void;
-  onProfile: () => void;
+  onNavigate: (s: Screen) => void;
 }) {
-  const profile = useStore((s) => s.profile);
+  const home = screen === 'home';
+
+  const search = () => {
+    if (!home) onNavigate('home');
+    // After the screen has mounted, or the field it is meant to focus does
+    // not exist yet.
+    setTimeout(() => window.dispatchEvent(new CustomEvent('lantern:search')), 0);
+  };
+
   return (
-    <header className="safe-t shrink-0 bg-surface border-b border-edge">
+    <header className="safe-t shrink-0 bg-surface">
       {/* The status-bar inset is padding on the header, and the row keeps its
           own height inside it. Putting both on one fixed-height element made
           the title slide out from under its own bar. */}
-      <div className="h-14 flex items-center px-3 gap-2">
-      <IconButton label="Menu" onClick={onMenu}>
-        <Menu size={18} />
-      </IconButton>
-      <span className="text-sm font-semibold flex-1">{SCREEN_TITLES[screen]}</span>
-      <button onClick={onProfile} aria-label="Profile">
-        <Avatar
-          name={profile.name}
-          color={profile.color}
-          emoji={profile.emoji}
-          size={28}
-        />
-      </button>
+      <div className="h-14 flex items-center pl-4 pr-1 gap-1">
+        {/* The product on the screen you land on, the screen's name
+            everywhere else. Naming the screen you are already looking at was
+            worth nothing on Home, where the tab is lit underneath it; it is
+            worth having on the six screens that are two taps deep. */}
+        <span className="flex-1 min-w-0 text-lg font-semibold tracking-tight text-txt truncate select-none">
+          {home ? 'LANTern' : SCREEN_TITLES[screen]}
+        </span>
+
+        {/* Where each screen puts its own buttons. See ScreenHeader.tsx. */}
+        <HeaderSlot />
+
+        {home && (
+          <IconButton label="Search" onClick={search}>
+            <Search size={19} />
+          </IconButton>
+        )}
+        <IconButton label="More" onClick={onMenu}>
+          <MoreVertical size={19} />
+        </IconButton>
       </div>
     </header>
   );

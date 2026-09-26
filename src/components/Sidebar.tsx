@@ -200,7 +200,7 @@ export function Sidebar({
                 <Icon size={16} className="shrink-0" />
                 {!collapsed && <span className="text-xs font-medium">{item.label}</span>}
                 {!collapsed && badge && (
-                  <span className="ml-auto min-w-[17px] h-[17px] px-1 grid place-items-center rounded-full bg-gold text-[#1a1206] text-[10px] font-bold">
+                  <span className="ml-auto min-w-[17px] h-[17px] px-1 grid place-items-center rounded-full bg-gold text-on-gold text-[10px] font-bold">
                     {badge > 99 ? '99+' : badge}
                   </span>
                 )}
@@ -338,39 +338,53 @@ export function MobileTabBar({
     // the inset from the row, squashing the icons and letting the system
     // gesture bar sit on top of the labels.
     <nav className="shrink-0 safe-b bg-surface border-t border-edge">
-      <div className="h-14 flex items-stretch">
-      {items.map((item) => {
-        const Icon = item.icon;
-        const on = screen === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            aria-label={item.label}
-            aria-current={on ? 'page' : undefined}
-            className={cn(
-              'flex-1 flex flex-col items-center justify-center gap-1 relative transition-colors',
-              on ? 'text-gold' : 'text-muted',
-            )}
-          >
-            {on && (
-              <motion.span
-                layoutId="tab-active"
-                className="absolute top-0 h-[2px] w-8 bg-gold rounded-full shadow-glow"
-              />
-            )}
-            <span className="relative">
-              <Icon size={19} />
-              {item.id === 'chats' && unread > 0 && (
-                <span className="absolute -top-1 -right-1.5 min-w-[15px] h-[15px] px-1 grid place-items-center rounded-full bg-gold text-[#1a1206] text-[9px] font-bold">
-                  {unread > 9 ? '9+' : unread}
+      <div className="h-[58px] flex items-stretch">
+        {items.map((item) => {
+          const Icon = item.icon;
+          const on = screen === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => onNavigate(item.id)}
+              aria-label={item.label}
+              aria-current={on ? 'page' : undefined}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 pt-1.5 pb-1"
+            >
+              {/*
+                The lit tab is a filled lozenge behind the glyph rather than a
+                hairline above it. A 2px rule at the top of the bar is a
+                detail you have to go looking for on a phone held at arm's
+                length; a shape you can see out of the corner of your eye is
+                the point of a tab bar.
+              */}
+              <span className="relative h-7 w-16 grid place-items-center">
+                {on && (
+                  <motion.span
+                    layoutId="tab-active"
+                    className="absolute inset-0 rounded-full bg-gold/20"
+                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                  />
+                )}
+                <span className={cn('relative', on ? 'text-gold' : 'text-muted')}>
+                  <Icon size={20} strokeWidth={on ? 2.2 : 1.8} />
+                  {item.id === 'chats' && unread > 0 && (
+                    <span className="absolute -top-1 -right-2 min-w-[15px] h-[15px] px-1 grid place-items-center rounded-full bg-gold text-on-gold text-[9px] font-bold">
+                      {unread > 9 ? '9+' : unread}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-            <span className="text-[10px] font-medium">{item.label}</span>
-          </button>
-        );
-      })}
+              </span>
+              <span
+                className={cn(
+                  'text-[10px] leading-none',
+                  on ? 'text-gold font-semibold' : 'text-muted font-medium',
+                )}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </nav>
   );

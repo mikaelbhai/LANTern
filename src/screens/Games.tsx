@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Empty, Modal, SectionTitle, Select } from '../components/ui';
 import { Chess } from './games/Chess';
 import { ConnectFour } from './games/ConnectFour';
@@ -268,13 +269,11 @@ function GamesHub() {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-2">
-        <Gamepad2 size={15} className="text-gold" />
-        <span className="text-sm font-semibold">Games</span>
-        <span className="text-2xs text-muted hidden sm:block">
-          All offline · nothing downloaded, nothing phoned home
-        </span>
-      </header>
+      <ScreenHeader
+        icon={<Gamepad2 size={15} />}
+        title="Games"
+        hint="All offline · nothing downloaded, nothing phoned home"
+      />
 
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0 scroll-y p-4">

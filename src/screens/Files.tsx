@@ -20,6 +20,7 @@ import {
   Video as VideoIcon,
   X,
 } from 'lucide-react';
+import { ScreenHeader } from '../components/ScreenHeader';
 import { Avatar } from '../components/Avatar';
 import { CreateShareModal, Hosting, rootOf, toEntries } from './files/Hosting';
 import { PeerFolders } from './files/PeerFolders';
@@ -68,9 +69,7 @@ export function Files() {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="h-11 shrink-0 border-b border-edge bg-surface flex items-center px-4 gap-3">
-        <FolderOpen size={15} className="text-gold" />
-        <span className="text-sm font-semibold">Files</span>
+      <ScreenHeader icon={<FolderOpen size={15} />} title="Files">
         <Segmented
           value={tab}
           onChange={setTab}
@@ -102,8 +101,9 @@ export function Files() {
               ),
             },
           ]}
+          className="flex-1 md:flex-none"
         />
-      </header>
+      </ScreenHeader>
 
       <div className="flex-1 min-h-0">
         {tab === 'transfers' ? <Transfers /> : tab === 'peers' ? <PeerFolders /> : <Hosting />}
