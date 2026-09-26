@@ -264,12 +264,22 @@ function Row({
   return (
     <div className="border-b border-edge/70 last:border-b-0">
       <div className="flex items-center gap-3 pl-4 pr-3 py-2.5">
-        <span
-          onClick={onAvatarClick}
-          className={cn('shrink-0', onAvatarClick && 'cursor-pointer')}
-        >
-          {avatar}
-        </span>
+        {/* A button, not a span with a handler on it. Tapping the avatar is
+            how you open somebody's devices, and on a span that is reachable
+            by finger and mouse only - not by keyboard, and not by the d-pad
+            on the television this app also runs on. */}
+        {onAvatarClick ? (
+          <button
+            type="button"
+            onClick={onAvatarClick}
+            aria-label={`Devices for ${title}`}
+            className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60"
+          >
+            {avatar}
+          </button>
+        ) : (
+          <span className="shrink-0">{avatar}</span>
+        )}
 
         {onClick ? (
           <button type="button" onClick={onClick} className="min-w-0 flex-1 text-left">
@@ -406,10 +416,17 @@ function PersonRow({
               {unread > 99 ? '99+' : unread}
             </span>
           )}
+          {/*
+            The same action as the avatar beside it, so it is hidden from
+            assistive technology rather than announced twice under the same
+            name. It stays clickable: for a mouse it is the obvious target,
+            and the avatar is the one that carries the label.
+          */}
           {several && (
             <button
               onClick={onToggle}
-              aria-label={`Devices for ${person.name}`}
+              aria-hidden="true"
+              tabIndex={-1}
               className="text-muted"
             >
               {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}

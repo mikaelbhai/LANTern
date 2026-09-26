@@ -60,7 +60,8 @@ export function Button({
         onClick?.(e);
       }}
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap transition-all duration-150 select-none',
+        'inline-flex items-center justify-center whitespace-nowrap select-none',
+        'transition-[background-color,border-color,color,box-shadow,transform] duration-150',
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gold/60',
         'disabled:pointer-events-none disabled:opacity-40 active:scale-[0.97]',
         sizes,
@@ -279,12 +280,24 @@ export function Modal({
 export const Input = React.forwardRef<
   HTMLInputElement,
   React.InputHTMLAttributes<HTMLInputElement> & { icon?: React.ReactNode }
->(function Input({ className, icon, ...rest }, ref) {
+>(function Input({ className, icon, 'aria-label': label, placeholder, ...rest }, ref) {
   return (
     <div className="relative flex items-center w-full">
-      {icon && <span className="absolute left-2.5 text-muted pointer-events-none">{icon}</span>}
+      {/* The glyph is decoration: the field beside it is already named, and a
+          screen reader announcing "magnifier" before "Search titles" is
+          noise. */}
+      {icon && (
+        <span aria-hidden="true" className="absolute left-2.5 text-muted pointer-events-none">
+          {icon}
+        </span>
+      )}
       <input
         ref={ref}
+        // Almost every field in this app is labelled by its own placeholder
+        // and nothing else, which leaves it unnamed the moment somebody
+        // starts typing and the placeholder disappears.
+        aria-label={label ?? (typeof placeholder === 'string' ? placeholder : undefined)}
+        placeholder={placeholder}
         {...rest}
         className={cn(
           'w-full h-8 bg-raised border border-edge rounded-input px-2.5 text-xs text-txt',

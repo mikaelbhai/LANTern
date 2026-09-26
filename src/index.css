@@ -84,6 +84,14 @@
     overflow: hidden;
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
+    /*
+     * Kills the 300ms wait a mobile browser spends deciding whether a tap was
+     * the first half of a double-tap zoom. Every button in the app felt
+     * fractionally late because of it, and it is also what lets the viewport
+     * meta tag stop disabling pinch-zoom: double-tap zoom is what that was
+     * turning off, and this turns off only that.
+     */
+    touch-action: manipulation;
   }
 
   button {

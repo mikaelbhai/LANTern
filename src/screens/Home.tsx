@@ -95,7 +95,13 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
           ref={field}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search people, films, files"
+          type="search"
+          // A name is not a word, a film title is not a sentence, and a
+          // filename is neither. Autocorrect on any of the three fights the
+          // person typing.
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="Search people, films, files…"
           icon={<Search size={15} />}
           className="h-11 rounded-full bg-raised border-transparent pl-10 text-sm"
         />

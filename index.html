@@ -2,9 +2,20 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <!--
+      No `user-scalable=no`.
+
+      It was there to stop a double-tap on a game board zooming the page,
+      which `touch-action: manipulation` does without also taking pinch-zoom
+      away from somebody who needs it to read at all. Disabling zoom is the
+      single most common accessibility failure on a mobile web app.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0C0F14" />
+    <!-- One per scheme, so the Android status bar matches the page instead of
+         staying dark behind a white app. -->
+    <meta name="theme-color" content="#F7F8FB" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0C0F14" media="(prefers-color-scheme: dark)" />
     <title>LANTern</title>
   </head>
   <body>
