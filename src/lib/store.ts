@@ -135,7 +135,15 @@ export interface Settings {
 }
 
 const defaultSettings: Settings = {
-  theme: 'dark',
+  /*
+   * The device decides, not this app.
+   *
+   * It defaulted to dark, which is a choice made on behalf of somebody who
+   * has already told their phone what they want. A light palette has been
+   * here all along (see `html.light` in index.css); nothing was reading it
+   * unless you went and asked.
+   */
+  theme: 'system',
   accent: '#F5A623',
   fontSize: 'medium',
   density: 'cozy',

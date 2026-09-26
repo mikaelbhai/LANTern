@@ -16,6 +16,7 @@ import {
   ArrowUp,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { Household } from './home/Household';
 import { DeviceTag } from '../components/PeerName';
 import { ConnBadge, NatBadge, ScopeBadge, latencyTone } from '../components/ConnBadge';
 import { Badge, Button, Empty, IconButton, SectionTitle, Tooltip } from '../components/ui';
@@ -84,8 +85,19 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
               </div>
             }
           >
-            Peers on the network
+            The house
           </SectionTitle>
+
+          {/*
+            A row per person, their devices underneath, sleepers included.
+            This was a card per device, which is what the network reports and
+            not what anybody thinks: one person with a phone, a laptop and a
+            television appeared three times under the same name. See
+            home/Household.tsx.
+          */}
+          <div className="panel overflow-hidden">
+            <Household onNavigate={onNavigate} />
+          </div>
 
           {list.length === 0 ? (
             <div className="panel">
@@ -105,15 +117,7 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
                 }
               />
             </div>
-          ) : (
-            <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(248px,1fr))]">
-              <AnimatePresence>
-                {list.map((p) => (
-                  <PeerCard key={p.id} peer={p} onNavigate={onNavigate} />
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
+          ) : null}
         </div>
         </PullToRefresh>
 

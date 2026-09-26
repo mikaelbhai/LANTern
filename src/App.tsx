@@ -30,6 +30,7 @@ import { useBackDismiss } from './lib/hooks';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
 import { IncomingGame } from './components/IncomingGame';
+import { NetworkStrip } from './components/NetworkStrip';
 import { useHud } from './lib/useHud';
 import { RejoinBanner } from './screens/games/LeaveGuard';
 
@@ -97,20 +98,33 @@ export default function App() {
           window.matchMedia('(prefers-color-scheme: dark)').matches);
       root.classList.toggle('dark', dark);
       root.classList.toggle('light', !dark);
+
+      /*
+       * The accent moves with the theme, and has to be set here.
+       *
+       * It is an inline style on the root, so it beats the `html.light`
+       * palette in index.css - which carries a darker gold that nothing was
+       * ever reaching. #F5A623 on a near-white page is 1.9:1, so every piece
+       * of accent-coloured text in light mode was unreadable.
+       *
+       * In this function rather than beside the other typography settings
+       * because the system can change the mode underneath us, and only this
+       * listener hears about it.
+       */
+      const rgb = hexToRgb(settings.accent, !dark);
+      if (rgb) root.style.setProperty('--c-gold', rgb);
     };
     apply();
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
     mql.addEventListener('change', apply);
     return () => mql.removeEventListener('change', apply);
-  }, [settings.theme]);
+  }, [settings.theme, settings.accent]);
 
   React.useEffect(() => {
     const root = document.documentElement;
     root.dataset.density = settings.density;
     root.dataset.font = settings.fontSize;
-    const rgb = hexToRgb(settings.accent);
-    if (rgb) root.style.setProperty('--c-gold', rgb);
-  }, [settings.density, settings.fontSize, settings.accent]);
+  }, [settings.density, settings.fontSize]);
 
   React.useEffect(() => {
     setSoundEnabled(settings.notifications.sound && !settings.notifications.dnd);
@@ -246,6 +260,10 @@ export default function App() {
             onProfile={() => setProfileOpen(true)}
           />
         )}
+
+        {/* The network, when it has something to say. Silent otherwise, and
+            it yields to a call, which wants the same strip of screen. */}
+        <NetworkStrip onNavigate={go} />
 
         {/*
           Screens are rendered plainly, with no entrance animation. Anything
@@ -390,8 +408,37 @@ function MobileDrawer({
   );
 }
 
-function hexToRgb(hex: string): string | null {
+/**
+ * The accent as space-separated channels, darkened for a light page.
+ *
+ * Accents are chosen against the dark theme, where a bright gold reads well.
+ * The same colour on a near-white page fails contrast badly, so on light it
+ * is taken down until it is legible as text. Lightness rather than
+ * saturation, so the colour somebody chose is still the colour they see.
+ */
+function hexToRgb(hex: string, forLight = false): string | null {
   const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex.trim());
   if (!m) return null;
-  return `${parseInt(m[1], 16)} ${parseInt(m[2], 16)} ${parseInt(m[3], 16)}`;
+  let [r, g, b] = [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+
+  if (forLight) {
+    // Scaled towards black until the relative luminance clears the point
+    // where 4.5:1 against the light base becomes reachable. Iterative
+    // because the curve is not linear and one fixed factor is wrong for
+    // both a yellow and a blue.
+    for (let i = 0; i < 24 && luminance(r, g, b) > 0.18; i++) {
+      r = Math.round(r * 0.92);
+      g = Math.round(g * 0.92);
+      b = Math.round(b * 0.92);
+    }
+  }
+  return `${r} ${g} ${b}`;
+}
+
+function luminance(r: number, g: number, b: number): number {
+  const channel = (v: number) => {
+    const n = v / 255;
+    return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 }

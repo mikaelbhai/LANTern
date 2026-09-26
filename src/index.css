@@ -31,7 +31,13 @@
     --c-danger: 197 51 51;
     --c-txt: 22 28 39;
     --c-dim: 88 100 122;
-    --c-muted: 138 149 168;
+    /*
+     * Darker than it looks like it should be, because it has to carry real
+     * text. Every timestamp and hint in the interface is muted, and at the
+     * value this used to be (138 149 168) it sat at 2.8:1 against the light
+     * page - below AA, and measured rather than guessed.
+     */
+    --c-muted: 100 109 125;
   }
 
   * {
