@@ -10,6 +10,7 @@
 #[cfg(target_os = "android")]
 mod apkinstall;
 mod audiotrack;
+mod callaudio;
 #[cfg(target_os = "windows")]
 pub mod autoshare;
 mod commands;
@@ -133,6 +134,8 @@ pub fn run() {
             commands::profile_has_avatar,
             commands::identity_device_id,
             commands::pip_set_playing,
+            commands::call_audio_earpiece,
+            commands::call_audio_reset,
             commands::net_info,
             commands::net_set_relay_hub,
             commands::net_set_port,

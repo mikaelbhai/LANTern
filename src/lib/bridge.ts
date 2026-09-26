@@ -353,6 +353,16 @@ export const api = {
     /** Returns false when there is no live link to that peer. */
     signal: (peerId: string, payload: unknown) =>
       call<boolean>('call_signal', { peerId, payload }),
+    /**
+     * Sends call audio to the earpiece, or back out to the loudspeaker.
+     *
+     * Only a phone has anywhere else to send it; a desktop returns false and
+     * carries on. False also means the device has no earpiece at all — a
+     * tablet or a television — which is left alone rather than silenced.
+     */
+    earpiece: (earpiece: boolean) => call<boolean>('call_audio_earpiece', { earpiece }),
+    /** Hands the audio stack back when the call ends. */
+    resetAudio: () => call<void>('call_audio_reset'),
   },
   /** Shared games across devices. */
   game: {

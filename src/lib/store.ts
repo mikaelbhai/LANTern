@@ -6,6 +6,7 @@ import { notifyMessage } from './ringer';
 import { gameName } from './games';
 import { openPrivacySettings, readMediaError } from './mediaerror';
 import { primed } from './primergate';
+import type { Screen } from './nav';
 import type { MediaWanted } from './mediaerror';
 import { emptyScores, record } from './scores';
 import type { Result, Scores } from './scores';
@@ -202,6 +203,23 @@ interface State {
    * nothing to anybody else. Seats in a game are dealt by this.
    */
   deviceId: string;
+
+  /**
+   * Which screen is showing, and how you got here.
+   *
+   * Held here rather than in the window component because things that are not
+   * screens need to move between them: accepting a game invitation has to
+   * open the game, and it used to set the board up behind whatever you were
+   * looking at, which from the outside is a Play button that does nothing.
+   *
+   * The trail is what Back walks. It used to go straight to Home from
+   * anywhere, so two steps in meant losing both.
+   */
+  screen: Screen;
+  screenTrail: Screen[];
+  navigate: (to: Screen) => void;
+  /** One step back, or Home. False when there was nowhere to go. */
+  goBack: () => boolean;
   /**
    * A game somebody has dealt this device into and not yet been answered.
    *
@@ -583,6 +601,33 @@ export const useStore = create<State>((set, get) => {
      */
     deviceId: '',
 
+    screen: 'home',
+    screenTrail: [],
+    navigate: (to) =>
+      set((s) => {
+        if (s.screen === to) return {};
+        // Bounded, and without the screen you are leaving appearing twice in
+        // a row: going back and forth between two screens should not build a
+        // trail you have to walk all the way out of.
+        const trail = [...s.screenTrail.filter((x) => x !== s.screen), s.screen].slice(-8);
+        return { screen: to, screenTrail: trail };
+      }),
+    goBack: () => {
+      const { screen, screenTrail } = get();
+      if (screenTrail.length > 0) {
+        const trail = [...screenTrail];
+        const to = trail.pop() as Screen;
+        set({ screen: to, screenTrail: trail });
+        return true;
+      }
+      if (screen !== 'home') {
+        set({ screen: 'home' });
+        return true;
+      }
+      // Nowhere left to go: the press belongs to whatever is outside this.
+      return false;
+    },
+
     gameInvite: null,
     acceptGameInvite: () => {
       const invite = get().gameInvite;
@@ -593,6 +638,9 @@ export const useStore = create<State>((set, get) => {
       const mine = seatId(get());
       const opponentId = invite.session.players.find((p) => p !== mine) ?? invite.from;
       set({ gameInvite: null, activeGame: { kind: invite.session.game, opponentId } });
+      // And put it in front of them. Setting the board up behind whichever
+      // screen they happened to be on is a Play button that does nothing.
+      get().navigate('games');
     },
     declineGameInvite: () => {
       const invite = get().gameInvite;
@@ -889,6 +937,7 @@ export const useStore = create<State>((set, get) => {
               opponentId: full.players.find((p) => p !== me) ?? session.from,
             },
           });
+          get().navigate('games');
         } else if (!inCall && !alreadyPlaying) {
           // Outside a call it is an invitation, and an invitation needs
           // somewhere to say yes. A toast fades whether or not it was read.

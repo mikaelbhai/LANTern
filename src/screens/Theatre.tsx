@@ -41,6 +41,7 @@ import { PullToRefresh } from '../components/PullToRefresh';
 export function Theatre() {
   const peers = useStore((s) => s.peers);
   const profile = useStore((s) => s.profile);
+  const toast = useStore((s) => s.toast);
 
   const [items, setItems] = React.useState<MediaItem[]>([]);
 
@@ -134,6 +135,26 @@ export function Theatre() {
   const hero = React.useMemo(() => pickHero(items), [items]);
 
   const play = (item: MediaItem) => {
+    /*
+     * A locked title is listed and not served.
+     *
+     * It used to open the player anyway. The device holding the file refuses
+     * the stream, and the player has one way of saying it got nothing:
+     * "Can't reach" - which describes a network that is down, not a rating
+     * that is being enforced. So the one case the person can do something
+     * about looked exactly like the one they cannot.
+     *
+     * The door is still visible, as it is meant to be. It just says what it
+     * is now, and who can open it.
+     */
+    if (item.locked) {
+      toast({
+        kind: 'info',
+        title: `${item.title} is rated ${ratingLabel(item.minAge) || 'above this device'}`,
+        body: `${ownerName(item)} decides what this device may watch. Ask them to let this one past.`,
+      });
+      return;
+    }
     setDetail(null);
     setPlaying(item);
   };
@@ -933,13 +954,24 @@ function DetailSheet({
               />
 
               <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => onPlay(item)}
-                  className="h-9 px-5 rounded-input bg-white text-black font-semibold text-sm flex items-center gap-2 hover:bg-white/85"
-                >
-                  <Play size={15} fill="currentColor" />
-                  {item.progressSec > 30 ? 'Resume' : 'Play'}
-                </button>
+                {/* Listed, not served. Saying so here beats a Play button
+                    that opens a player which cannot be filled. */}
+                {item.locked ? (
+                  <div className="h-9 px-4 rounded-input bg-raised border border-edge flex items-center gap-2 text-sm text-muted">
+                    <Lock size={14} className="text-gold shrink-0" />
+                    <span>
+                      Rated {ratingLabel(item.minAge) || 'above this device'} — {owner} decides
+                    </span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onPlay(item)}
+                    className="h-9 px-5 rounded-input bg-white text-black font-semibold text-sm flex items-center gap-2 hover:bg-white/85"
+                  >
+                    <Play size={15} fill="currentColor" />
+                    {item.progressSec > 30 ? 'Resume' : 'Play'}
+                  </button>
+                )}
                 {/* Only offered when there is somebody to watch with; a button
                     that starts a party of one is a button that does nothing. */}
                 {onWatchTogether && peerCount > 0 && (

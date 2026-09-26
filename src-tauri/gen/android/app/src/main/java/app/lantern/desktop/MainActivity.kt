@@ -3,6 +3,7 @@ package app.lantern.desktop
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.net.wifi.WifiManager
@@ -199,6 +200,69 @@ class MainActivity : TauriActivity() {
     @JvmStatic
     fun setMediaPlaying(playing: Boolean) {
       mediaPlaying = playing
+    }
+
+    /**
+     * Routes a call to the earpiece, the way a phone call goes.
+     *
+     * A voice call with no picture is held against the ear, and everything
+     * about the phone is already built for that: the small speaker at the top
+     * is aimed at an ear rather than a room, and the microphone the call
+     * stack picks in this mode is the one at the bottom, near the mouth, with
+     * the echo cancelling and noise suppression that come with it.
+     *
+     * Out loud is right for a video call, where the phone is held away and
+     * being looked at. So the picture decides, and this is told which.
+     *
+     * `setCommunicationDevice` is the modern way and the only one that works
+     * reliably from Android 12; `isSpeakerphoneOn` is what there was before
+     * and is still what those versions listen to.
+     */
+    @JvmStatic
+    fun setEarpiece(earpiece: Boolean): Boolean = runCatching {
+      val ctx = appContext ?: return false
+      val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+
+      // The mode is what makes this a call rather than media playback: it
+      // picks the communication microphone and turns on the echo canceller.
+      audio.mode = AudioManager.MODE_IN_COMMUNICATION
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val want =
+          if (earpiece) AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+          else AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        val device = audio.availableCommunicationDevices.firstOrNull { it.type == want }
+        // A device with no earpiece - a tablet, a television - simply has
+        // nothing to route to, and is left as it was rather than silenced.
+        if (device == null) false else audio.setCommunicationDevice(device)
+      } else {
+        @Suppress("DEPRECATION")
+        run {
+          audio.isSpeakerphoneOn = !earpiece
+          true
+        }
+      }
+    }.getOrDefault(false)
+
+    /**
+     * Hands the audio stack back when the call ends.
+     *
+     * Leaving the mode set keeps the phone in call routing afterwards, which
+     * is how a device ends up playing music through the earpiece.
+     */
+    @JvmStatic
+    fun clearCallAudio() {
+      val ctx = appContext ?: return
+      val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+      runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          audio.clearCommunicationDevice()
+        } else {
+          @Suppress("DEPRECATION")
+          run { audio.isSpeakerphoneOn = false }
+        }
+        audio.mode = AudioManager.MODE_NORMAL
+      }
     }
 
     /**

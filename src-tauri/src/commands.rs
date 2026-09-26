@@ -453,6 +453,22 @@ pub fn host_os() -> String {
     std::env::consts::OS.to_string()
 }
 
+/// Sends call audio to the earpiece, or back out to the loudspeaker.
+///
+/// A voice call with no picture is held against the ear; a video call is held
+/// away and looked at. Only a phone has anywhere else to send it, so this does
+/// nothing on a desktop and says so by returning false.
+#[tauri::command]
+pub fn call_audio_earpiece(earpiece: bool) -> bool {
+    crate::callaudio::set_earpiece(earpiece)
+}
+
+/// Hands the audio stack back when the call ends.
+#[tauri::command]
+pub fn call_audio_reset() {
+    crate::callaudio::reset();
+}
+
 /// Tells the window layer that a film is on screen, or is no longer.
 ///
 /// Only Android acts on it, where leaving the app mid-film puts the whole

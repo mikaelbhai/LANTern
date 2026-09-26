@@ -29,6 +29,7 @@ import { startHoldTone, startRingback, sfx } from '../../lib/audio';
 import { ring } from '../../lib/ringer';
 import * as rtc from '../../lib/webrtc';
 import { Zoomable } from './Zoomable';
+import { api } from '../../lib/bridge';
 import { cn, formatDuration } from '../../lib/utils';
 import { bringVideoBack, popOutVideo } from '../../lib/popout';
 import { ScreenShareStage, ShareSourcePicker } from './ScreenShare';
@@ -51,6 +52,32 @@ export function CallOverlay() {
   const selfMuted = useStore((s) => s.micMuted);
   const setSelfMuted = useStore((s) => s.setMicMuted);
   const [selfCam, setSelfCam] = React.useState(call.kind === 'video');
+
+  /**
+   * Where the call comes out of, on a phone.
+   *
+   * A call with no picture is held against the ear, and a phone is built for
+   * that: the small speaker at the top is aimed at an ear rather than a room,
+   * and the microphone the call stack picks in that mode is the one at the
+   * bottom, by the mouth. A call with a picture is held away and looked at,
+   * so it belongs out loud.
+   *
+   * The picture decides, and it can change mid-call - a camera turned on has
+   * to move the sound with it. Screen sharing counts as a picture for the
+   * same reason: nobody holds a shared screen to their ear.
+   *
+   * Does nothing on a desktop, which has one pair of speakers and no notion
+   * of holding it to your face.
+   */
+  const hasPicture = selfCam || call.kind === 'video' || !!call.screenShare;
+  React.useEffect(() => {
+    if (call.state === 'ended') return;
+    void api.call.earpiece(!hasPicture).catch(() => {});
+  }, [hasPicture, call.state]);
+
+  // And hand the audio stack back, or the phone keeps routing everything
+  // through the earpiece after the call is over.
+  React.useEffect(() => () => void api.call.resetAudio().catch(() => {}), []);
   const [handUp, setHandUp] = React.useState(false);
   const [chatOpen, setChatOpen] = React.useState(false);
   const [mixerOpen, setMixerOpen] = React.useState(false);

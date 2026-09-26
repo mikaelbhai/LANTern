@@ -437,11 +437,25 @@ function paint(
     ctx.globalAlpha = 1;
   };
 
+  /*
+   * One colour per seat, the same on every screen and in the score list.
+   *
+   * There were three mappings. You were always drawn in the first colour on
+   * your own screen; everybody else was drawn at their seat *plus one*; and
+   * the list beside the board used the seat itself. So a player was one
+   * colour to themselves, another to everyone watching, and a third next to
+   * their own name - and "the yellow one" meant a different person depending
+   * on who said it.
+   */
+  const colourOf = (id: string) => {
+    const seat = players.indexOf(id);
+    return PLAYER_COLOURS[(seat < 0 ? 0 : seat) % PLAYER_COLOURS.length];
+  };
+
   // Everyone else first, so you are never hidden behind them.
   for (const [id, ghost] of Object.entries(ghosts)) {
     if (id === myId) continue;
-    const seat = players.indexOf(id);
-    drawHopper(ghost.cell, ghost.row, PLAYER_COLOURS[(seat + 1) % PLAYER_COLOURS.length], true);
+    drawHopper(ghost.cell, ghost.row, colourOf(id), true);
   }
-  drawHopper(player.cell, player.row, PLAYER_COLOURS[0], !player.alive);
+  drawHopper(player.cell, player.row, colourOf(myId), !player.alive);
 }

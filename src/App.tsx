@@ -44,7 +44,15 @@ export default function App() {
   // sight. Does nothing on a phone, and nothing while the window is up.
   useHud();
 
-  const [screen, setScreen] = React.useState<Screen>('home');
+  /**
+   * Which screen is showing.
+   *
+   * In the store rather than here, because things that are not screens have
+   * to move between them - accepting a game invitation has to open the game.
+   */
+  const screen = useStore((s) => s.screen);
+  const navigate = useStore((s) => s.navigate);
+  const goBack = useStore((s) => s.goBack);
 
   /**
    * Television mode.
@@ -119,22 +127,25 @@ export default function App() {
 
   // Navigating during a call minimises it rather than blocking the app — the
   // session keeps running in the floating window.
-  // Back from any screen returns Home before it leaves the app, which is what
-  // the gesture means on Android. From Home itself there is nothing left to
-  // pop, so the press falls through and the app exits — correct behaviour.
-  useBackDismiss(screen !== 'home', () => setScreen('home'));
+  // Back walks the trail one screen at a time, then Home, then out of the
+  // app. It used to jump straight to Home from anywhere, so two steps in lost
+  // both of them — and coming back from Settings to the chat you were reading
+  // meant navigating there again by hand.
+  useBackDismiss(screen !== 'home' || useStore.getState().screenTrail.length > 0, () => {
+    goBack();
+  });
   useBackDismiss(drawerOpen, () => setDrawerOpen(false));
 
   const go = React.useCallback(
     (s: Screen) => {
-      setScreen(s);
+      navigate(s);
       setDrawerOpen(false);
       const active = useStore.getState().call;
       if (active && active.state !== 'ringing' && !active.pip) {
         useStore.getState().updateCall((c) => ({ ...c, pip: true }));
       }
     },
-    [],
+    [navigate],
   );
 
   if (!onboarded) return <Onboarding />;
@@ -157,7 +168,7 @@ export default function App() {
       <div className="h-full w-full flex flex-col bg-base text-txt overflow-hidden">
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-edge">
           <button
-            onClick={() => setScreen('theatre')}
+            onClick={() => navigate('theatre')}
             className={cn(
               'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
               screen === 'games' ? 'text-dim hover:text-txt' : 'bg-gold/15 text-gold',
@@ -166,7 +177,7 @@ export default function App() {
             Theatre
           </button>
           <button
-            onClick={() => setScreen('games')}
+            onClick={() => navigate('games')}
             className={cn(
               'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
               screen === 'games' ? 'bg-gold/15 text-gold' : 'text-dim hover:text-txt',
