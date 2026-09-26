@@ -94,7 +94,19 @@ export default function App() {
   React.useEffect(() => {
     const root = document.documentElement;
     const apply = () => {
+      /*
+       * A television is always dark.
+       *
+       * Nothing forced it, so a panel reporting `prefers-color-scheme: light`
+       * - which Android TV does - lit a whole living room wall white, and
+       * took the d-pad focus outline with it: that outline is drawn in the
+       * accent, and the accent in light mode is darkened for a white page,
+       * which on a dark poster is very close to invisible. A TV has no
+       * Settings screen to correct it from either, since a remote is not a
+       * keyboard and that branch shows only Theatre and Games.
+       */
       const dark =
+        tv ||
         settings.theme === 'dark' ||
         (settings.theme === 'system' &&
           window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -126,7 +138,7 @@ export default function App() {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
     mql.addEventListener('change', apply);
     return () => mql.removeEventListener('change', apply);
-  }, [settings.theme, settings.accent]);
+  }, [settings.theme, settings.accent, tv]);
 
   React.useEffect(() => {
     const root = document.documentElement;
@@ -187,7 +199,14 @@ export default function App() {
       to everything is a tax on every single press.
     */
     return (
-      <div className="h-full w-full flex flex-col bg-base text-txt overflow-hidden">
+      /*
+        The cinema palette, for the same reason Theatre has it on a phone:
+        this branch IS Theatre and Games, and it returns before the shell
+        column that would otherwise apply it. Without this the bar carrying
+        the two buttons was `bg-surface` against Theatre's own near-black -
+        a lighter strip across the top of a dark room.
+      */
+      <div className="cinema h-full w-full flex flex-col bg-base text-txt overflow-hidden">
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-edge">
           <button
             onClick={() => navigate('theatre')}

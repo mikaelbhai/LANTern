@@ -155,14 +155,20 @@ export function Home({ onNavigate }: { onNavigate: (s: Screen) => void }) {
             )}
           </PullToRefresh>
 
-          {/* The one thing you can start from this screen. */}
+          {/*
+            The one thing you can start from this screen, on a phone.
+
+            Not on a wide window: there the sidebar carries Chats permanently,
+            so a floating button is a second door to the same room - and it
+            landed on top of the refresh line at the foot of the list.
+          */}
           <button
             onClick={() => {
               openRoom(null);
               onNavigate('chats');
             }}
             aria-label="New conversation"
-            className="absolute bottom-5 right-5 h-14 w-14 rounded-full bg-gold text-on-gold grid place-items-center shadow-lg active:scale-95 transition-transform"
+            className="lg:hidden absolute bottom-5 right-5 h-14 w-14 rounded-full bg-gold text-on-gold grid place-items-center shadow-lg active:scale-95 transition-transform"
           >
             <MessageSquarePlus size={22} />
           </button>

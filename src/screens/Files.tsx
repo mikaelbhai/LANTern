@@ -175,7 +175,10 @@ function Transfers() {
         {active.length > 0 ? (
           <Badge tone="gold">{active.length} transferring</Badge>
         ) : (
-          <span className="text-2xs text-muted">
+          // A sentence about how transfers work is not worth a row of a
+          // phone screen. Three bars of chrome stacked above the first
+          // transfer, and this was the one carrying no action at all.
+          <span className="text-2xs text-muted hidden md:block">
             Chunked, resumable, and straight between devices
           </span>
         )}
@@ -213,8 +216,8 @@ function Transfers() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search transfers…"
-          icon={<Search size={12} />}
-          className="w-48 shrink-0"
+          icon={<Search size={14} />}
+          className="flex-1 min-w-[120px] md:flex-none md:w-48 md:shrink-0"
         />
         <Select
           value={filter}
