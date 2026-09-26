@@ -40,3 +40,7 @@ desktop.ini
 
 # Staged detached-host binary, produced by rebuild-all.ps1.
 src-tauri/binaries/
+
+# Design skills installed by npx skills add. Tooling, not the app.
+.agents/
+skills-lock.json
