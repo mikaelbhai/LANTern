@@ -19,8 +19,7 @@ import {
 import { Avatar } from '../../components/Avatar';
 import { Badge, IconButton, Tooltip } from '../../components/ui';
 import { EmojiPicker } from './Pickers';
-import { Markdown, isJumboEmoji } from '../../lib/markdown';
-import { MotionClip, Sticker } from '../../lib/stickers';
+import { Markdown, isJumboEmoji, openLink } from '../../lib/markdown';
 import { QUICK_REACTIONS } from '../../lib/emoji';
 import { useStore } from '../../lib/store';
 import { useClickOutside } from '../../lib/hooks';
@@ -171,6 +170,7 @@ export function MessageItem({
             name={author?.name ?? 'Unknown'}
             color={author?.color}
             emoji={author?.emoji}
+            src={author?.avatar}
             size={32}
           />
         )}
@@ -230,14 +230,15 @@ export function MessageItem({
           />
         ) : (
           <>
-            {m.sticker && (
-              <div className="my-1">
-                <Sticker id={m.sticker} size={112} />
-              </div>
-            )}
-            {m.gif && (
-              <div className="my-1 rounded-card overflow-hidden w-fit border border-edge">
-                <MotionClip id={m.gif} size={140} />
+            {/*
+              Stickers and motion clips were removed from the composer, but
+              messages already sent with one are still in everybody's history
+              and must not render as a blank bubble. The art they referred to
+              is gone, so the message says what it was.
+            */}
+            {(m.sticker || m.gif) && (
+              <div className="text-sm text-muted italic py-0.5">
+                {m.sticker ? 'Sticker' : 'Motion clip'}
               </div>
             )}
             {m.voice && <VoiceBubble clip={m.voice} />}
@@ -248,7 +249,7 @@ export function MessageItem({
                 <div className="text-sm text-txt">
                   <Markdown
                     source={m.body}
-                    opts={{ mentionNames, highlight }}
+                    opts={{ mentionNames, highlight, onLink: (u) => void openLink(u) }}
                   />
                 </div>
               ))}

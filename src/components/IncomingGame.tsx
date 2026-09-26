@@ -48,7 +48,7 @@ export function IncomingGame() {
     <Modal open onClose={decline} title="Game invitation" width="max-w-sm">
       <div className="flex items-center gap-3">
         {peer ? (
-          <Avatar name={who} color={peer.color} emoji={peer.emoji} size={40} />
+          <Avatar name={who} color={peer.color} emoji={peer.emoji} src={peer.avatar} size={40} />
         ) : (
           <span className="h-10 w-10 rounded-full bg-gold/15 border border-gold/40 grid place-items-center text-gold">
             <Gamepad2 size={18} />

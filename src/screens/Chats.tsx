@@ -281,6 +281,7 @@ function RoomList({
                         name={dmPeer?.name ?? r.name}
                         color={dmPeer?.color}
                         emoji={dmPeer?.emoji}
+                        src={dmPeer?.avatar}
                         size={44}
                       />
                     ) : (
@@ -411,6 +412,7 @@ function RoomHeader({
           name={dmPeer?.name ?? room.name}
           color={dmPeer?.color}
           emoji={dmPeer?.emoji}
+          src={dmPeer?.avatar}
           size={34}
         />
       ) : (
@@ -744,7 +746,7 @@ function NewRoomModal({ open, onClose }: { open: boolean; onClose: () => void })
                           : 'border-edge bg-raised hover:border-edge-strong',
                       )}
                     >
-                      <Avatar name={p.name} color={p.color} emoji={p.emoji} size={20} />
+                      <Avatar name={p.name} color={p.color} emoji={p.emoji} src={p.avatar} size={20} />
                       <span className="text-xs truncate">{p.name}</span>
                     </button>
                   );

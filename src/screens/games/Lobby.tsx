@@ -90,6 +90,7 @@ export function GameLobby() {
                 name={name(id)}
                 color={peers[id]?.color}
                 emoji={peers[id]?.emoji}
+                src={peers[id]?.avatar}
                 size={18}
               />
               <span className="flex-1 truncate">{name(id)}</span>

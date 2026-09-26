@@ -366,6 +366,7 @@ function PersonRow({
             name={person.name}
             color={person.best.color}
             emoji={person.best.emoji}
+            src={person.best.avatar}
             size={44}
             muted={!here}
           />

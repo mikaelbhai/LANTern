@@ -162,7 +162,7 @@ function ProfileTab() {
     <>
       <Group title="Identity">
         <div className="flex items-center gap-4">
-          <Avatar name={profile.name} color={profile.color} emoji={profile.emoji} size={52} />
+          <Avatar name={profile.name} color={profile.color} emoji={profile.emoji} src={profile.avatar} size={52} />
           <div className="flex-1 space-y-2">
             <Input
               value={profile.name}

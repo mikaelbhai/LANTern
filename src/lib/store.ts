@@ -319,6 +319,8 @@ interface State {
   init: () => Promise<void>;
   completeOnboarding: (p: Partial<Profile>) => void;
   setProfile: (p: Partial<Profile>) => void;
+  /** Sends this device's appearance to one peer, or to all of them. */
+  shareProfile: (peerId?: string) => Promise<void>;
   setSettings: (fn: (s: Settings) => Settings) => void;
 
   ensureDm: (peerId: string) => string;
@@ -816,11 +818,51 @@ export const useStore = create<State>((set, get) => {
         set((s) => ({ peers: { ...s.peers, [p.id]: p } }));
         get().pushActivity({ kind: 'peer', text: `${p.name} joined the network`, peerId: p.id });
         if (get().settings.notifications.sound) sfx.peerJoin();
+
+        // The link is dialled a moment after the announcement, and sending
+        // before it is up is a no-op that nothing retries. One second is
+        // long enough for the reconciler to have connected and short enough
+        // that a face appears while somebody is still looking at the row.
+        setTimeout(() => void get().shareProfile(p.id), 1000);
       });
       on('peer:updated', (p: Peer) => {
         rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
         set((s) => (s.peers[p.id] ? { peers: { ...s.peers, [p.id]: { ...s.peers[p.id], ...p } } } : {}));
       });
+      /*
+       * What a peer looks like, when they tell us.
+       *
+       * Discovery carries a name and nothing else - an mDNS TXT record is a
+       * few hundred bytes - so colour, emoji and a picture arrive over the
+       * link instead, and only after it is up. The peer may not exist yet
+       * when this lands, which is not an error: both ends dial, and this can
+       * beat the announcement that creates the row.
+       */
+      on(
+        'peer:profile',
+        (p: { from: string; name?: string; color?: string; emoji?: string; avatar?: string }) => {
+          set((s) => {
+            const id = Object.keys(s.peers).find(
+              (k) => s.peers[k].deviceId === p.from || k === p.from,
+            );
+            if (!id) return {};
+            const peer = s.peers[id];
+            return {
+              peers: {
+                ...s.peers,
+                [id]: {
+                  ...peer,
+                  name: p.name || peer.name,
+                  color: p.color || peer.color,
+                  emoji: p.emoji ?? peer.emoji,
+                  avatar: p.avatar ?? peer.avatar,
+                },
+              },
+            };
+          });
+        },
+      );
+
       on('peer:left', (id: string) => {
         const p = get().peers[id];
         set((s) => {
@@ -1303,6 +1345,21 @@ export const useStore = create<State>((set, get) => {
       // A rename should show up on everybody else's screen without anybody
       // restarting anything, so the network is told each time.
       announceName(get().profile.name);
+      // And so should a new picture or colour, which the announcement has no
+      // room to carry.
+      void get().shareProfile();
+    },
+
+    async shareProfile(peerId) {
+      const { name, color, emoji, avatar } = get().profile;
+      const targets = peerId ? [peerId] : Object.keys(get().peers);
+      await Promise.allSettled(
+        // Failures are silent and deliberate: a peer whose link is not up
+        // yet simply does not have one, and there is nothing for the person
+        // who changed their picture to do about it. They get it next time
+        // the link comes up, from the `peer:joined` handler.
+        targets.map((id) => api.profile.send(id, { name, color, emoji, avatar })),
+      );
     },
 
     setSettings(fn) {

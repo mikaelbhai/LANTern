@@ -929,6 +929,7 @@ function DetailSheet({
                     name={peers[item.peerId]?.name ?? 'Peer'}
                     color={peers[item.peerId]?.color}
                     emoji={peers[item.peerId]?.emoji}
+                    src={peers[item.peerId]?.avatar}
                     size={26}
                   />
                 ) : (

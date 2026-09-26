@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { X, Check, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { sfx } from '../lib/audio';
-import { useBackDismiss } from '../lib/hooks';
+import { useBackDismiss, useIsMobile } from '../lib/hooks';
 
 export const spring = { type: 'spring' as const, stiffness: 180, damping: 20 };
 
@@ -156,6 +156,21 @@ export function Tooltip({
 
 /* ------------------------------------------------------------------- Modal */
 
+/**
+ * A dialog on a wide window, a sheet on a phone.
+ *
+ * It was a centred box at every width. On a phone that is the wrong shape
+ * twice over: it puts the buttons you have to press in the middle of the
+ * screen, which is the one place a thumb holding the device cannot reach,
+ * and a box floating in the middle of a 375px screen wastes the width it
+ * needs most. Forty-four dialogs go through here, so both shapes are decided
+ * once.
+ *
+ * `88vh` was also the wrong unit. On a phone browser `vh` is measured against
+ * the viewport with the address bar hidden, so a dialog sized to it is taller
+ * than the screen actually is - which on the sheet, where the footer is at
+ * the bottom edge, put the confirm button under the gesture bar.
+ */
 export function Modal({
   open,
   onClose,
@@ -171,6 +186,8 @@ export function Modal({
   footer?: React.ReactNode;
   width?: string;
 }) {
+  const sheet = useIsMobile();
+
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -190,30 +207,63 @@ export function Modal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 scrim"
+          className={cn(
+            'fixed inset-0 z-[100] flex scrim',
+            sheet ? 'items-end justify-stretch' : 'items-center justify-center p-4',
+          )}
           onMouseDown={(e) => e.target === e.currentTarget && onClose()}
         >
           <motion.div
-            initial={{ scale: 0.94, y: 12, opacity: 0 }}
-            animate={{ scale: 1, y: 0, opacity: 1 }}
-            exit={{ scale: 0.96, y: 6, opacity: 0 }}
+            role="dialog"
+            aria-modal="true"
+            initial={sheet ? { y: '100%' } : { scale: 0.94, y: 12, opacity: 0 }}
+            animate={sheet ? { y: 0 } : { scale: 1, y: 0, opacity: 1 }}
+            exit={sheet ? { y: '100%' } : { scale: 0.96, y: 6, opacity: 0 }}
             transition={spring}
             className={cn(
-              'w-full bg-surface border border-edge-strong rounded-modal shadow-2xl overflow-hidden flex flex-col max-h-[88vh]',
-              width,
+              'w-full bg-surface shadow-2xl overflow-hidden flex flex-col',
+              sheet
+                ? 'rounded-t-modal max-h-[85dvh] safe-b border-t border-edge-strong'
+                : cn('rounded-modal max-h-[85dvh] border border-edge-strong', width),
             )}
           >
+            {/* The handle says which way it came from and which way it goes.
+                A sheet with a square top edge and no grip reads as a screen
+                that has failed to finish loading. */}
+            {sheet && (
+              <div className="shrink-0 pt-2.5 pb-1 grid place-items-center">
+                <span className="h-1 w-10 rounded-full bg-edge-strong" />
+              </div>
+            )}
+
             {title && (
-              <div className="flex items-center justify-between px-4 h-12 border-b border-edge shrink-0">
-                <h2 className="text-sm font-semibold">{title}</h2>
-                <IconButton label="Close" size="sm" onClick={onClose}>
-                  <X size={15} />
+              <div
+                className={cn(
+                  'flex items-center justify-between shrink-0 border-b border-edge',
+                  sheet ? 'px-4 h-12' : 'px-4 h-12',
+                )}
+              >
+                <h2 className={cn('font-semibold', sheet ? 'text-[15px]' : 'text-sm')}>{title}</h2>
+                <IconButton label="Close" size={sheet ? 'md' : 'sm'} onClick={onClose}>
+                  <X size={sheet ? 18 : 15} />
                 </IconButton>
               </div>
             )}
+
             <div className="p-4 scroll-y flex-1">{children}</div>
+
             {footer && (
-              <div className="px-4 py-3 border-t border-edge flex justify-end gap-2 shrink-0">
+              <div
+                className={cn(
+                  'px-4 py-3 border-t border-edge shrink-0 flex gap-2',
+                  // Full width and side by side on a sheet: two buttons
+                  // huddled in the bottom right corner of a phone are the
+                  // smallest targets on the screen at the moment they matter
+                  // most, and [&>*]:flex-1 reaches them without every one of
+                  // the forty-four callers having to say so.
+                  sheet ? 'justify-stretch [&>*]:flex-1 [&>*]:h-11' : 'justify-end',
+                )}
+              >
                 {footer}
               </div>
             )}

@@ -583,6 +583,15 @@ export const api = {
   profile: {
     os: () => call<string>('host_os'),
     /**
+     * Tells one peer what this device looks like.
+     *
+     * Per peer rather than broadcast because it goes down the signalling
+     * link, and there is one of those per peer. Discovery cannot carry it:
+     * an mDNS TXT record is a few hundred bytes.
+     */
+    send: (peerId: string, payload: { name: string; color: string; emoji: string; avatar?: string }) =>
+      call<boolean>('profile_send', { peerId, payload }),
+    /**
      * Tells the network what to call you.
      *
      * The name is typed and stored in the frontend; the announcement happens

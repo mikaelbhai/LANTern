@@ -1,5 +1,7 @@
 import React from 'react';
+import { Camera } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { pickAvatar } from '../lib/avatar';
 import { Button, Input, Modal } from '../components/ui';
 import { AVATAR_COLORS, useStore } from '../lib/store';
 import { cn } from '../lib/utils';
@@ -17,6 +19,20 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   React.useEffect(() => {
     if (open) setDraft(profile);
   }, [open, profile]);
+
+  const [busy, setBusy] = React.useState(false);
+
+  const choose = async () => {
+    setBusy(true);
+    try {
+      const avatar = await pickAvatar();
+      // `null` is a cancelled picker, which is a decision and not a failure -
+      // it must not clear a picture that is already there.
+      if (avatar) setDraft((d) => ({ ...d, avatar }));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const save = () => {
     setProfile(draft);
@@ -38,8 +54,44 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
       }
     >
       <div className="space-y-5">
-        <div className="flex justify-center">
-          <Avatar name={draft.name} color={draft.color} emoji={draft.emoji} size={60} />
+        {/*
+          The picture, and the two things you can do to it.
+
+          A photo beats a letter and an emoji at telling one Mikael from
+          another, which on a home network is the whole job of this circle.
+          It is scaled to a 128px square before it is stored, because it is
+          sent to peers over the same socket as chat - see lib/avatar.ts.
+        */}
+        <div className="flex flex-col items-center gap-3">
+          <button
+            onClick={() => void choose()}
+            aria-label="Choose a picture"
+            className="relative group rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60"
+          >
+            <Avatar
+              name={draft.name}
+              color={draft.color}
+              emoji={draft.emoji}
+              src={draft.avatar}
+              size={84}
+            />
+            <span className="absolute inset-0 rounded-full bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity grid place-items-center text-white">
+              <Camera size={20} />
+            </span>
+          </button>
+
+          <div className="flex items-center gap-2">
+            <Button size="xs" icon={<Camera size={12} />} onClick={() => void choose()}>
+              {draft.avatar ? 'Change picture' : 'Add a picture'}
+            </Button>
+            {draft.avatar && (
+              <Button size="xs" variant="ghost" onClick={() => setDraft({ ...draft, avatar: undefined })}>
+                Remove
+              </Button>
+            )}
+          </div>
+
+          {busy && <span className="text-2xs text-muted">Scaling it down…</span>}
         </div>
 
         <div className="space-y-1.5">

@@ -2838,6 +2838,57 @@ pub fn game_send(
     )
 }
 
+/// The largest picture a peer will be sent, in bytes of data URL.
+///
+/// A link carries newline-delimited JSON on the same socket as chat and call
+/// signalling, so a peer pasting a 4MB photo in would stall every message
+/// behind it. The frontend scales to a 128px square before it gets here; this
+/// is the backstop for anything that did not.
+const MAX_AVATAR_BYTES: usize = 96 * 1024;
+
+/// Tells one peer what this device looks like.
+///
+/// Discovery cannot carry it. An mDNS TXT record is a few hundred bytes, so
+/// the announcement says a device is there and under what name, and the
+/// picture travels over the link that is already open.
+#[tauri::command]
+pub fn profile_send(
+    state: State<'_, AppState>,
+    peer_id: String,
+    payload: serde_json::Value,
+) -> Result<bool, String> {
+    if let Some(avatar) = payload.get("avatar").and_then(|v| v.as_str()) {
+        if avatar.len() > MAX_AVATAR_BYTES {
+            return Err("that picture is too large to send".into());
+        }
+        // Only an inline image. A remote URL here would make every peer that
+        // rendered it fetch something off this machine's say-so, which is an
+        // outbound connection this application does not make.
+        if !avatar.starts_with("data:image/") {
+            return Err("only an image can be sent as a picture".into());
+        }
+    }
+
+    let (links, me, device_id) = state.with(|s| {
+        let device = s
+            .peers
+            .get(&peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone());
+        (s.links.clone(), s.device_id.clone(), device)
+    });
+
+    Ok(links.send(
+        &device_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "profile".into(),
+            payload,
+        },
+    ))
+}
+
 /// Records this player's progress and reports the race back.
 #[tauri::command]
 pub fn game_report(

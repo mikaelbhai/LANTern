@@ -518,7 +518,7 @@ function NextMatch() {
               key={id}
               className="flex items-center gap-1.5 text-2xs rounded-input border border-edge bg-raised px-1.5 py-1"
             >
-              <Avatar name={named(id)} color={peers[id]?.color} emoji={peers[id]?.emoji} size={16} />
+              <Avatar name={named(id)} color={peers[id]?.color} emoji={peers[id]?.emoji} src={peers[id]?.avatar} size={16} />
               <span className="flex-1 truncate">{id === me ? 'You' : named(id)}</span>
 
               {/*
@@ -633,6 +633,7 @@ function Lobby({ onChallenge }: { onChallenge: (peerId: string) => void }) {
                       name={p.name}
                       color={p.color}
                       emoji={p.emoji}
+                      src={p.avatar}
                       size={26}
                       status={p.status}
                     />
@@ -715,7 +716,7 @@ function ChallengeModal({
                 'border-edge bg-raised hover:border-gold/50 hover:bg-gold/5',
               )}
             >
-              <Avatar name={p.name} color={p.color} emoji={p.emoji} size={30} status={p.status} />
+              <Avatar name={p.name} color={p.color} emoji={p.emoji} src={p.avatar} size={30} status={p.status} />
               <div className="min-w-0 flex-1 text-left">
                 <div className="text-xs font-medium truncate">{p.name}</div>
                 <div className="text-2xs text-muted">

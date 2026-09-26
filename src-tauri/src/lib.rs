@@ -230,6 +230,7 @@ pub fn run() {
             commands::game_report,
             commands::game_move,
             commands::game_send,
+            commands::profile_send,
             commands::game_leave,
             commands::game_lobby,
             commands::party_start,

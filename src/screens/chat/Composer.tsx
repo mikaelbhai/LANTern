@@ -1,7 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Plus,
   Bold,
   Clock,
   Code,
@@ -12,14 +11,13 @@ import {
   Quote,
   Send,
   Smile,
-  Sticker as StickerIcon,
   Strikethrough,
   Trash2,
   X,
 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
 import { Button, IconButton, Modal, Tooltip } from '../../components/ui';
-import { EmojiPicker, MotionPicker, StickerPicker } from './Pickers';
+import { EmojiPicker } from './Pickers';
 import { useStore } from '../../lib/store';
 import { useClickOutside } from '../../lib/hooks';
 import { api } from '../../lib/bridge';
@@ -43,9 +41,7 @@ export function Composer({
   const sendMessage = useStore((s) => s.sendMessage);
   const peers = useStore((s) => s.peers);
 
-  const [picker, setPicker] = React.useState<'emoji' | 'sticker' | 'motion' | null>(null);
-  // The phone-only overflow behind the composer's + button.
-  const [more, setMore] = React.useState(false);
+  const [picker, setPicker] = React.useState<'emoji' | null>(null);
   const [attachments, setAttachments] = React.useState<Attachment[]>([]);
   const [mentionQuery, setMentionQuery] = React.useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = React.useState(0);
@@ -139,18 +135,6 @@ export function Composer({
     setAttachments([]);
     onCancelReply?.();
     requestAnimationFrame(autoGrow);
-  };
-
-  const sendSticker = (id: string) => {
-    sendMessage(room.id, { sticker: id, threadRoot, replyTo: replyTo?.id });
-    setPicker(null);
-    onCancelReply?.();
-  };
-
-  const sendMotion = (id: string) => {
-    sendMessage(room.id, { gif: id, threadRoot, replyTo: replyTo?.id });
-    setPicker(null);
-    onCancelReply?.();
   };
 
   const addFiles = async (files: File[]) => {
@@ -342,8 +326,6 @@ export function Composer({
               {picker && (
                 <div className="absolute bottom-full right-0 mb-2 z-40">
                   {picker === 'emoji' && <EmojiPicker onPick={insert} />}
-                  {picker === 'sticker' && <StickerPicker onPick={sendSticker} />}
-                  {picker === 'motion' && <MotionPicker onPick={sendMotion} />}
                 </div>
               )}
             </AnimatePresence>
@@ -356,64 +338,13 @@ export function Composer({
               <Smile size={15} />
             </IconButton>
             <IconButton
-              label="Stickers"
-              className="hidden sm:inline-flex"
-              active={picker === 'sticker'}
-              onClick={() => setPicker(picker === 'sticker' ? null : 'sticker')}
-            >
-              <StickerIcon size={15} />
-            </IconButton>
-            <IconButton
-              label="Motion pack"
-              className="hidden sm:inline-flex"
-              active={picker === 'motion'}
-              onClick={() => setPicker(picker === 'motion' ? null : 'motion')}
-            >
-              <Film size={15} />
-            </IconButton>
-            <IconButton
-              label="Schedule message"
-              className="hidden sm:inline-flex"
+              label="Send later"
               disabled={!canSend}
               onClick={() => setScheduleOpen(true)}
             >
               <Clock size={15} />
             </IconButton>
 
-            {/*
-              The same three, behind one glyph, on a phone.
-
-              Seven buttons and a text field do not fit across 375px: the
-              field lost, shrank to about ninety pixels, and wrapped its own
-              placeholder onto two lines. Nothing is dropped - a phone is
-              where stickers get used - it just costs one more tap.
-            */}
-            <div className="relative sm:hidden">
-              {more && (
-                <div className="absolute bottom-full right-0 mb-2 z-40 w-44 glass border border-edge-strong rounded-card shadow-xl overflow-hidden">
-                  {[
-                    { label: 'Stickers', icon: <StickerIcon size={14} />, run: () => setPicker('sticker') },
-                    { label: 'Motion pack', icon: <Film size={14} />, run: () => setPicker('motion') },
-                    { label: 'Send later', icon: <Clock size={14} />, run: () => setScheduleOpen(true) },
-                  ].map((item) => (
-                    <button
-                      key={item.label}
-                      onClick={() => {
-                        setMore(false);
-                        item.run();
-                      }}
-                      className="w-full flex items-center gap-2.5 px-3 h-10 text-left text-xs hover:bg-raised"
-                    >
-                      <span className="text-dim">{item.icon}</span>
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <IconButton label="More" active={more} onClick={() => setMore(!more)}>
-                <Plus size={16} />
-              </IconButton>
-            </div>
             {/*
               Send when there is something to send, the microphone when there
               is not - one slot, not two.

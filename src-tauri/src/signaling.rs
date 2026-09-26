@@ -784,6 +784,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         "gamestate" => "game:state",
         "gameintent" => "game:intent",
         "gamelobby" => "game:lobby",
+        // Name, colour, emoji and a picture. Not carried by mDNS discovery:
+        // a TXT record is a few hundred bytes and a picture is not, so the
+        // announcement says who is there and this says what they look like.
+        "profile" => "peer:profile",
         "signal" => "call:state",
         _ => return,
     };

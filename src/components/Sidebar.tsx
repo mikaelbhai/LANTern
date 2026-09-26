@@ -131,6 +131,7 @@ export function Sidebar({
           name={profile.name || 'You'}
           color={profile.color}
           emoji={profile.emoji}
+          src={profile.avatar}
           size={collapsed ? 26 : 30}
           status={dnd ? 'dnd' : 'available'}
         />

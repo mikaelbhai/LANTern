@@ -456,7 +456,7 @@ function UpstreamCard() {
                 key={p.id}
                 className="flex items-center gap-2 p-2 rounded-input bg-raised border border-edge"
               >
-                <Avatar name={p.name} color={p.color} emoji={p.emoji} size={26} />
+                <Avatar name={p.name} color={p.color} emoji={p.emoji} src={p.avatar} size={26} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="text-xs truncate">{p.name}</span>
@@ -707,7 +707,7 @@ function PeerConnCard({ peerId, onDiagnose }: { peerId: string; onDiagnose: () =
   return (
     <div className="panel p-3">
       <div className="flex items-center gap-2.5">
-        <Avatar name={peer.name} color={peer.color} emoji={peer.emoji} size={32} />
+        <Avatar name={peer.name} color={peer.color} emoji={peer.emoji} src={peer.avatar} size={32} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium truncate">{peer.name}</span>

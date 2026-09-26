@@ -42,6 +42,8 @@ export interface Peer {
   deviceName?: string;
   color: string;
   emoji: string;
+  /** Their picture, if they have sent one. See `profile_send` in Rust. */
+  avatar?: string;
   os: OS;
   ip: string;
   /** Every address this device is known to answer on. */
@@ -66,6 +68,15 @@ export interface Profile {
   emoji: string;
   statusMessage: string;
   deviceNickname: string;
+  /**
+   * A picture, as an inline data URL.
+   *
+   * Inline rather than a path: it is sent to peers over the signalling link,
+   * and a path means nothing on the other machine. Scaled to a 128px square
+   * before it is stored, because the link it travels over is the same one
+   * carrying chat and call signalling.
+   */
+  avatar?: string;
 }
 
 export type RoomKind = 'dm' | 'group' | 'broadcast';

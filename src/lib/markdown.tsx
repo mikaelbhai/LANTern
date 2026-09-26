@@ -1,5 +1,7 @@
 import React from 'react';
 import { CodeBlock } from '../components/CodeBlock';
+import { api } from './bridge';
+import { useStore } from './store';
 
 /**
  * Small Markdown subset rendered straight to React nodes.
@@ -327,4 +329,42 @@ export function isJumboEmoji(src: string): boolean {
   if (!t || t.length > 12) return false;
   const stripped = t.replace(/[\p{Extended_Pictographic}\p{Emoji_Component}️‍\s]/gu, '');
   return stripped.length === 0;
+}
+
+/**
+ * What to do when somebody taps a link in a message.
+ *
+ * The renderer has detected links since it was written and drew them in cyan
+ * with a hover underline, but the one caller - a chat message - never passed
+ * `onLink`, so every address anybody had ever sent in this app was a button
+ * that did nothing. It looked exactly like a working link, which is why it
+ * survived: the only way to find it was to tap one.
+ *
+ * `open_external` refuses anything that is not http or https on the native
+ * side, because a string handed to the system launcher can name a program.
+ * `file://` and `lantern://` are ours and are handled here rather than being
+ * sent out to be refused.
+ */
+export async function openLink(url: string): Promise<void> {
+  if (/^https?:\/\//i.test(url)) {
+    await api.system.openExternal(url).catch(() => {
+      useStore.getState().toast({
+        kind: 'error',
+        title: 'Nothing could open that',
+        body: url,
+      });
+    });
+    return;
+  }
+
+  if (/^file:\/\//i.test(url)) {
+    await api.files.open(decodeURIComponent(url.replace(/^file:\/\//i, ''))).catch(() => {});
+    return;
+  }
+
+  // A lantern:// address is a peer's published media. It belongs in the
+  // Theatre, not in a browser.
+  if (/^lantern:\/\//i.test(url)) {
+    useStore.getState().navigate('theatre');
+  }
 }
