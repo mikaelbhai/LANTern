@@ -315,6 +315,21 @@ pub struct GameSession {
     /// again otherwise.
     #[serde(default)]
     pub next_game: Option<String>,
+    /// Who has actually said yes.
+    ///
+    /// Distinct from `players`, which is who was invited. Being invited used
+    /// to be the same as playing: the host's table filled with people who had
+    /// not answered and might never, and a turn-based game would wait for one
+    /// of them forever.
+    #[serde(default)]
+    pub joined: Vec<String>,
+    /// Whether the host has started it.
+    ///
+    /// An invitation is not a game. Everyone waits in the lobby until the
+    /// person who called it says go, which is also the only moment the seats
+    /// are worth fixing - before that, people are still arriving.
+    #[serde(default)]
+    pub started: bool,
 }
 
 /// A synchronised viewing session. The host owns the clock.

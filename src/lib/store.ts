@@ -636,10 +636,13 @@ export const useStore = create<State>((set, get) => {
       // to be told who. The seat that is not this one is the answer, and for
       // a two-player game there is only ever one of those.
       const mine = seatId(get());
-      const opponentId = invite.session.players.find((p) => p !== mine) ?? invite.from;
-      set({ gameInvite: null, activeGame: { kind: invite.session.game, opponentId } });
-      // And put it in front of them. Setting the board up behind whichever
-      // screen they happened to be on is a Play button that does nothing.
+      // Tell the host somebody is actually here, then wait with everyone
+      // else. The board opens when the host starts it, for all of them at
+      // the same moment - which is the only way the seats are the same on
+      // every device.
+      void api.game.join(invite.session.id).catch(() => {});
+      set({ gameInvite: null });
+      // The lobby is on the Games screen, so that is where the answer went.
       get().navigate('games');
     },
     declineGameInvite: () => {
@@ -925,12 +928,42 @@ export const useStore = create<State>((set, get) => {
 
         set({ nearbyGame: null, gameSession: full });
 
-        const inCall = !!get().call && get().call?.state === 'active';
+        /*
+         * An invitation is not a game.
+         *
+         * Nothing opens a board until the host has started it. Before that
+         * everyone is in the lobby, where the host can see who has actually
+         * arrived - and anybody who never answers is dropped at the start
+         * rather than left holding a seat the game waits on.
+         */
+        if (!full.started) {
+          if (get().activeGame) set({ activeGame: null });
+
+          const joined = (full.joined ?? []).includes(me);
+          if (joined || get().gameInvite) return;
+
+          // Mid-conversation, being dealt in is the point of playing
+          // together, and a dialogue asking about the thing your friend just
+          // announced out loud is a step nobody wants. So it answers itself
+          // and waits in the lobby with everyone else.
+          const inCall = !!get().call && get().call?.state === 'active';
+          if (inCall) {
+            void api.game.join(full.id).catch(() => {});
+            get().navigate('games');
+            return;
+          }
+
+          // Outside a call it is an invitation, and an invitation needs
+          // somewhere to say yes. A toast fades whether or not it was read.
+          set({ gameInvite: { session: full, from: session.from ?? host } });
+          return;
+        }
+
         const alreadyPlaying = get().activeGame?.kind === session.game;
 
-        if (inCall && !alreadyPlaying) {
-          // Mid-conversation, being dealt in is the point of playing together
-          // and a dialogue asking about it is a step nobody wants.
+        if (!alreadyPlaying) {
+          // Started, and this device is dealt in: the board opens. The
+          // invitation was answered back in the lobby.
           set({
             activeGame: {
               kind: session.game,
@@ -938,10 +971,6 @@ export const useStore = create<State>((set, get) => {
             },
           });
           get().navigate('games');
-        } else if (!inCall && !alreadyPlaying) {
-          // Outside a call it is an invitation, and an invitation needs
-          // somewhere to say yes. A toast fades whether or not it was read.
-          set({ gameInvite: { session: full, from: session.from ?? host } });
         }
       }),
 

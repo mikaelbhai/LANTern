@@ -492,6 +492,15 @@ export interface GameSession {
   waiting?: string[];
   /** What the next match will be. The same game again unless changed. */
   nextGame?: GameKind;
+  /**
+   * Who has actually said yes, as opposed to who was invited.
+   *
+   * A turn-based game waits for whoever is to move, so a seat held by
+   * somebody who never answered is a game that never continues.
+   */
+  joined?: string[];
+  /** Whether the host has started it. An invitation is not a game. */
+  started?: boolean;
 }
 
 export interface GameInvite {

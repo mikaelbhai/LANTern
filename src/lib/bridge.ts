@@ -368,6 +368,16 @@ export const api = {
   game: {
     start: (game: GameKind, peerIds: string[], seed: number) =>
       call<GameSession>('game_start', { game, peerIds, seed }),
+    /** Says yes to an invitation, so the host knows somebody is there. */
+    join: (sessionId: string) => call<boolean>('game_join', { sessionId }),
+    /**
+     * Starts the match for everybody at once. Host only.
+     *
+     * Seats are fixed here rather than when the invitations went out: people
+     * are still arriving until somebody says go, and anyone who never
+     * answered is dropped rather than left holding a seat the game waits on.
+     */
+    begin: (sessionId: string) => call<boolean>('game_begin', { sessionId }),
     report: (
       sessionId: string,
       completion: number,

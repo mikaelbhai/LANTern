@@ -225,6 +225,8 @@ pub fn run() {
             commands::update_launch,
             commands::media_set_progress,
             commands::game_start,
+            commands::game_join,
+            commands::game_begin,
             commands::game_report,
             commands::game_move,
             commands::game_send,

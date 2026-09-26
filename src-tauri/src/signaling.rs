@@ -290,6 +290,16 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 }
             }
 
+            // Somebody accepting an invitation. Only the host keeps the list
+            // of who is actually here, so this is acted on rather than passed
+            // to the window.
+            if envelope.kind == "gamejoin" {
+                if let Some(id) = envelope.payload.get("sessionId").and_then(|v| v.as_str()) {
+                    crate::commands::game_joined(&app, &state, id, &envelope.from);
+                }
+                continue;
+            }
+
             deliver(&app, &envelope);
         }
     });
@@ -872,6 +882,8 @@ mod tests {
                 winner_id: None,
                 waiting: Vec::new(),
                 next_game: None,
+                joined: vec!["me".into()],
+                started: false,
             };
             qualify(announced, host)
         }

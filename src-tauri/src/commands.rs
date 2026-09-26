@@ -2610,6 +2610,7 @@ pub fn game_start(
     peer_ids: Vec<String>,
     seed: u64,
 ) -> GameSession {
+    let invited = peer_ids.clone();
     let mut players = vec!["me".to_string()];
     players.extend(peer_ids);
 
@@ -2624,19 +2625,133 @@ pub fn game_start(
         winner_id: None,
         waiting: Vec::new(),
         next_game: None,
+        // The host is in by calling it. Nobody else is, until they say so.
+        joined: vec!["me".to_string()],
+        started: false,
     };
     state.with(|s| s.session = Some(session.clone()));
 
     let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
-    links.broadcast(&Envelope {
+    let envelope = Envelope {
         v: 1,
         from: me,
         kind: "game".into(),
         payload: serde_json::to_value(&session).unwrap_or_default(),
-    });
+    };
+    // To the people invited, and to nobody else.
+    //
+    // This was a broadcast, so calling a game put an invitation in front of
+    // every device on the network - including the ones that were not asked.
+    // An invitation everybody gets is an announcement, and it is not what
+    // choosing two names out of a list means.
+    for peer in &invited {
+        links.send(peer, &envelope);
+    }
 
     let _ = app.emit("game:session", &session);
     session
+}
+
+/// Says yes to an invitation, so the host knows somebody is actually there.
+///
+/// Being invited used to be the same as playing. The table filled with people
+/// who had not answered and might never, and a game that waits for a turn
+/// waits for one of them forever.
+#[tauri::command]
+pub fn game_join(state: State<'_, AppState>, session_id: String) -> bool {
+    let (links, me, host) = state.with(|s| {
+        let host = s
+            .session
+            .as_ref()
+            .filter(|g| g.id == session_id)
+            .map(|g| g.host_id.clone());
+        (s.links.clone(), s.device_id.clone(), host)
+    });
+    let Some(host) = host else { return false };
+
+    // The host is the one keeping the list; everybody else finds out when it
+    // is sent back round.
+    links.send(
+        &host,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "gamejoin".into(),
+            payload: serde_json::json!({ "sessionId": session_id }),
+        },
+    )
+}
+
+/// Records that somebody accepted, and tells the table.
+///
+/// Host only: the list of who is actually here is one thing, kept in one
+/// place, or two devices disagree about who they are waiting for.
+pub fn game_joined(app: &AppHandle, state: &AppState, session_id: &str, who: &str) {
+    let updated = state.with(|s| {
+        let session = s.session.as_mut()?;
+        if session.id != session_id || session.host_id != "me" {
+            return None;
+        }
+        // Only somebody who was actually asked. An uninvited device saying it
+        // has joined is not a seat.
+        if !session.players.iter().any(|p| p == who) {
+            return None;
+        }
+        if !session.joined.iter().any(|p| p == who) {
+            session.joined.push(who.to_string());
+        }
+        Some(session.clone())
+    });
+
+    if let Some(session) = updated {
+        announce(state, &session);
+        let _ = app.emit("game:session", &session);
+    }
+}
+
+/// Starts the match, for everybody at once.
+///
+/// Host only, and the whole point of the lobby: people are still arriving
+/// until somebody says go, and the seats are not worth fixing before then.
+#[tauri::command]
+pub fn game_begin(app: AppHandle, state: State<'_, AppState>, session_id: String) -> bool {
+    let updated = state.with(|s| {
+        let session = s.session.as_mut()?;
+        if session.id != session_id || session.host_id != "me" {
+            return None;
+        }
+        session.started = true;
+        // Whoever is actually here is who is playing. Somebody invited who
+        // never answered is not left holding a seat the game waits on.
+        session.players.retain(|p| session.joined.iter().any(|j| j == p));
+        session.started_at = now_ms();
+        Some(session.clone())
+    });
+
+    match updated {
+        Some(session) => {
+            announce(&state, &session);
+            let _ = app.emit("game:session", &session);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Sends the session to everybody holding a seat at it.
+fn announce(state: &AppState, session: &GameSession) {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    let envelope = Envelope {
+        v: 1,
+        from: me,
+        kind: "game".into(),
+        payload: serde_json::to_value(session).unwrap_or_default(),
+    };
+    for peer in &session.players {
+        if peer != "me" {
+            links.send(peer, &envelope);
+        }
+    }
 }
 
 /// Sends one move to everyone else in the game.

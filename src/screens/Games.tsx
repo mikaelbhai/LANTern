@@ -20,6 +20,7 @@ import { ConnectFour } from './games/ConnectFour';
 import { Dots } from './games/Dots';
 import { Sequence } from './games/Sequence';
 import { Crossy } from './games/Crossy';
+import { GameLobby } from './games/Lobby';
 import { Deal } from './games/Deal';
 import { Uno } from './games/Uno';
 import { api } from '../lib/bridge';
@@ -223,8 +224,8 @@ function GamesHub() {
         title: 'Could not reach them',
         body: 'Opening the board here; they have not been invited.',
       });
+      setActiveGame({ kind, opponentId: peerId });
     }
-    setActiveGame({ kind, opponentId: peerId });
   };
 
   const playTogether = async (kind: GameKind) => {
@@ -242,18 +243,27 @@ function GamesHub() {
       });
     }
 
+    // Nobody to ask: this is pass-and-play on one device, and a lobby of one
+    // is a door with nothing behind it.
+    if (invited.length === 0) {
+      setActiveGame({ kind });
+      return;
+    }
+
     try {
       const session = await api.game.start(
         kind,
         invited.map((p) => p.id),
         seed,
       );
+      // The board does not open here. Everyone waits in the lobby until they
+      // have answered and the host says go - see games/Lobby.tsx.
       setGameSession(session);
     } catch {
       // Playing alone is still better than not playing.
       toast({ kind: 'error', title: 'Could not reach the others', body: 'Starting on your own.' });
+      setActiveGame({ kind });
     }
-    setActiveGame({ kind });
   };
 
   return (
@@ -268,6 +278,9 @@ function GamesHub() {
 
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0 scroll-y p-4">
+          {/* Before the board: who was asked, and who has actually turned
+              up. The host starts it from here. */}
+          <GameLobby />
           <NextMatch />
           <SectionTitle>Choose a game</SectionTitle>
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
