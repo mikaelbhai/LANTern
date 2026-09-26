@@ -381,6 +381,26 @@ interface State {
   setActiveGame: (g: State['activeGame']) => void;
 }
 
+/** The accent every install carried before the interface went green. */
+const OLD_DEFAULT_ACCENT = '#F5A623';
+
+/**
+ * Settings carried over from an older install.
+ *
+ * Changing a default only affects a device that has never stored one, and
+ * every existing install had written the old gold out to disk on first run -
+ * so the new interface arrived on a real phone still painted gold, which is
+ * how this was noticed. Gold that was never chosen is moved; gold somebody
+ * picked on purpose is indistinguishable from it, and they can pick it again
+ * from the same palette it is still in.
+ */
+function migrateSettings(settings: Settings): Settings {
+  if (settings.accent === OLD_DEFAULT_ACCENT) {
+    return { ...settings, accent: defaultSettings.accent };
+  }
+  return settings;
+}
+
 function loadPersisted(): Partial<State> {
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -389,7 +409,7 @@ function loadPersisted(): Partial<State> {
     return {
       onboarded: p.onboarded,
       profile: p.profile,
-      settings: { ...defaultSettings, ...p.settings },
+      settings: migrateSettings({ ...defaultSettings, ...p.settings }),
       rooms: p.rooms ?? {},
       messages: p.messages ?? {},
       saved: p.saved ?? [],
