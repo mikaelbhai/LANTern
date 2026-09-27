@@ -258,6 +258,13 @@ pub fn run() {
             let state = app.state::<AppState>();
             commands::boot(app.handle().clone(), (*state).clone());
 
+            // So a tap on the PiP window's own play/pause button - which
+            // arrives as a raw JNI call with nothing else to reach the app
+            // through - has a handle to emit the toggle event on. See
+            // `pip::stash_app_handle`.
+            #[cfg(target_os = "android")]
+            pip::stash_app_handle(app.handle().clone());
+
             #[cfg(desktop)]
             if tray::TRAY_IS_NATIVE {
                 tray::build(app.handle())?;

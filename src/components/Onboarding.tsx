@@ -60,7 +60,17 @@ export function Onboarding() {
         <div className="flex flex-col items-center text-center mb-8">
           <Wordmark size="lg" pulse />
           <p className="text-xs text-dim mt-3 max-w-[260px]">
-            Your local network, illuminated. No account, no cloud — just the devices around you.
+            {/*
+             * A router is usually faster than the internet connection behind
+             * it, and almost nothing on a phone or a laptop is built to
+             * notice — every transfer still goes out to the internet and
+             * back even when the other device is in the same room, so it
+             * runs at whatever the ISP's plan allows rather than at what the
+             * network you already paid for can actually do. Staying on the
+             * LAN is what unleashes the difference.
+             */}
+            Unleash your Wi-Fi's potential. Full network speed, not your ISP's — everything
+            stays on this network, with no account and no cloud.
           </p>
         </div>
 

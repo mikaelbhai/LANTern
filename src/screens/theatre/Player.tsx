@@ -21,7 +21,7 @@ import {
   Scan,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
-import { api } from '../../lib/bridge';
+import { api, on } from '../../lib/bridge';
 import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
@@ -338,6 +338,18 @@ export function Player({
     if (playing) void el.play().catch(() => setPlaying(false));
     else el.pause();
   }, [playing, unreachable]);
+
+  /*
+   * The tap on Android's own PiP overlay button.
+   *
+   * A floating picture-in-picture window has no room for this app's own
+   * controls and no accurate way to reach them with a finger even if it did
+   * — Android's system overlay is the only button a window that size gets,
+   * and it says nothing about what is inside except a play/pause action id.
+   * See pip.rs and MainActivity.kt for the native half; this is the only
+   * listener, so there is exactly one thing "toggle" can mean.
+   */
+  React.useEffect(() => on('pip:toggle', () => setPlaying((p) => !p)), []);
 
   React.useEffect(() => {
     const el = videoRef.current;
@@ -805,15 +817,27 @@ export function Player({
         acceptable for the one surface a viewer needs to reach.
       */}
       <>
-            {/* top bar */}
+            {/*
+              top bar
+
+              `safe-t` sits on this outer element, not mixed into the same
+              padding as the content: the gradient still has to reach the
+              true top edge of the screen, under the status bar, and only
+              the button and title need pushing down below it. A fixed `p-4`
+              on this same div put the back button under a notch or the
+              status bar's own clock/battery row on a phone that draws its
+              webview edge-to-edge — reachable in principle, unreadable and
+              easy to miss in practice.
+            */}
             <div
               style={{ transform: chrome ? 'translateY(0)' : 'translateY(-12px)' }}
               className={cn(
-                'absolute top-0 inset-x-0 z-20 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-start gap-3',
+                'absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-black/80 to-transparent safe-t',
                 'transition-all duration-200',
                 chrome ? 'opacity-100' : 'opacity-0 pointer-events-none',
               )}
             >
+              <div className="p-4 flex items-start gap-3">
               <button
                 onClick={onClose}
                 aria-label="Back to Theatre"
@@ -852,13 +876,18 @@ export function Player({
                     : `Streaming from ${ownerName}`}
                 </div>
               </div>
+              </div>
             </div>
 
             {/* bottom controls */}
             <div
               style={{ transform: chrome ? 'translateY(0)' : 'translateY(16px)' }}
               className={cn(
-                'absolute bottom-0 inset-x-0 z-20 px-4 pb-4 pt-16',
+                'absolute bottom-0 inset-x-0 z-20 px-4 pt-16',
+                // At least the usual gap, or the real gesture-nav inset,
+                // whichever is bigger — a plain `pb-4` sat every control in
+                // this bar right under Android's own swipe-up handle.
+                '[padding-bottom:max(1rem,env(safe-area-inset-bottom))]',
                 'bg-gradient-to-t from-black/90 via-black/60 to-transparent',
                 'transition-all duration-200',
                 chrome ? 'opacity-100' : 'opacity-0 pointer-events-none',

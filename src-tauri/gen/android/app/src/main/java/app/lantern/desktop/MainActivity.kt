@@ -1,8 +1,11 @@
 package app.lantern.desktop
 
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
@@ -126,10 +129,59 @@ class MainActivity : TauriActivity() {
         PictureInPictureParams.Builder()
           // The shape of a video call. Android clamps anything too extreme.
           .setAspectRatio(Rational(16, 9))
+          .setActions(listOf(pipToggleAction()))
           .build(),
       )
     }
   }
+
+  /**
+   * The one button a PiP window gets: toggle play/pause.
+   *
+   * Without this, entering picture-in-picture opened a window with nothing
+   * on it Android would draw a control for - the web page's own play button
+   * is exactly what a thumbnail-sized floating window has no room for and no
+   * accurate way to tap, and the system only draws its own overlay button
+   * when a `RemoteAction` asks for one.
+   *
+   * One icon for both directions rather than two swapping with playback
+   * state: doing that live needs the player reporting its state back up to
+   * here on every change, for a button that is only ever looked at for the
+   * half second it takes to tap it. A single glyph that means "toggle" is
+   * the honest one.
+   */
+  private fun pipToggleAction(): RemoteAction {
+    val intent = Intent(this, MainActivity::class.java).setAction(ACTION_PIP_TOGGLE)
+    val pending = PendingIntent.getActivity(
+      this,
+      0,
+      intent,
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    return RemoteAction(
+      Icon.createWithResource(this, android.R.drawable.ic_media_pause),
+      "Play or pause",
+      "Play or pause",
+      pending,
+    )
+  }
+
+  /**
+   * Where the PiP button's tap actually lands.
+   *
+   * `singleTask` means Android delivers it here rather than starting a
+   * second copy of the activity, which is what makes a PendingIntent back
+   * into this same window the simplest route in - no separate receiver
+   * component to declare and keep alive for as long as the window is open.
+   */
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    if (intent.action == ACTION_PIP_TOGGLE) {
+      runCatching { nativePipToggle() }
+    }
+  }
+
+  private external fun nativePipToggle()
 
   private fun isCallRunning(): Boolean {
     val audio = applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -168,6 +220,9 @@ class MainActivity : TauriActivity() {
   }
 
   companion object {
+    /** The PiP window's play/pause button, routed back through onNewIntent. */
+    private const val ACTION_PIP_TOGGLE = "app.lantern.desktop.PIP_TOGGLE"
+
     init {
       // Ordinarily already loaded by `Rust`, whose own initialiser does this
       // before the activity gets going. Repeating it costs nothing - the
