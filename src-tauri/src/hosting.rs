@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/shares.json", get(shares_json))
         .route("/get/:name", get(serve_installer))
         .route("/unlock", get(unlock))
+        .route("/watch/:slug/*path", get(watch))
         // A peer's profile picture, fetched like any other file this device
         // publishes rather than pushed down the signalling link.
         .route("/avatar.png", get(serve_avatar))
@@ -1355,17 +1356,11 @@ async fn listing(root: &Path, dir: &Path, slug: &str) -> Response {
         format!("/{}/{}", slug, rel_str)
     };
 
-    let mut body = format!(
-        "<!doctype html><meta charset=utf-8><title>{0}</title>\
-         <style>body{{background:#0C0F14;color:#E6EAF3;font:14px system-ui;padding:32px}}\
-         a{{color:#F5A623;text-decoration:none}}a:hover{{text-decoration:underline}}\
-         h1{{font-size:16px;color:#8C97AE;font-weight:500}}\
-         table{{border-collapse:collapse;margin-top:16px;width:100%;max-width:720px}}\
-         td{{padding:6px 12px 6px 0;border-bottom:1px solid #252E3F}}\
-         .s{{color:#4B566A;text-align:right;font-variant-numeric:tabular-nums}}</style>\
-         <h1>{0}</h1><table>",
-        escape(&base)
-    );
+    let mut body = page_head(&base);
+    body.push_str(&format!(
+        "<header><h1>{}</h1><nav class=crumbs><a href=\"/\">All folders</a></nav></header><main><table>",
+        escape(base.trim_start_matches('/')),
+    ));
 
     if !rel_str.is_empty() {
         let parent = base.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
@@ -1375,16 +1370,127 @@ async fn listing(root: &Path, dir: &Path, slug: &str) -> Response {
         ));
     }
     for (name, is_dir, size) in entries {
+        // A video gets a link to the player rather than to the file. Following
+        // the file makes the browser download or hand it to whatever it uses
+        // for video, which loses the position this remembers - and on a phone
+        // usually leaves the tab behind entirely.
+        let href = if !is_dir && is_playable(&name) {
+            format!("/watch{}/{}", base, name)
+        } else {
+            format!("{}/{}", base, name)
+        };
         body.push_str(&format!(
-            "<tr><td><a href=\"{}/{}\">{}{}</a></td><td class=s>{}</td></tr>",
-            escape(&base),
-            escape(&name),
+            "<tr><td><a href=\"{}\">{}{}</a></td><td class=s>{}</td></tr>",
+            escape(&href),
             escape(&name),
             if is_dir { "/" } else { "" },
             if is_dir { String::new() } else { human(size) }
         ));
     }
-    body.push_str("</table>");
+    body.push_str(
+        "</table></main><footer>Served straight from the machine holding the files. \
+         Nothing here leaves your network.</footer>",
+    );
+    html(body)
+}
+
+/// Whether this browser client will try to play a file rather than fetch it.
+///
+/// Deliberately short. An extension a browser cannot decode gives a black
+/// rectangle and no explanation, which is worse than a download - so this is
+/// the list every engine handles, and everything else keeps its plain link.
+fn is_playable(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    [".mp4", ".m4v", ".webm", ".ogv", ".mp3", ".m4a", ".ogg", ".wav", ".flac"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// Whether the file is sound rather than pictures, for which element to draw.
+fn is_audio(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    [".mp3", ".m4a", ".ogg", ".wav", ".flac"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+}
+
+/// The page a title plays on.
+///
+/// Its own page rather than the file itself, because everything worth having
+/// hangs off there being a page: the position this browser got to, the pass
+/// phrase prompt when the title is above what this browser may watch, and a
+/// way back to the folder. Following the file directly gives a bare video
+/// element with none of it, and on a phone usually leaves the browser behind
+/// altogether.
+async fn watch(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    AxumPath((slug, path)): AxumPath<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let key = params.get("k").cloned();
+    if !slug_for_this_caller(&state, &slug, key.as_deref(), Some(from)) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    let stream_path = format!("/{slug}/{path}");
+
+    // The same identity the file itself is gated on, so the page and the
+    // stream behind it can never disagree about who is asking.
+    let caller = crate::rating::requester(&state, key.as_deref())
+        .or_else(|| browser_id(&headers));
+    let allowed = from_this_machine(&state, from)
+        || crate::rating::may_serve_as(&state, caller, &stream_path, &name);
+
+    let folder = match path.rsplit_once('/') {
+        Some((dir, _)) => format!("/{slug}/{dir}"),
+        None => format!("/{slug}"),
+    };
+
+    let mut body = page_head(&name);
+    body.push_str(&format!(
+        "<header><h1>{}</h1><nav class=crumbs><a href=\"{}\">&larr; Back to the folder</a></nav></header><main>",
+        escape(&name),
+        escape(&folder),
+    ));
+
+    if allowed {
+        let src = format!("/{slug}/{path}");
+        let tag = if is_audio(&name) { "audio" } else { "video" };
+        body.push_str(&format!(
+            "<div class=player><{0} controls playsinline preload=metadata \
+             data-title=\"{1}\" src=\"{1}\"></{0}></div>\
+             <div class=resume hidden>Last time you stopped at <b class=where></b>.\
+             <button class=primary type=button>Resume</button></div>",
+            tag,
+            escape(&src),
+        ));
+    } else {
+        /*
+         * Named, and refused.
+         *
+         * The title is not the secret - it was already on the shelf, and a
+         * folder whose contents change shape per viewer is a folder nobody
+         * can navigate. What is withheld is the film, by the gate in
+         * `serve_path`, which this page cannot talk its way past: the phrase
+         * goes to the server and the page is asked for again.
+         */
+        body.push_str(
+            "<div class=pin><p>This one is above what this device has been cleared \
+             for. If you know the phrase for it, it opens here.</p>\
+             <form><input type=password inputmode=text autocomplete=off \
+             spellcheck=false placeholder=\"Pass phrase\" aria-label=\"Pass phrase\">\
+             <button class=primary type=submit>Unlock</button></form>\
+             <p class=said></p></div>",
+        );
+    }
+
+    body.push_str(
+        "</main><footer>Where you got to is remembered in this browser only. \
+         Nothing here leaves your network.</footer>",
+    );
     html(body)
 }
 
