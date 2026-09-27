@@ -206,6 +206,19 @@ input:focus-visible {
   display: block;
 }
 
+/*
+ * `[hidden]` has to win here.
+ *
+ * The browser's own `[hidden] { display: none }` comes from the user-agent
+ * sheet, so any `display` set in an author sheet beats it — and this bar was
+ * `display: flex`. It therefore showed on every title, whether or not there
+ * was a position to resume from, reading "Last time you stopped at ." with
+ * nothing between.
+ */
+.resume[hidden] {
+  display: none;
+}
+
 .resume {
   display: flex;
   align-items: center;

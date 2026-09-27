@@ -966,7 +966,7 @@ async fn respond(
             if as_json {
                 return listing_json(&root, &target, &slug).await;
             }
-            return listing(&root, &target, &slug).await;
+            return listing(&target, &rel, &slug).await;
         } else {
             None
         }
@@ -1338,9 +1338,24 @@ async fn listing_json(root: &Path, dir: &Path, slug: &str) -> Response {
         .into_response()
 }
 
-async fn listing(root: &Path, dir: &Path, slug: &str) -> Response {
-    let rel = dir.strip_prefix(root).unwrap_or(Path::new(""));
-    let rel_str = rel.to_string_lossy().replace('\\', "/");
+async fn listing(dir: &Path, rel: &str, slug: &str) -> Response {
+    /*
+     * The relative path is passed in, not worked out by subtraction.
+     *
+     * It used to be `dir.strip_prefix(root)`. On Windows `resolve` hands
+     * back a canonicalised path - the verbatim form, prefixed - while the
+     * root it was compared against is not canonicalised, so the prefix never
+     * matched. `unwrap_or("")` then swallowed the failure, and every folder
+     * below the first listed its own contents under its *parent's* address:
+     * every link inside `/media/Movies` pointed at `/media/<name>`, which is
+     * a folder that does not exist. Opening anything two levels down said
+     * Not found.
+     *
+     * The route already knows this string. Deriving it a second time, by a
+     * different route, from a value that had been through the filesystem was
+     * the whole mistake.
+     */
+    let rel_str = rel.trim_matches('/').replace('\\', "/");
 
     let mut entries: Vec<(String, bool, u64)> = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(dir).await {
