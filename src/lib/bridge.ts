@@ -637,6 +637,13 @@ export const api = {
      * all on Android.
      */
     openExternal: (url: string) => call<void>('open_external', { url }),
+    /**
+     * What a panic hook wrote down on the way out last time, if it wrote
+     * anything. `panic = "abort"` on every platform means the process is
+     * gone before any UI could show this live — this is the one chance,
+     * read once at the next launch and cleared the moment it is.
+     */
+    lastCrash: () => call<string | null>('debug_last_crash'),
   },
   profile: {
     os: () => call<string>('host_os'),

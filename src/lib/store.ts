@@ -833,6 +833,30 @@ export const useStore = create<State>((set, get) => {
       if (initialised) return;
       initialised = true;
 
+      /*
+       * What a panic hook wrote down on the way out last time.
+       *
+       * Every build on every platform runs with `panic = "abort"`: smaller
+       * binaries, at the cost that a panic anywhere ends the whole process
+       * immediately, with no window left open to say so in. This is read
+       * once, at the next launch, which is the only moment there is
+       * anything left to tell — and it says so plainly rather than staying
+       * silent the way the app did the one time this was needed and had
+       * nothing written down at all.
+       */
+      void api.system
+        .lastCrash()
+        .then((text) => {
+          if (!text) return;
+          const [, message] = text.split('\n');
+          get().toast({
+            kind: 'error',
+            title: "LANTern closed unexpectedly last time",
+            body: message?.trim() || 'No further detail was recorded.',
+          });
+        })
+        .catch(() => {});
+
       on('peer:joined', (p: Peer) => {
         rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
         set((s) => ({ peers: { ...s.peers, [p.id]: p } }));

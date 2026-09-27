@@ -31,6 +31,7 @@ mod model;
 mod mp4;
 mod net;
 mod phrase;
+mod crashlog;
 mod pip;
 pub mod shares;
 mod sidecar;
@@ -192,6 +193,7 @@ pub fn run() {
             commands::rating_unlocked,
             commands::rating_relock,
             commands::rating_unlock_peers,
+            commands::debug_last_crash,
             commands::set_installers,
             commands::installers_manage,
             commands::installers_held,
@@ -255,6 +257,14 @@ pub fn run() {
             hud_sync,
         ])
         .setup(|app| {
+            // Before anything else, including boot itself - a panic during
+            // boot is still a panic, and under `panic = "abort"` there is
+            // no unwind to catch it on the way back out, only this hook on
+            // the way down. See crashlog.rs.
+            if let Ok(dir) = app.path().app_data_dir() {
+                crashlog::install(&dir);
+            }
+
             // Services come up with the process, not with the window.
             let state = app.state::<AppState>();
             commands::boot(app.handle().clone(), (*state).clone());

@@ -35,6 +35,18 @@ pub async fn start_services(app: AppHandle, state: State<'_, AppState>) -> Res<(
 /// The app is meant to sit in the tray and stay reachable, and a window that is
 /// hidden — or whose WebView failed to load — must not mean a device that
 /// silently answers nothing. Guarded so it only ever happens once.
+/// What the crash hook wrote down last time, if there was a last time.
+///
+/// Read once, at startup, and gone the moment it is read — see
+/// `crashlog::last_crash`. This is the only thing standing between "LANTern
+/// keeps stopping" with nothing behind it and a person being able to say
+/// what actually happened, the way this session had to be pulled off a
+/// device by hand with a debugger attached because nothing else recorded it.
+#[tauri::command]
+pub fn debug_last_crash() -> Option<String> {
+    crate::crashlog::last_crash()
+}
+
 pub fn boot(app: AppHandle, state: AppState) {
     let already = state.with(|s| std::mem::replace(&mut s.services_started, true));
     if already {
