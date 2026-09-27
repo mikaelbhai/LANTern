@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Eye,
   Clapperboard,
+  FolderOpen,
   FolderTree,
   Globe,
   KeyRound,
@@ -139,6 +140,79 @@ function KeepHosting() {
 }
 
 /**
+ * Offering the application itself from the landing page.
+ *
+ * Somebody who opens this machine's address in a browser is on the network
+ * and has not got LANTern - that is the only reason to be looking at a web
+ * page instead of the app. On a network with no way out there is no download
+ * site to send them to, so the machine already serving them folders can serve
+ * them the installer too.
+ *
+ * A folder rather than a list of files, because the builds change and a host
+ * should not have to come back here every release. The page shows the newest
+ * of each platform and nothing that is not an installer.
+ */
+function OfferTheApp() {
+  const [dir, setDir] = React.useState('');
+  const [supported, setSupported] = React.useState(true);
+  const toast = useStore((s) => s.toast);
+
+  React.useEffect(() => {
+    void api.service
+      .installers()
+      .then(setDir)
+      .catch(() => setSupported(false));
+  }, []);
+
+  if (!supported || !canHost()) return null;
+
+  const choose = async () => {
+    const picked = await pickFolder();
+    if (!picked?.path) return;
+    try {
+      setDir(await api.service.setInstallers(picked.path));
+    } catch (err) {
+      toast({ kind: 'error', title: 'Could not offer that folder', body: String(err) });
+    }
+  };
+
+  const stop = async () => {
+    setDir(await api.service.setInstallers('').catch(() => ''));
+  };
+
+  return (
+    <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium">Offer the app on your landing page</p>
+          <p className="text-2xs text-muted leading-relaxed mt-0.5">
+            Point this at a folder holding the installers and anyone who opens this
+            machine&rsquo;s address in a browser can download LANTern from it. The newest
+            APK, .exe, .dmg, AppImage and .deb are shown; anything else in the folder is
+            ignored.
+          </p>
+          {dir && (
+            <p className="text-2xs font-mono text-dim mt-1.5 truncate" title={dir}>
+              {dir}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5 shrink-0">
+          <Button size="xs" icon={<FolderOpen size={12} />} onClick={() => void choose()}>
+            {dir ? 'Change' : 'Choose folder'}
+          </Button>
+          {dir && (
+            <Button size="xs" variant="ghost" onClick={() => void stop()}>
+              Stop offering
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * The server behind those URLs, when it is not answering.
  *
  * A share stays marked live in the database whether or not anything holds the
@@ -257,6 +331,7 @@ export function Hosting() {
         {/* Publishing is exactly where "nobody can reach my files" matters. */}
         <NetworkPrivacy />
         <KeepHosting />
+        <OfferTheApp />
 
         {shares.length === 0 ? (
           <Empty

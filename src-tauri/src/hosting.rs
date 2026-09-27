@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/transfer/:token", get(serve_transfer))
         // What a peer reads to discover what this device publishes.
         .route("/shares.json", get(shares_json))
+        .route("/get/:name", get(serve_installer))
         // A peer's profile picture, fetched like any other file this device
         // publishes rather than pushed down the signalling link.
         .route("/avatar.png", get(serve_avatar))
@@ -211,6 +212,63 @@ async fn serve_transfer(
     send_file(&state, "", &offered.path, range.as_deref()).await
 }
 
+/*
+ * The page somebody sees when they open this machine's address in a browser.
+ *
+ * It used to be three bullet points in Times New Roman on a black background,
+ * which is what a directory listing looks like when nobody has decided it is
+ * part of the product. It is: for anybody on the network without the app
+ * installed, this page IS LANTern, and it is also how they find out the app
+ * exists.
+ *
+ * All inline, in one constant. No stylesheet request, no font request, no
+ * script - the network this runs on may have no way out, and a page that
+ * waits on a CDN before it renders is a page that never renders.
+ */
+const PAGE_HEAD: &str = "<!doctype html><html lang=en><meta charset=utf-8>\
+<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
+<meta name=color-scheme content=\"dark light\">\
+<title>LANTern</title><style>\
+:root{--bg:#0C0F14;--card:#141921;--edge:#252E3F;--txt:#E6EAF3;--dim:#8C97AE;--accent:#2BD97C}\
+@media(prefers-color-scheme:light){:root{--bg:#F7F8FB;--card:#FFFFFF;--edge:#E6EAF1;--txt:#161C27;--dim:#58647A;--accent:#1A834B}}\
+*{box-sizing:border-box}\
+body{margin:0;background:var(--bg);color:var(--txt);\
+font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;\
+padding:24px 16px 48px;display:flex;flex-direction:column;align-items:center}\
+header,main,footer{width:100%;max-width:640px}\
+h1{font-size:26px;font-weight:600;letter-spacing:-.4px;margin:8px 0 2px}\
+h2{font-size:12px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;\
+color:var(--dim);margin:28px 0 10px}\
+.sub{color:var(--dim);font-size:14px;margin:0}\
+.cards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}\
+.cards a{display:flex;align-items:center;gap:14px;padding:14px 16px;\
+background:var(--card);border:1px solid var(--edge);border-radius:12px;\
+color:inherit;text-decoration:none;transition:border-color .15s,transform .15s}\
+.cards a:hover{border-color:var(--accent)}\
+.cards a:active{transform:scale(.99)}\
+.cards a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}\
+.ico{flex:none;width:22px;height:22px;color:var(--accent);display:flex}\
+.ico svg{width:100%;height:100%}\
+.body{flex:1;min-width:0}\
+.name{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.meta{display:block;font-size:13px;color:var(--dim);overflow:hidden;\
+text-overflow:ellipsis;white-space:nowrap}\
+.chev{flex:none;color:var(--dim);font-size:20px;line-height:1}\
+.empty{color:var(--dim);background:var(--card);border:1px solid var(--edge);\
+border-radius:12px;padding:20px 16px;margin:20px 0 0}\
+footer{color:var(--dim);font-size:13px;margin-top:32px;padding-top:16px;\
+border-top:1px solid var(--edge)}\
+</style>";
+
+/// A folder, drawn rather than named, so the page needs no icon font.
+const FOLDER_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<path d='M4 7a2 2 0 0 1 2-2h3.5l2 2H18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z'/></svg>";
+
+const DOWNLOAD_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<path d='M12 4v11m0 0 4-4m-4 4-4-4M5 19h14'/></svg>";
+
 /// Landing page listing everything currently published.
 async fn index(
     State(state): State<Arc<AppState>>,
@@ -229,25 +287,177 @@ async fn index(
             .collect::<Vec<_>>()
     });
 
-    let mut body = String::from(
-        "<!doctype html><meta charset=utf-8><title>LANTern</title>\
-         <style>body{background:#0C0F14;color:#E6EAF3;font:14px system-ui;padding:40px}\
-         a{color:#F5A623}h1{font-size:20px}li{margin:6px 0}</style><h1>LANTern</h1>",
-    );
+    let host = state.with(|s| s.display_name.clone());
+    let installers = installer_list(&state);
+
+    let mut body = String::from(PAGE_HEAD);
+    body.push_str(&format!(
+        "<header><h1>LANTern</h1><p class=sub>Shared from {}</p></header><main>",
+        escape(&host),
+    ));
+
     if shares.is_empty() {
-        body.push_str("<p>Nothing is published right now.</p>");
+        body.push_str(
+            "<p class=empty>Nothing is published right now. Whoever runs this \
+             can point it at a folder and it appears here.</p>",
+        );
     } else {
-        body.push_str("<ul>");
+        body.push_str("<h2>Folders</h2><ul class=cards>");
         for (slug, name) in shares {
             body.push_str(&format!(
-                "<li><a href=\"/{0}/\">{1}</a></li>",
+                "<li><a href=\"/{0}/\"><span class=ico>{2}</span><span class=body>\
+                 <span class=name>{1}</span><span class=meta>Open in this browser</span>\
+                 </span><span class=chev>&rsaquo;</span></a></li>",
                 escape(&slug),
-                escape(&name)
+                escape(&name),
+                FOLDER_GLYPH,
             ));
         }
         body.push_str("</ul>");
     }
+
+    /*
+     * The application itself, when the host has offered it.
+     *
+     * Somebody looking at this page is on the network and has not got
+     * LANTern - that is the only reason to be here rather than in the app. On
+     * a network with no way out there is no download page to send them to, so
+     * the machine serving the folders serves the installer as well.
+     */
+    if !installers.is_empty() {
+        body.push_str("<h2>Get the app</h2><ul class=cards>");
+        for file in &installers {
+            body.push_str(&format!(
+                "<li><a href=\"/get/{0}\" download><span class=ico>{3}</span><span class=body>\
+                 <span class=name>{1}</span><span class=meta>{2}</span></span>\
+                 <span class=chev>&darr;</span></a></li>",
+                escape(&file.name),
+                escape(&file.platform),
+                escape(&file.detail),
+                DOWNLOAD_GLYPH,
+            ));
+        }
+        body.push_str("</ul>");
+    }
+
+    body.push_str(
+        "</main><footer>Served straight from the machine holding the files. \
+         Nothing here leaves your network.</footer>",
+    );
     html(body)
+}
+
+/// One installer this machine is offering.
+struct Installer {
+    /// The file on disk, and the last segment of its URL.
+    name: String,
+    /// What somebody is actually choosing between: the platform, not a filename.
+    platform: String,
+    /// Size, with the filename after it.
+    detail: String,
+}
+
+/// What the host has put in the installer folder, newest of each platform.
+///
+/// Only the extensions that are installers, so pointing this at a folder with
+/// other things in it offers the installers and not the other things - which
+/// matters, because this folder is handed to anybody on the network without a
+/// key.
+fn installer_list(state: &AppState) -> Vec<Installer> {
+    let dir = state.with(|s| s.installers.clone());
+    if dir.trim().is_empty() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut found: Vec<(std::time::SystemTime, Installer)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let platform = match ext.as_str() {
+            "apk" => "Android",
+            "exe" | "msi" => "Windows",
+            "dmg" => "macOS",
+            "appimage" | "deb" => "Linux",
+            _ => continue,
+        };
+
+        let meta = entry.metadata().ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let when = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::UNIX_EPOCH);
+
+        found.push((
+            when,
+            Installer {
+                name: name.to_string(),
+                platform: platform.to_string(),
+                detail: format!("{} · {}", human(size), name),
+            },
+        ));
+    }
+
+    // Newest first, then one per platform: a folder that has collected three
+    // builds should offer the current one, not a list to guess from.
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for (_, item) in found {
+        if seen.contains(&item.platform) {
+            continue;
+        }
+        seen.push(item.platform.clone());
+        out.push(item);
+    }
+    out
+}
+
+/// Hands over one installer.
+///
+/// The name is matched against the list rather than joined onto the folder,
+/// so `..` and absolute paths are not refused - they simply never match
+/// anything, which is the difference between a filter and a gate.
+async fn serve_installer(
+    State(state): State<Arc<AppState>>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let dir = state.with(|s| s.installers.clone());
+    if dir.trim().is_empty() {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+    if !installer_list(&state).iter().any(|i| i.name == name) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
+    let path = std::path::Path::new(&dir).join(&name);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{name}\""),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "Not found").into_response(),
+    }
 }
 
 async fn serve_root(
@@ -1869,4 +2079,82 @@ async fn serve_screen(Query(_params): Query<HashMap<String, String>>) -> Respons
 #[cfg(not(target_os = "windows"))]
 async fn serve_screen_size(Query(_params): Query<HashMap<String, String>>) -> Response {
     (StatusCode::NOT_IMPLEMENTED, "this device cannot share its screen").into_response()
+}
+
+#[cfg(test)]
+mod installer_tests {
+    use super::*;
+
+    fn state_with(dir: &std::path::Path) -> AppState {
+        let state = AppState::default();
+        state.with(|s| s.installers = dir.to_string_lossy().to_string());
+        state
+    }
+
+    #[test]
+    fn an_unset_folder_offers_nothing() {
+        let state = AppState::default();
+        assert!(installer_list(&state).is_empty());
+    }
+
+    #[test]
+    fn only_installers_are_offered() {
+        let dir = std::env::temp_dir().join(format!("lantern-inst-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        for name in ["LANTern.apk", "LANTern-setup.exe", "notes.txt", "poster.png"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let state = state_with(&dir);
+        let names: Vec<String> = installer_list(&state).iter().map(|i| i.name.clone()).collect();
+
+        assert!(names.contains(&"LANTern.apk".to_string()));
+        assert!(names.contains(&"LANTern-setup.exe".to_string()));
+        // The folder is handed to anybody on the network without a key, so
+        // what is in it besides installers must stay out of the listing.
+        assert!(!names.contains(&"notes.txt".to_string()));
+        assert!(!names.contains(&"poster.png".to_string()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_build_per_platform() {
+        let dir = std::env::temp_dir().join(format!("lantern-inst2-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("LANTern-1.2.5.apk"), b"old").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(dir.join("LANTern-1.2.6.apk"), b"new").unwrap();
+
+        let state = state_with(&dir);
+        let android: Vec<String> = installer_list(&state)
+            .iter()
+            .filter(|i| i.platform == "Android")
+            .map(|i| i.name.clone())
+            .collect();
+
+        // A folder that has collected three builds should offer the current
+        // one, not a list to guess from.
+        assert_eq!(android, vec!["LANTern-1.2.6.apk".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_that_is_not_listed_is_not_served() {
+        let dir = std::env::temp_dir().join(format!("lantern-inst3-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("LANTern.apk"), b"x").unwrap();
+        std::fs::write(dir.join("secret.txt"), b"x").unwrap();
+
+        let state = state_with(&dir);
+        let listed: Vec<String> = installer_list(&state).iter().map(|i| i.name.clone()).collect();
+
+        // `serve_installer` matches against this list rather than joining the
+        // name onto the folder, so traversal and non-installers never match.
+        assert!(!listed.iter().any(|n| n == "secret.txt"));
+        assert!(!listed.iter().any(|n| n.contains("..")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -212,6 +212,9 @@ pub fn boot(app: AppHandle, state: AppState) {
         Err(e) => eprintln!("no app data directory: {e}"),
     }
 
+    // The installer folder, before the host server starts reading it.
+    load_installers(&state);
+
     // Bring previously published folders back, still running, and keep them
     // current as their contents change.
     {
@@ -2342,6 +2345,71 @@ pub fn open_privacy_settings(app: AppHandle, kind: String) -> bool {
 
     #[allow(unreachable_code)]
     false
+}
+
+/// The folder of installers this machine offers on its landing page.
+///
+/// Remembered so it survives a restart: a host who set this up once should
+/// not have to do it again every time the app opens, and the server that
+/// reads it starts before any screen does.
+///
+/// Empty turns the offer off. The page is what somebody on the network sees
+/// when they have not got LANTern, so it is also the only place they can be
+/// told where to get it - there is no download site on a network with no way
+/// out.
+#[tauri::command]
+pub fn set_installers(state: State<'_, AppState>, dir: String) -> Result<String, String> {
+    let trimmed = dir.trim().to_string();
+
+    if !trimmed.is_empty() {
+        let path = std::path::Path::new(&trimmed);
+        if !path.is_dir() {
+            return Err("that is not a folder".into());
+        }
+    }
+
+    state.with(|s| {
+        s.installers = trimmed.clone();
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('installers', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![trimmed],
+            );
+        }
+    });
+    Ok(trimmed)
+}
+
+/// What is currently being offered, for the screen that sets it.
+///
+/// Reads through to the table on a miss, because the server starts before any
+/// window does and the value has to be in place by then - see
+/// `load_installers`, which is what puts it there at startup.
+#[tauri::command]
+pub fn installers_dir(state: State<'_, AppState>) -> String {
+    state.with(|s| s.installers.clone())
+}
+
+/// Puts the remembered installer folder back into state at startup.
+///
+/// The landing page is served by a task that is running before anybody opens
+/// a window, so a setting that only arrived when a screen asked for it would
+/// leave the offer missing from the page until somebody visited Settings.
+pub fn load_installers(state: &AppState) {
+    let saved = state.with(|s| {
+        s.db.as_ref().and_then(|db| {
+            db.query_row(
+                "SELECT value FROM preferences WHERE key = 'installers'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+    });
+    if let Some(dir) = saved {
+        state.with(|s| s.installers = dir);
+    }
 }
 
 /// Tells the network what this person calls themselves.

@@ -94,6 +94,15 @@ pub struct Inner {
     /// sixty times.
     #[cfg(target_os = "windows")]
     pub injector: Option<crate::input::Injector>,
+    /// A folder of installers this machine offers to anyone on the network.
+    ///
+    /// Empty means the offer is off. The landing page is how somebody who has
+    /// not got LANTern yet finds out it exists - they are looking at a folder
+    /// it is serving them - and telling them to go and find a download
+    /// elsewhere is the one instruction this application cannot give, because
+    /// there is no elsewhere on a network with no way out.
+    pub installers: String,
+
     /// Hardware addresses seen for peers, kept so a sleeping one can be woken.
     ///
     /// Only knowable while a device is awake, which is exactly when nobody
@@ -179,6 +188,7 @@ impl AppState {
             control: crate::input::Control::default(),
             #[cfg(target_os = "windows")]
             injector: None,
+            installers: String::new(),
             macs: std::collections::HashMap::new(),
             staged: std::collections::HashMap::new(),
             issued_keys: std::collections::HashMap::new(),

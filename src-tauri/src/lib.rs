@@ -185,6 +185,8 @@ pub fn run() {
             commands::media_can_switch_audio,
             commands::media_set_tracks,
             commands::service_get,
+            commands::set_installers,
+            commands::installers_dir,
             commands::service_set,
             commands::service_running,
             commands::host_status,

@@ -450,6 +450,15 @@ export const api = {
    */
   service: {
     get: () => call<boolean>('service_get'),
+    /**
+     * The folder of installers offered on the landing page, or '' for off.
+     *
+     * The page is what somebody on this network sees when they have not got
+     * LANTern, so it is the only place they can be told where to get it -
+     * there is no download site on a network with no way out.
+     */
+    installers: () => call<string>('installers_dir'),
+    setInstallers: (dir: string) => call<string>('set_installers', { dir }),
     set: (enabled: boolean) => call<void>('service_set', { enabled }),
     running: () => call<boolean>('service_running'),
     /**
