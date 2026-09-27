@@ -6,6 +6,9 @@ import {
   CheckCheck,
   Copy,
   CornerUpLeft,
+  Download,
+  ExternalLink,
+  FolderOpen,
   MessageSquare,
   MoreHorizontal,
   Pause,
@@ -15,12 +18,15 @@ import {
   Reply,
   Smile,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
-import { Badge, IconButton, Tooltip } from '../../components/ui';
+import { Badge, Button, IconButton, Modal, Tooltip } from '../../components/ui';
 import { EmojiPicker } from './Pickers';
+import { api } from '../../lib/bridge';
 import { Markdown, isJumboEmoji, openLink } from '../../lib/markdown';
 import { QUICK_REACTIONS } from '../../lib/emoji';
+import { pickFolder } from '../../lib/picker';
 import { useStore } from '../../lib/store';
 import { useClickOutside } from '../../lib/hooks';
 import {
@@ -29,6 +35,7 @@ import {
   exactTime,
   formatBytes,
   formatDuration,
+  formatSpeed,
   relativeTime,
 } from '../../lib/utils';
 import type { Attachment, Message, VoiceClip } from '../../lib/types';
@@ -503,34 +510,46 @@ function EditBox({
   );
 }
 
+/**
+ * Every attachment on a message, in the shape it actually is.
+ *
+ * Three shapes, not two. A pasted image carries its own bytes as a dataUrl
+ * and always has — that grid is unchanged. A real, disk-backed file now
+ * rides an actual transfer (see Composer.tsx), and this is the first place
+ * that transfer's progress, and its Save button, were ever shown anywhere
+ * near the message it belongs to; before this it was a name and a size that
+ * did nothing, because nothing sent the bytes anywhere to begin with. The
+ * third shape — neither — is only what a message written before this
+ * existed can still contain, kept so old history does not throw.
+ */
 function Attachments({ items }: { items: Attachment[] }) {
-  const images = items.filter((a) => a.kind === 'image');
-  const others = items.filter((a) => a.kind !== 'image');
+  const [viewing, setViewing] = React.useState<Attachment | null>(null);
+
+  const pasted = items.filter((a) => a.dataUrl && !a.transferId);
+  const withTransfer = items.filter((a) => a.transferId);
+  const bare = items.filter((a) => !a.dataUrl && !a.transferId);
 
   return (
     <div className="mt-1.5 space-y-1.5">
-      {images.length > 0 && (
-        <div className={cn('flex flex-wrap gap-1.5')}>
-          {images.map((a) =>
-            a.dataUrl ? (
+      {pasted.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pasted.map((a) => (
+            <button key={a.id} type="button" onClick={() => setViewing(a)} className="block">
               <img
-                key={a.id}
                 src={a.dataUrl}
                 alt={a.name}
-                className="max-h-56 max-w-full rounded-card border border-edge object-cover"
+                className="max-h-56 max-w-full rounded-card border border-edge object-cover hover:border-gold/50 transition-colors"
               />
-            ) : (
-              <div
-                key={a.id}
-                className="h-24 w-32 rounded-card border border-edge bg-raised grid place-items-center text-2xs text-muted px-2 text-center"
-              >
-                {a.name}
-              </div>
-            ),
-          )}
+            </button>
+          ))}
         </div>
       )}
-      {others.map((a) => (
+
+      {withTransfer.map((a) => (
+        <TransferAttachment key={a.id} attachment={a} onView={() => setViewing(a)} />
+      ))}
+
+      {bare.map((a) => (
         <div
           key={a.id}
           className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm"
@@ -544,7 +563,238 @@ function Attachments({ items }: { items: Attachment[] }) {
           </div>
         </div>
       ))}
+
+      {viewing && <MediaModal attachment={viewing} onClose={() => setViewing(null)} />}
     </div>
+  );
+}
+
+/**
+ * One attachment that rides a real transfer, live.
+ *
+ * The same row plays three parts depending on where the transfer is: an
+ * offer waiting on this device's own "yes, and put it where" (incoming,
+ * queued), a bar while bytes are actually moving either direction, and a
+ * plain chip once there is a file sitting on disk to open. `transfers` is
+ * keyed by id, so this just reads its own entry and rerenders as the native
+ * side updates it — no polling, no separate fetch.
+ */
+function TransferAttachment({
+  attachment,
+  onView,
+}: {
+  attachment: Attachment;
+  onView: () => void;
+}) {
+  const t = useStore((s) => (attachment.transferId ? s.transfers[attachment.transferId] : undefined));
+  const downloadDir = useStore((s) => s.settings.files.downloadDir);
+  const [saving, setSaving] = React.useState(false);
+
+  // The message arrived before the offer did, or the two devices' clocks of
+  // events crossed — rare, and resolves itself the moment the offer lands,
+  // so this is a quiet placeholder rather than an error.
+  if (!t) {
+    return (
+      <div className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm">
+        <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+          {attachment.name.split('.').pop()?.slice(0, 3)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs truncate">{attachment.name}</div>
+          <div className="text-2xs text-muted">{formatBytes(attachment.size)}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // The fast path: one tap, into the folder already set for everything else.
+  const download = async () => {
+    setSaving(true);
+    try {
+      await api.files.accept(t.id, downloadDir || undefined);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // The escape hatch: this one file, somewhere else. A cancelled picker
+  // means "not yet", not "wherever" — the whole point of asking is that the
+  // usual folder is wrong exactly when it matters.
+  const downloadTo = async () => {
+    const picked = await pickFolder();
+    if (!picked?.path) return;
+    setSaving(true);
+    try {
+      await api.files.accept(t.id, picked.path);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (t.direction === 'in' && (t.state === 'queued' || saving)) {
+    return (
+      <div className="flex items-center gap-2.5 p-2 rounded-card border border-gold/40 bg-gold/[0.06] max-w-sm">
+        <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+          {t.name.split('.').pop()?.slice(0, 3)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs truncate">{t.name}</div>
+          <div className="text-2xs text-muted">{formatBytes(t.size)}</div>
+        </div>
+        <IconButton
+          label="Save to a chosen folder"
+          size="sm"
+          disabled={saving}
+          onClick={() => void downloadTo()}
+        >
+          <FolderOpen size={13} />
+        </IconButton>
+        <IconButton label="Download" size="sm" disabled={saving} onClick={() => void download()}>
+          <Download size={14} />
+        </IconButton>
+      </div>
+    );
+  }
+
+  if (t.state === 'active' || t.state === 'paused') {
+    const pct = t.size > 0 ? Math.round((t.sent / t.size) * 100) : 0;
+    return (
+      <div className="p-2 rounded-card border border-edge bg-raised max-w-sm">
+        <div className="flex items-center gap-2.5">
+          <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-muted shrink-0">
+            {t.direction === 'in' ? <Download size={14} /> : <Upload size={14} />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs truncate">{t.name}</div>
+            <div className="text-2xs text-muted">
+              {t.state === 'paused'
+                ? 'Paused'
+                : `${formatBytes(t.sent)} of ${formatBytes(t.size)} · ${formatSpeed(t.speedBps)}`}
+            </div>
+          </div>
+          <span className="text-2xs text-dim font-mono tabular-nums shrink-0">{pct}%</span>
+        </div>
+        <div className="h-1 rounded-full bg-base overflow-hidden mt-2">
+          <div
+            className="h-full bg-gold rounded-full transition-[width]"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (t.state === 'failed' || t.state === 'cancelled') {
+    return (
+      <div className="flex items-center gap-2.5 p-2 rounded-card border border-danger/40 bg-danger/[0.06] max-w-sm">
+        <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+          {t.name.split('.').pop()?.slice(0, 3)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs truncate">{t.name}</div>
+          <div className="text-2xs text-danger">
+            {t.state === 'failed' ? "Didn't arrive" : 'Cancelled'}
+          </div>
+        </div>
+        {t.direction === 'in' && (
+          <IconButton label="Try again" size="sm" onClick={() => void download()}>
+            <Download size={14} />
+          </IconButton>
+        )}
+      </div>
+    );
+  }
+
+  // Done, on either side: a plain chip. Opening it is the view/save modal.
+  return (
+    <button
+      type="button"
+      onClick={onView}
+      className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm text-left hover:border-gold/50 transition-colors"
+    >
+      <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+        {t.name.split('.').pop()?.slice(0, 3)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-xs truncate">{t.name}</div>
+        <div className="text-2xs text-muted">{formatBytes(t.size)}</div>
+      </div>
+    </button>
+  );
+}
+
+/**
+ * Viewing and saving one attachment, once it is actually a file somewhere.
+ *
+ * A pasted image is previewed from its own dataUrl — it has never had
+ * anything else. A transferred file is shown by name: this application does
+ * not yet load an arbitrary local path into an `<img>`, so rather than a
+ * broken thumbnail this offers what it can do honestly — open it in
+ * whatever the system already opens that kind of file with, show it in its
+ * folder, or copy it somewhere else, which is the actual "let me choose
+ * where to save it" this exists for.
+ */
+function MediaModal({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const t = useStore((s) => (attachment.transferId ? s.transfers[attachment.transferId] : undefined));
+  const toast = useStore((s) => s.toast);
+  const path = t?.localPath;
+  const [busy, setBusy] = React.useState(false);
+
+  const saveCopy = async () => {
+    if (!path) return;
+    const picked = await pickFolder();
+    if (!picked?.path) return;
+    setBusy(true);
+    try {
+      await api.files.saveCopy(path, picked.path);
+      toast({ kind: 'success', title: 'Saved', body: `A copy is in ${picked.name}.` });
+    } catch (err) {
+      toast({ kind: 'error', title: 'Could not save a copy', body: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={attachment.name} width="max-w-sm">
+      {attachment.dataUrl ? (
+        <img
+          src={attachment.dataUrl}
+          alt={attachment.name}
+          className="max-h-[60vh] w-full rounded-card object-contain bg-base"
+        />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 p-3 rounded-card border border-edge bg-raised">
+            <span className="h-11 w-11 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+              {attachment.name.split('.').pop()?.slice(0, 3)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm truncate">{attachment.name}</div>
+              <div className="text-2xs text-muted">{formatBytes(attachment.size)}</div>
+            </div>
+          </div>
+
+          {path ? (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" icon={<ExternalLink size={13} />} onClick={() => void api.files.open(path)}>
+                Open
+              </Button>
+              <Button size="sm" icon={<FolderOpen size={13} />} onClick={() => void api.files.reveal(path)}>
+                Show in folder
+              </Button>
+              <Button size="sm" disabled={busy} icon={<Download size={13} />} onClick={() => void saveCopy()}>
+                Save a copy to…
+              </Button>
+            </div>
+          ) : (
+            <p className="text-2xs text-muted">
+              This has not been downloaded to this device yet — save it first.
+            </p>
+          )}
+        </div>
+      )}
+    </Modal>
   );
 }
 

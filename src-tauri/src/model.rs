@@ -189,6 +189,15 @@ pub struct Transfer {
     /// nothing but the transfer id — the UI never has to carry the URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Sent as part of a chat message rather than offered on its own.
+    ///
+    /// A file somebody pushes at you unasked gets a blocking prompt before a
+    /// byte moves - that is the point of the prompt. A file attached to a
+    /// message you can already see arriving is not unasked; the chat bubble
+    /// is the prompt, with its own Save button, and a second modal on top of
+    /// it would be the same question asked twice.
+    #[serde(default)]
+    pub via_chat: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

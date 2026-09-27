@@ -218,7 +218,8 @@ export const api = {
      * HTTP server and tells the peer where to fetch it, so the bytes never go
      * through the signalling link.
      */
-    offer: (peerId: string, paths: string[]) => call<Transfer[]>('files_offer', { peerId, paths }),
+    offer: (peerId: string, paths: string[], viaChat = false) =>
+      call<Transfer[]>('files_offer', { peerId, paths, viaChat }),
     /**
      * Turns whatever a picker returned into a file this device can send.
      *
@@ -245,6 +246,14 @@ export const api = {
     cancel: (id: string) => call<void>('files_cancel', { id }),
     reveal: (path: string) => call<void>('files_reveal', { path }),
     open: (path: string) => call<void>('files_open', { path }),
+    /**
+     * Copies a file this device already has to a folder somebody just chose.
+     *
+     * Not a download — the file is already here, sent or received. This is
+     * the "put a copy over there too" action from the media/save modal.
+     */
+    saveCopy: (path: string, destDir: string) =>
+      call<string>('files_save_copy', { path, destDir }),
   },
   /** The popup in the corner of the screen. Desktop only; a no-op elsewhere. */
   hud: {

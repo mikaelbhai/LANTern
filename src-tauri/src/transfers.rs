@@ -95,6 +95,9 @@ pub struct FileOffer {
     /// Present when several files were offered together.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle_id: Option<String>,
+    /// See `Transfer::via_chat`.
+    #[serde(default)]
+    pub via_chat: bool,
 }
 
 /// Control messages that travel alongside an offer.
@@ -143,6 +146,7 @@ pub fn offer(
     state: &AppState,
     peer_id: &str,
     paths: Vec<PathBuf>,
+    via_chat: bool,
 ) -> Vec<Transfer> {
     let (links, me, host_port, my_ip) = state.with(|s| {
         (
@@ -212,6 +216,7 @@ pub fn offer(
             expires_at: None,
             bundle_id: bundle_id.clone(),
             url: None,
+            via_chat,
         };
 
         let sent = links.send(
@@ -228,6 +233,7 @@ pub fn offer(
                         mime,
                         url: format!("http://{my_ip}:{host_port}/transfer/{token}"),
                         bundle_id: bundle_id.clone(),
+                        via_chat,
                     }
                 }),
             },
@@ -271,6 +277,7 @@ pub fn record_offer(app: &AppHandle, state: &AppState, from: &str, offer: FileOf
         expires_at: None,
         bundle_id: offer.bundle_id,
         url: Some(offer.url),
+        via_chat: offer.via_chat,
     };
     state.with(|s| {
         // A link that re-established can replay an offer.
@@ -536,7 +543,7 @@ fn split_url(url: &str) -> Option<(String, u16, String)> {
 }
 
 /// Never silently overwrite something already downloaded.
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
         return candidate;
@@ -554,6 +561,28 @@ fn unique_path(dir: &Path, name: &str) -> PathBuf {
         }
     }
     candidate
+}
+
+/// Copies a file this device already has onto a folder somebody chose.
+///
+/// For a file already sitting in the default download folder that somebody
+/// decides, after the fact, belongs somewhere else - the per-transfer
+/// destination picker in the chat bubble covers choosing *before* it lands;
+/// this covers moving a copy once it already has. A plain copy, not a move:
+/// the original stays where the transfer put it, which is what every other
+/// "save a copy" affordance in this application already does.
+pub fn save_copy(source: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
+    if !source.is_file() {
+        return Err("that file is no longer there".into());
+    }
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("could not use that folder: {e}"))?;
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "that file has no usable name".to_string())?;
+    let target = unique_path(dest_dir, name);
+    std::fs::copy(source, &target).map_err(|e| format!("could not copy the file: {e}"))?;
+    Ok(target)
 }
 
 fn download_dir(app: &AppHandle) -> PathBuf {
@@ -591,6 +620,52 @@ pub fn emit_one(app: &AppHandle, state: &AppState, transfer_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_copy_leaves_the_original_where_it_was() {
+        let src_dir = std::env::temp_dir().join(format!("lantern-savecopy-src-{}", std::process::id()));
+        let dest_dir = std::env::temp_dir().join(format!("lantern-savecopy-dest-{}", std::process::id()));
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let source = src_dir.join("note.txt");
+        std::fs::write(&source, b"hello").unwrap();
+
+        let saved = save_copy(&source, &dest_dir).unwrap();
+
+        assert!(source.exists(), "the original must not be moved or deleted");
+        assert!(saved.exists());
+        assert_eq!(std::fs::read(&saved).unwrap(), b"hello");
+        assert_eq!(saved.parent(), Some(dest_dir.as_path()));
+
+        let _ = std::fs::remove_dir_all(&src_dir);
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+
+    #[test]
+    fn save_copy_does_not_clobber_a_same_named_file_already_there() {
+        let src_dir = std::env::temp_dir().join(format!("lantern-savecopy-src2-{}", std::process::id()));
+        let dest_dir = std::env::temp_dir().join(format!("lantern-savecopy-dest2-{}", std::process::id()));
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        let source = src_dir.join("note.txt");
+        std::fs::write(&source, b"new").unwrap();
+        std::fs::write(dest_dir.join("note.txt"), b"already here").unwrap();
+
+        let saved = save_copy(&source, &dest_dir).unwrap();
+
+        assert_ne!(saved, dest_dir.join("note.txt"));
+        assert_eq!(std::fs::read(dest_dir.join("note.txt")).unwrap(), b"already here");
+        assert_eq!(std::fs::read(&saved).unwrap(), b"new");
+
+        let _ = std::fs::remove_dir_all(&src_dir);
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+
+    #[test]
+    fn save_copy_refuses_a_source_that_is_gone() {
+        let missing = std::env::temp_dir().join("lantern-does-not-exist-at-all.bin");
+        let dest_dir = std::env::temp_dir().join(format!("lantern-savecopy-dest3-{}", std::process::id()));
+        assert!(save_copy(&missing, &dest_dir).is_err());
+    }
 
     #[test]
     fn splits_an_offer_url() {

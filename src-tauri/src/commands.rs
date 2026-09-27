@@ -1359,9 +1359,10 @@ pub fn files_offer(
     state: State<'_, AppState>,
     peer_id: String,
     paths: Vec<String>,
+    via_chat: Option<bool>,
 ) -> Vec<crate::model::Transfer> {
     let paths = paths.into_iter().map(std::path::PathBuf::from).collect();
-    crate::transfers::offer(&app, &state, &peer_id, paths)
+    crate::transfers::offer(&app, &state, &peer_id, paths, via_chat.unwrap_or(false))
 }
 
 /// Starts (or resumes) pulling a file a peer has offered.
@@ -1476,6 +1477,19 @@ pub fn files_reveal(app: AppHandle, path: String) {
 pub fn files_open(app: AppHandle, path: String) {
     use tauri_plugin_opener::OpenerExt;
     let _ = app.opener().open_path(path, None::<&str>);
+}
+
+/// Copies a file this device already has to a folder somebody just chose.
+///
+/// Not a download - the file is already here, sent or received. This is the
+/// "actually, put a copy there instead" action from the media/save modal.
+#[tauri::command]
+pub fn files_save_copy(path: String, dest_dir: String) -> Result<String, String> {
+    let target = crate::transfers::save_copy(
+        std::path::Path::new(&path),
+        std::path::Path::new(&dest_dir),
+    )?;
+    Ok(target.to_string_lossy().to_string())
 }
 
 /// Opens a web address in whatever the system uses for one.

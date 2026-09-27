@@ -1097,9 +1097,20 @@ export const useStore = create<State>((set, get) => {
       on('transfer:offer', (t: Transfer) => {
         get().addTransfers([t]);
         const peer = get().peers[t.peerId];
-        // Ask, unless this peer is trusted and set to come straight through.
-        if (!(peer?.trusted && get().settings.files.autoAcceptTrusted)) {
-          set({ pendingOffer: t });
+        /*
+         * A file riding a chat message is not unasked - it arrived with the
+         * message you can already see, and the bubble is where accepting
+         * and choosing a folder happen now (see MessageItem.tsx). Popping
+         * the same prompt again on top of it would ask the one question
+         * twice, once as a modal and once as the message sitting right
+         * there. Auto-accept for a trusted peer still applies either way:
+         * that decision is about who is sending it, not how it arrived.
+         */
+        if (!t.viaChat) {
+          // Ask, unless this peer is trusted and set to come straight through.
+          if (!(peer?.trusted && get().settings.files.autoAcceptTrusted)) {
+            set({ pendingOffer: t });
+          }
         }
         // Anything else waits as "queued" for the user to accept, so a device
         // on the network cannot push files at you unasked.

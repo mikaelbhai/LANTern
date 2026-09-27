@@ -99,8 +99,26 @@ export type Attachment = {
   size: number;
   mime: string;
   kind: 'image' | 'video' | 'audio' | 'file';
+  /**
+   * A small preview embedded straight in the chat envelope.
+   *
+   * Only for what came from clipboard paste, which has no real path to
+   * publish from. Anything picked from disk has a real file behind it and
+   * travels as a proper transfer instead — see `transferId`.
+   */
   dataUrl?: string;
+  /** The sender's own copy, meaningful only on the sending device. */
   localPath?: string;
+  /**
+   * The real transfer this attachment rides on.
+   *
+   * Set the moment the message is sent, on both sides: the sender's own
+   * upload and the receiver's matching download share this id, because the
+   * native side mints it once and the offer carries it across. Look this up
+   * in `state.transfers` for live progress, and once it lands, for where the
+   * file actually is.
+   */
+  transferId?: string;
 };
 
 export interface VoiceClip {
@@ -155,6 +173,13 @@ export interface Transfer {
   localPath?: string;
   expiresAt?: number;
   bundleId?: string;
+  /**
+   * Sent as part of a chat message rather than offered on its own.
+   *
+   * The chat bubble is the prompt for one of these — a modal on top of a
+   * message you can already see arriving would ask the same question twice.
+   */
+  viaChat?: boolean;
 }
 
 export type CallKind = 'voice' | 'video';

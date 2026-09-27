@@ -22,6 +22,7 @@ import { useStore } from '../../lib/store';
 import { useClickOutside } from '../../lib/hooks';
 import { api } from '../../lib/bridge';
 import { attachmentFromFile } from '../../lib/actions';
+import { pickFilesToSend } from '../../lib/picker';
 import { cn, fileToDataUrl, formatDuration, mimeKind } from '../../lib/utils';
 import type { Attachment, Room, VoiceClip } from '../../lib/types';
 
@@ -50,7 +51,15 @@ export function Composer({
   const [pastePreview, setPastePreview] = React.useState<Attachment | null>(null);
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-  const fileRef = React.useRef<HTMLInputElement>(null);
+  /*
+   * Where a real, disk-backed attachment actually lives, until it is sent.
+   *
+   * Not on the Attachment itself: a local path means nothing on the
+   * receiving device and has no business crossing the wire as message
+   * metadata. It exists only long enough for `send()` to turn it into a
+   * proper transfer, and is dropped the moment that happens.
+   */
+  const pickedPaths = React.useRef<Map<string, string>>(new Map());
   const pickerRef = useClickOutside<HTMLDivElement>(() => setPicker(null));
 
   const members = room.members.map((id) => peers[id]).filter(Boolean);
@@ -116,15 +125,42 @@ export function Composer({
     });
   };
 
-  const send = (scheduledFor?: number) => {
+  const send = async (scheduledFor?: number) => {
     const body = draft.trim();
     if (!body && !attachments.length) return;
     const mentions = members
       .filter((m) => new RegExp(`@${m.name}\\b`, 'i').test(body))
       .map((m) => m.id);
+
+    /*
+     * Every disk-backed attachment becomes a real transfer before the
+     * message goes anywhere — the same pipeline Files and the household
+     * Send button already use, just offered `viaChat` so it rides in the
+     * bubble instead of popping a second prompt on top of it.
+     *
+     * A group room gets one offer per member, since a transfer is a link
+     * between two devices and there is no such thing as a broadcast one.
+     * The bubble tracks the first member's transfer for its own progress —
+     * everyone else still gets the file in full, it is just not the one
+     * this device's own message renders a bar for.
+     */
+    const finalAttachments: Attachment[] = [];
+    for (const a of attachments) {
+      const path = pickedPaths.current.get(a.id);
+      if (!path || room.members.length === 0) {
+        finalAttachments.push(a);
+        continue;
+      }
+      pickedPaths.current.delete(a.id);
+      const [primary, ...rest] = room.members;
+      const created = await api.files.offer(primary, [path], true).catch(() => []);
+      for (const peerId of rest) void api.files.offer(peerId, [path], true);
+      finalAttachments.push(created[0] ? { ...a, transferId: created[0].id } : a);
+    }
+
     sendMessage(room.id, {
       body,
-      attachments,
+      attachments: finalAttachments,
       mentions,
       replyTo: replyTo?.id,
       threadRoot,
@@ -137,11 +173,24 @@ export function Composer({
     requestAnimationFrame(autoGrow);
   };
 
-  const addFiles = async (files: File[]) => {
+  /*
+   * The native picker, not a browser `<input type=file>`.
+   *
+   * A browser file input deliberately withholds the real path, which is
+   * fine for staging a preview and useless for sending: without a path
+   * there is nothing for the native side to publish, which is exactly why
+   * a non-image file attached here used to arrive as an inert card with a
+   * name on it and no bytes behind it at all. `pickFilesToSend` is the same
+   * native dialog Files and the household Send button already use.
+   */
+  const chooseFiles = async () => {
+    const picked = await pickFilesToSend();
     const next: Attachment[] = [];
-    for (const f of files) {
-      const isImage = mimeKind(f.type, f.name) === 'image';
-      next.push(attachmentFromFile(f, isImage ? await fileToDataUrl(f) : undefined));
+    for (const f of picked) {
+      if (!f.path) continue;
+      const id = `${f.name}-${f.size}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      pickedPaths.current.set(id, f.path);
+      next.push({ id, name: f.name, size: f.size, mime: '', kind: mimeKind('', f.name) });
     }
     setAttachments((a) => [...a, ...next]);
   };
@@ -268,7 +317,7 @@ export function Composer({
 
         <div className="flex items-end gap-1.5">
           <div className="flex gap-0.5 pb-1">
-            <IconButton label="Attach files" onClick={() => fileRef.current?.click()}>
+            <IconButton label="Attach files" onClick={() => void chooseFiles()}>
               <Paperclip size={15} />
             </IconButton>
           </div>
@@ -369,17 +418,6 @@ export function Composer({
           </div>
         </div>
       </div>
-
-      <input
-        ref={fileRef}
-        type="file"
-        multiple
-        hidden
-        onChange={(e) => {
-          void addFiles(Array.from(e.target.files ?? []));
-          e.target.value = '';
-        }}
-      />
 
       <ScheduleModal
         open={scheduleOpen}
