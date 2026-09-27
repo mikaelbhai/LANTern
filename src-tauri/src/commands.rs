@@ -2347,6 +2347,46 @@ pub fn open_privacy_settings(app: AppHandle, kind: String) -> bool {
     false
 }
 
+/// Sets, changes or clears the pass phrase for one rating tier.
+///
+/// An empty phrase removes it, and with it every unlock anybody earned using
+/// it — a tier whose lock has been taken off is not one people are still
+/// through.
+#[tauri::command]
+pub fn rating_pin_set(state: State<'_, AppState>, age: u8, phrase: String) -> Result<(), String> {
+    crate::rating::set_pin(&state, age, &phrase)
+}
+
+/// Which tiers have a phrase set.
+///
+/// The tiers, never the phrases. Nothing that can reach this command has any
+/// business reading them back, including this application's own screens.
+#[tauri::command]
+pub fn rating_pins(state: State<'_, AppState>) -> Vec<u8> {
+    crate::rating::pinned_tiers(&state)
+}
+
+/// Offers a phrase and reports the tier it opened, if any.
+#[tauri::command]
+pub fn rating_unlock(state: State<'_, AppState>, phrase: String) -> Option<u8> {
+    let me = state.with(|s| s.device_id.clone());
+    crate::rating::unlock(&state, &me, &phrase)
+}
+
+/// The tier this device has typed its way into, if any.
+#[tauri::command]
+pub fn rating_unlocked(state: State<'_, AppState>) -> Option<u8> {
+    let me = state.with(|s| s.device_id.clone());
+    crate::rating::unlocked_age(&state, &me)
+}
+
+/// Puts the lock back, so the next restricted title asks again.
+#[tauri::command]
+pub fn rating_relock(state: State<'_, AppState>) {
+    let me = state.with(|s| s.device_id.clone());
+    crate::rating::relock(&state, &me);
+}
+
 /// The folder of installers this machine offers on its landing page.
 ///
 /// Remembered so it survives a restart: a host who set this up once should

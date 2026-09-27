@@ -14,7 +14,9 @@ pub fn open(dir: &Path) -> anyhow::Result<Connection> {
     Ok(conn)
 }
 
-fn migrate(conn: &Connection) -> anyhow::Result<()> {
+// `pub(crate)` so tests elsewhere can build an in-memory store with the
+// real schema rather than a hand-written subset that drifts from it.
+pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS transfers (
             id          TEXT PRIMARY KEY,
@@ -219,6 +221,37 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
     // second must show nobody, not everybody.
     let _ = conn.execute(
         "ALTER TABLE shares ADD COLUMN unlisted INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // A pass phrase per rating tier, set by the host.
+    //
+    // Not in `preferences` with the other settings: these are secrets, and a
+    // key/value table that the rest of the application reads freely is the
+    // wrong place to keep one. Stored hashed for the same reason - a host who
+    // uses the same four digits elsewhere should not have them readable by
+    // anything that can open this file.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS rating_pins (
+            age  INTEGER PRIMARY KEY,
+            hash TEXT NOT NULL
+        )",
+        [],
+    );
+
+    // Which devices have presented a pass phrase, and for what.
+    //
+    // Separate from `device_ages`, which is what the host granted. A tier
+    // somebody unlocked by typing the PIN is a different fact from one the
+    // host set for them, and conflating the two would let an unlock silently
+    // outlive the host lowering the grant.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS rating_unlocked (
+            device_id TEXT NOT NULL,
+            age       INTEGER NOT NULL,
+            at        INTEGER NOT NULL,
+            PRIMARY KEY (device_id, age)
+        )",
         [],
     );
 

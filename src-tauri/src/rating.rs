@@ -155,7 +155,22 @@ pub fn may_watch(needs: MinAge, allowed: u8) -> bool {
 pub const DEFAULT_MAX_AGE: u8 = 12;
 
 /// The oldest content one device may watch here.
+///
+/// The higher of what the host granted and what somebody has typed their way
+/// into on this device. A PIN raises the ceiling; it never lowers it, so
+/// entering the 13 phrase on a device already allowed 18 does nothing - which
+/// is what anybody would expect, and the opposite would make a PIN a way to
+/// restrict a device you do not own.
 pub fn allowed_age(state: &AppState, device_id: &str) -> u8 {
+    let granted = granted_age(state, device_id);
+    match unlocked_age(state, device_id) {
+        Some(typed) if typed > granted => typed,
+        _ => granted,
+    }
+}
+
+/// What the host set for this device, before any PIN is considered.
+fn granted_age(state: &AppState, device_id: &str) -> u8 {
     state.with(|s| {
         s.device_ages.get(device_id).copied().unwrap_or_else(|| {
             s.db.as_ref()
@@ -698,5 +713,223 @@ mod gate_tests {
             !may_serve(&state, Some("key-child"), path, "Some Film.mkv"),
             "approving one device approved another",
         );
+    }
+}
+
+/* ------------------------------------------------------------------- PINs */
+
+/*
+ * A pass phrase per rating tier.
+ *
+ * Approvals answer "may this device watch this", which needs the host to be
+ * present and looking at their screen. A PIN answers the other half: a parent
+ * who knows the number can unlock the tier on whatever they are holding,
+ * without anybody approving anything, and the number is the whole of the
+ * secret.
+ *
+ * Stored as a SHA-256 of the phrase with the tier mixed in, so the same four
+ * digits set on two tiers do not produce the same row - and so that a host
+ * who reuses a number they use elsewhere has not left it readable to anything
+ * that can open the database file. It is not a password store; it is four
+ * digits guarding a film, and the threat is somebody reading the file, not
+ * somebody with a GPU.
+ */
+
+/// The digest stored for one tier, given the phrase somebody typed.
+fn pin_hash(age: u8, phrase: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"lantern-rating-pin:");
+    hasher.update([age]);
+    hasher.update(b":");
+    hasher.update(phrase.trim().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Sets, replaces or clears the phrase for one tier.
+///
+/// An empty phrase removes it, which also drops every unlock somebody had
+/// earned with it: a tier with no PIN is not a tier anybody has typed their
+/// way into, and leaving those rows behind would keep a door open after the
+/// lock had been taken off it.
+pub fn set_pin(state: &AppState, age: u8, phrase: &str) -> Result<(), String> {
+    let phrase = phrase.trim();
+    if !phrase.is_empty() && phrase.len() < 4 {
+        return Err("a pass phrase needs at least four characters".into());
+    }
+
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Err("no store to save it in".to_string());
+        };
+        if phrase.is_empty() {
+            let _ = db.execute("DELETE FROM rating_pins WHERE age = ?1", rusqlite::params![age]);
+            let _ = db.execute(
+                "DELETE FROM rating_unlocked WHERE age = ?1",
+                rusqlite::params![age],
+            );
+        } else {
+            db.execute(
+                "INSERT INTO rating_pins (age, hash) VALUES (?1, ?2)
+                 ON CONFLICT(age) DO UPDATE SET hash = ?2",
+                rusqlite::params![age, pin_hash(age, phrase)],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+}
+
+/// Which tiers have a phrase set. Never the phrases themselves.
+pub fn pinned_tiers(state: &AppState) -> Vec<u8> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut q) = db.prepare("SELECT age FROM rating_pins ORDER BY age") else {
+            return Vec::new();
+        };
+        let Ok(rows) = q.query_map([], |r| r.get::<_, i64>(0)) else {
+            return Vec::new();
+        };
+        rows.flatten().map(|n| n as u8).collect()
+    })
+}
+
+/// Takes a phrase and returns the highest tier it opens, if any.
+///
+/// Every tier is tried rather than asking the caller which one they meant:
+/// somebody typing a number does not know which rating it belongs to, and
+/// making them choose first tells them how many there are.
+pub fn unlock(state: &AppState, device_id: &str, phrase: &str) -> Option<u8> {
+    let phrase = phrase.trim();
+    if phrase.is_empty() {
+        return None;
+    }
+
+    let matched = state.with(|s| {
+        let db = s.db.as_ref()?;
+        let mut q = db.prepare("SELECT age, hash FROM rating_pins").ok()?;
+        let rows = q
+            .query_map([], |r| Ok((r.get::<_, i64>(0)? as u8, r.get::<_, String>(1)?)))
+            .ok()?
+            .flatten()
+            .collect::<Vec<_>>();
+        rows.into_iter()
+            .filter(|(age, hash)| *hash == pin_hash(*age, phrase))
+            .map(|(age, _)| age)
+            .max()
+    })?;
+
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO rating_unlocked (device_id, age, at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(device_id, age) DO UPDATE SET at = ?3",
+                rusqlite::params![device_id, matched, crate::model::now_ms() as i64],
+            );
+        }
+    });
+    Some(matched)
+}
+
+/// The highest tier this device has typed its way into, if any.
+pub fn unlocked_age(state: &AppState, device_id: &str) -> Option<u8> {
+    state.with(|s| {
+        let db = s.db.as_ref()?;
+        db.query_row(
+            "SELECT MAX(age) FROM rating_unlocked WHERE device_id = ?1",
+            rusqlite::params![device_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+        .map(|n| n as u8)
+    })
+}
+
+/// Forgets what a device unlocked, so the next title asks again.
+pub fn relock(state: &AppState, device_id: &str) {
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "DELETE FROM rating_unlocked WHERE device_id = ?1",
+                rusqlite::params![device_id],
+            );
+        }
+    });
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let st = AppState::default();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        st.with(|s| s.db = Some(conn));
+        st
+    }
+
+    #[test]
+    fn the_right_phrase_opens_its_tier() {
+        let st = state();
+        set_pin(&st, 18, "hedgerow").unwrap();
+        assert_eq!(unlock(&st, "device-a", "hedgerow"), Some(18));
+        assert_eq!(unlocked_age(&st, "device-a"), Some(18));
+    }
+
+    #[test]
+    fn a_wrong_phrase_opens_nothing() {
+        let st = state();
+        set_pin(&st, 18, "hedgerow").unwrap();
+        assert_eq!(unlock(&st, "device-a", "hedgerov"), None);
+        assert_eq!(unlocked_age(&st, "device-a"), None);
+    }
+
+    #[test]
+    fn the_same_phrase_on_two_tiers_opens_the_higher_one() {
+        let st = state();
+        set_pin(&st, 13, "same").unwrap();
+        set_pin(&st, 18, "same").unwrap();
+        // Typing a number should not make somebody guess which rating it was
+        // for, and the generous reading is the one they meant.
+        assert_eq!(unlock(&st, "device-a", "same"), Some(18));
+    }
+
+    #[test]
+    fn a_tier_is_stored_hashed_and_per_tier() {
+        // The same phrase on two tiers must not produce the same row, or the
+        // file says which tiers share a number.
+        assert_ne!(pin_hash(13, "same"), pin_hash(18, "same"));
+        assert!(!pin_hash(18, "hedgerow").contains("hedgerow"));
+    }
+
+    #[test]
+    fn clearing_a_tier_takes_its_unlocks_with_it() {
+        let st = state();
+        set_pin(&st, 18, "hedgerow").unwrap();
+        unlock(&st, "device-a", "hedgerow");
+        set_pin(&st, 18, "").unwrap();
+        // A door that has had its lock removed is not a door anybody is still
+        // through.
+        assert_eq!(unlocked_age(&st, "device-a"), None);
+        assert!(pinned_tiers(&st).is_empty());
+    }
+
+    #[test]
+    fn a_phrase_that_is_too_short_is_refused() {
+        let st = state();
+        assert!(set_pin(&st, 18, "12").is_err());
+    }
+
+    #[test]
+    fn relocking_forgets_everything_that_device_opened() {
+        let st = state();
+        set_pin(&st, 18, "hedgerow").unwrap();
+        unlock(&st, "device-a", "hedgerow");
+        relock(&st, "device-a");
+        assert_eq!(unlocked_age(&st, "device-a"), None);
     }
 }
