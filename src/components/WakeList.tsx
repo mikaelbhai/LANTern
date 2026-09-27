@@ -36,10 +36,13 @@ export function WakeList() {
 
   React.useEffect(load, [load]);
 
-  // Only the ones that are not already here. A wake button beside a device
-  // you are talking to is noise.
+  // Only the ones that are not already here, and only the ones a packet
+  // could reach. A wake button beside a device you are talking to is noise;
+  // one beside a phone is a lie, because a phone does not answer a magic
+  // packet and nothing acknowledges one either. `wakeable` is absent on
+  // anything written down by an older build, so absence means yes.
   const online = new Set(Object.values(peers).map((p) => p.deviceId));
-  const asleep = devices.filter((d) => !online.has(d.deviceId));
+  const asleep = devices.filter((d) => !online.has(d.deviceId) && d.wakeable !== false);
 
   if (!asleep.length) return null;
 
@@ -62,7 +65,7 @@ export function WakeList() {
         {asleep.map((device) => (
           <li key={device.deviceId} className="flex items-center gap-2">
             <span className="text-xs truncate flex-1 text-dim">
-              {device.name || device.mac}
+              {device.name || device.deviceName || 'A device on this network'}
             </span>
             {sent[device.deviceId] ? (
               <span className="text-[10px] text-muted shrink-0">{sent[device.deviceId]}</span>

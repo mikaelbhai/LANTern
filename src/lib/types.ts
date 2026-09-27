@@ -573,10 +573,28 @@ export interface WifiStatus {
   chosen: string | null;
 }
 
-/** A device that could be woken, and the address to wake it at. */
+/** A device this machine has written down, and whether it can be woken. */
 export interface Wakeable {
   deviceId: string;
   mac: string;
+  /**
+   * What its owner is called, remembered from the last time it was seen.
+   *
+   * Remembered rather than read from the live peer, because a peer exists
+   * only while it is awake and this list is for the ones that are not. The
+   * hardware address is never a name - see `wakeable` in commands.rs.
+   */
   name: string;
+  /** What the machine calls itself, when it has said. */
+  deviceName?: string;
+  os?: OS;
   online: boolean;
+  /**
+   * Whether a magic packet could reach it.
+   *
+   * False for phones, which do not answer one at all. Nothing acknowledges a
+   * wake packet either, so a button offered here that cannot work is
+   * indistinguishable from one that failed.
+   */
+  wakeable?: boolean;
 }

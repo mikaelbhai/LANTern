@@ -101,9 +101,18 @@ export function Household({
   }, []);
   React.useEffect(loadWakeable, [loadWakeable, peers]);
 
+  /*
+   * The ones asleep that a magic packet could actually reach.
+   *
+   * `wakeable` is decided natively, from what kind of machine it is: a phone
+   * does not answer one, so offering the button there is offering something
+   * that quietly does nothing - and since nothing acknowledges a wake packet
+   * either, there is no way to tell that apart from a failure. Older builds
+   * did not send the field, so its absence means yes.
+   */
   const wakeable = React.useMemo(() => {
     const by = new Map<string, Wakeable>();
-    for (const d of known) if (!d.online) by.set(d.deviceId, d);
+    for (const d of known) if (!d.online && d.wakeable !== false) by.set(d.deviceId, d);
     return by;
   }, [known]);
 
@@ -206,10 +215,17 @@ export function Household({
       {strangers.map((device) => (
         <Row
           key={device.deviceId}
-          avatar={<Avatar name={device.name || device.mac} size={44} muted />}
-          title={device.name || device.mac}
+          avatar={<Avatar name={nameOf(device)} size={44} muted />}
+          title={nameOf(device)}
           dim
-          line={{ text: 'Not here right now' }}
+          // The machine's own name underneath the person's, when they differ,
+          // because "Rehan" says nothing about which of his boxes this is.
+          line={{
+            text:
+              device.deviceName && device.deviceName !== device.name
+                ? `${device.deviceName} · not here right now`
+                : 'Not here right now',
+          }}
           right={
             woken[device.deviceId] ? (
               <span className="text-2xs text-muted">{woken[device.deviceId]}</span>
@@ -541,6 +557,19 @@ function RoomRow({
 }
 
 /* ---------------------------------------------------------------- helpers */
+
+/**
+ * What to call a machine that is not here.
+ *
+ * Never the hardware address. `name || mac` printed `9C:2D:CD:1A:44:07` at
+ * somebody the moment a device went to sleep before it had been seen under a
+ * name, which is not an identifier any person in a house holds. The name has
+ * been written down on every sighting since that table existed; the fallback
+ * now describes the thing rather than addressing it.
+ */
+function nameOf(device: Wakeable): string {
+  return device.name || device.deviceName || 'A device on this network';
+}
 
 /** Narrows away the devices we have no hardware address for. */
 function isWakeable(d: Wakeable | undefined): d is Wakeable {

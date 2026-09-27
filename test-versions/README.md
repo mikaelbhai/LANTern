@@ -6,7 +6,7 @@ processor, which is why it is roughly twice the size of a release split.
 
 Named for the version they report plus the commit they were built from,
 because the version alone does not tell you which build you are holding.
-`LANTern-1.2.6-ui-89ba2b3.apk` reports 1.2.6 and was built at 89ba2b3.
+`LANTern-1.2.6-ui-a6ee55a.apk` reports 1.2.6 and was built at a6ee55a.
 
 Anything here is a work in progress. Releases, with the per-processor
 packages and the Windows installer, are on the releases page.
