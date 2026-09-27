@@ -99,6 +99,10 @@ type ConnectedHandler = (peerId: string) => void;
 const sessions = new Map<string, Session>();
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
+// Tracked separately from the stream itself: a track's `getSettings().facingMode`
+// is only ever a report of what the browser picked, not something `switchCamera`
+// can read back reliably across engines, so the ask has to be the source of truth.
+let facingMode: 'user' | 'environment' = 'user';
 
 const remoteHandlers = new Set<RemoteHandler>();
 const incomingHandlers = new Set<IncomingHandler>();
@@ -158,6 +162,7 @@ async function ensureLocalMedia(kind: CallKind): Promise<MediaStream> {
     // camera cannot manage it.
     video: wantVideo
       ? {
+          facingMode: { ideal: facingMode },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           frameRate: { ideal: 30 },
@@ -361,6 +366,7 @@ function releaseMedia() {
   localStream = null;
   screenStream?.getTracks().forEach((t) => t.stop());
   screenStream = null;
+  facingMode = 'user';
 }
 
 /* ---------------------------------------------------------------- mute */
@@ -407,6 +413,7 @@ export async function enableCamera(): Promise<MediaStream | null> {
     try {
       const captured = await navigator.mediaDevices.getUserMedia({
         video: {
+          facingMode: { ideal: facingMode },
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           frameRate: { ideal: 30 },
@@ -464,6 +471,69 @@ export async function disableCamera(): Promise<void> {
 export function isCameraOn(): boolean {
   const track = localStream?.getVideoTracks()[0];
   return !!track && track.readyState === 'live' && track.enabled;
+}
+
+/**
+ * True when there is a second camera worth flipping to.
+ *
+ * `enumerateDevices` only returns real device labels once permission has
+ * been granted, but the count of `videoinput` entries is available either
+ * way - a desktop with one built-in webcam reports one, a phone with a
+ * front and back camera reports at least two. Used to decide whether the
+ * flip-camera control is worth showing at all.
+ */
+export async function hasMultipleCameras(): Promise<boolean> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((d) => d.kind === 'videoinput').length > 1;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Switches the outgoing camera between front and back.
+ *
+ * There is no API to redirect an existing track to a different physical
+ * camera - `facingMode` is fixed at capture time - so this asks for a new
+ * track under the opposite facing and swaps it in via `replaceTrack`, the
+ * same mechanism `enableCamera` uses to hand the camera to a call that
+ * started as voice. The old track is stopped so its camera light goes out
+ * before the new one's comes on.
+ */
+export async function switchCamera(): Promise<MediaStream | null> {
+  const track = localStream?.getVideoTracks()[0];
+  if (!track || screenStream) return null;
+
+  const next = facingMode === 'user' ? 'environment' : 'user';
+  let captured: MediaStream;
+  try {
+    captured = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { exact: next },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+      },
+    });
+  } catch {
+    // No camera facing that way - stay on the one already running.
+    return null;
+  }
+  facingMode = next;
+
+  const newTrack = captured.getVideoTracks()[0];
+  if (!newTrack) return null;
+
+  for (const session of sessions.values()) {
+    const sender = session.pc.getSenders().find((s) => s.track?.kind === 'video');
+    if (sender) await sender.replaceTrack(newTrack).catch(() => {});
+  }
+
+  track.stop();
+  localStream?.removeTrack(track);
+  localStream?.addTrack(newTrack);
+  return localStream;
 }
 
 /* --------------------------------------------------------- screen share */

@@ -1,6 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  Ear,
   Grid2X2,
   Hand,
   MessageSquare,
@@ -17,8 +18,10 @@ import {
   Smile,
   Sliders,
   Square,
+  SwitchCamera,
   Video,
   VideoOff,
+  Volume2,
   X,
   ExternalLink,
 } from 'lucide-react';
@@ -70,14 +73,35 @@ export function CallOverlay() {
    * of holding it to your face.
    */
   const hasPicture = selfCam || call.kind === 'video' || !!call.screenShare;
+  // `null` defers to `hasPicture`; a press of the speaker button pins it
+  // either way until the next press, the same override WhatsApp offers over
+  // its own picture-driven default.
+  const [speakerOverride, setSpeakerOverride] = React.useState<boolean | null>(null);
+  const speakerOn = speakerOverride ?? hasPicture;
+  // Stays false until a route actually takes, which is also how a desktop or
+  // TV - neither has an earpiece to route to - keeps the button off its bar
+  // instead of showing a control that would do nothing.
+  const [hasEarpiece, setHasEarpiece] = React.useState(false);
   React.useEffect(() => {
     if (call.state === 'ended') return;
-    void api.call.earpiece(!hasPicture).catch(() => {});
-  }, [hasPicture, call.state]);
+    void api.call
+      .earpiece(!speakerOn)
+      .then(setHasEarpiece)
+      .catch(() => setHasEarpiece(false));
+  }, [speakerOn, call.state]);
 
   // And hand the audio stack back, or the phone keeps routing everything
   // through the earpiece after the call is over.
   React.useEffect(() => () => void api.call.resetAudio().catch(() => {}), []);
+
+  // Only a phone has a second camera worth flipping to - checked once the
+  // camera actually comes on rather than up front, since `enumerateDevices`
+  // needs a granted permission to report anything more than a bare count.
+  const [multiCam, setMultiCam] = React.useState(false);
+  React.useEffect(() => {
+    if (!selfCam) return;
+    void rtc.hasMultipleCameras().then(setMultiCam);
+  }, [selfCam]);
   const [handUp, setHandUp] = React.useState(false);
   const [chatOpen, setChatOpen] = React.useState(false);
   const [mixerOpen, setMixerOpen] = React.useState(false);
@@ -610,6 +634,23 @@ export function CallOverlay() {
           onClick={() => void toggleCamera()}
           icon={selfCam ? <Video size={16} /> : <VideoOff size={16} />}
         />
+
+        {selfCam && multiCam && (
+          <ControlButton
+            label="Flip camera"
+            onClick={() => void rtc.switchCamera()}
+            icon={<SwitchCamera size={16} />}
+          />
+        )}
+
+        {hasEarpiece && (
+          <ControlButton
+            label={speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
+            active={speakerOn}
+            onClick={() => setSpeakerOverride(!speakerOn)}
+            icon={speakerOn ? <Volume2 size={16} /> : <Ear size={16} />}
+          />
+        )}
 
         <ControlButton
           label={call.screenShare ? 'Stop sharing' : 'Share screen'}
