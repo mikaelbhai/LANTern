@@ -93,7 +93,10 @@ export function RejoinBanner() {
   if (!held) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-card border border-gold/40 bg-surface/95 backdrop-blur px-3 py-2 shadow-lg">
+    <div
+      // See `.above-tabbar` in index.css — same reasoning as Toasts.tsx.
+      className="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-card border border-gold/40 bg-surface/95 backdrop-blur px-3 py-2 shadow-lg above-tabbar"
+    >
       <span className="text-xs">
         Your game is still going — <span className="text-gold font-mono">{left}s</span> to rejoin
       </span>

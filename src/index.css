@@ -263,6 +263,37 @@
        over the top of the header, and 0 puts the title underneath it. */
     padding-top: max(env(safe-area-inset-top, 0px), var(--inset-top, 0px));
   }
+
+  /*
+   * Resting above the mobile tab bar, for anything `fixed` — a toast, a
+   * rejoin banner, a floating call tile.
+   *
+   * `fixed` measures from the true edge of the viewport, not from whatever a
+   * screen's own layout leaves clear. On a phone that edge is behind the tab
+   * bar, which App.tsx renders as a plain sibling with no shared stacking
+   * context — so three separate places each sat something on top of it,
+   * covering whichever label was underneath, before this existed. One
+   * number here instead of the tab bar's height copied into each of them by
+   * hand, which is exactly the kind of thing that drifts the day only one
+   * of the three gets updated.
+   *
+   * The threshold matches `useIsMobile` (860px) exactly, on purpose: this is
+   * a pure CSS answer to the same question that hook answers in JS, for
+   * elements that would otherwise need to import it just to place
+   * themselves. `--tabbar-h` is the one place the tab bar's own height is
+   * written down; MobileTabBar in Sidebar.tsx still owns drawing it.
+   */
+  :root {
+    --tabbar-h: 58px;
+  }
+  .above-tabbar {
+    bottom: 1rem;
+  }
+  @media (max-width: 860px) {
+    .above-tabbar {
+      bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 1rem);
+    }
+  }
   .drag-region {
     -webkit-app-region: drag;
   }

@@ -400,7 +400,18 @@ function RoomHeader({
       of screen. Hence the status-bar inset and the height, which only apply
       when it is doing that job.
     */
-    <header className="shrink-0 border-b border-edge bg-surface flex items-center px-2 gap-2 h-14 md:h-11 md:px-3 safe-t md:pt-0">
+    <header className="shrink-0 border-b border-edge bg-surface safe-t">
+      {/*
+        The safe-area inset lives on this outer element, with no height of
+        its own to compete with it — `h-14 safe-t` on the same box fixed the
+        header at 56px total and then asked padding-top to eat into that
+        fixed budget for the status bar, which on a phone that actually
+        reports an inset left about thirty-two pixels for a 34px avatar and
+        two lines of text. The row below always gets its full height; the
+        inset adds to the top of the box instead of subtracting from what
+        was already inside it.
+      */}
+      <div className="flex items-center px-2 gap-2 h-14 md:h-11 md:px-3">
       {onBack && (
         <IconButton label="Back" onClick={onBack}>
           <ArrowLeft size={18} />
@@ -589,6 +600,8 @@ function RoomHeader({
           </Button>
         </div>
       </Modal>
+
+      </div>
 
       <MembersModal room={room} open={membersOpen} onClose={() => setMembersOpen(false)} />
     </header>

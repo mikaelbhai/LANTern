@@ -9,7 +9,15 @@ export function Toasts() {
   const dismiss = useStore((s) => s.dismissToast);
 
   return (
-    <div className="fixed bottom-4 right-4 z-[120] flex flex-col gap-2 pointer-events-none max-w-[320px]">
+    <div
+      // `fixed` measures from the true edge of the viewport, not from
+      // whatever this screen's own layout leaves clear — on a phone that is
+      // the mobile tab bar, which App.tsx renders as a sibling with no
+      // shared stacking context. A plain `bottom-4` here sat a toast on top
+      // of it, above it in z-index, covering whichever tab label happened
+      // to be underneath. See `.above-tabbar` in index.css.
+      className="fixed right-4 z-[120] flex flex-col gap-2 pointer-events-none max-w-[320px] above-tabbar"
+    >
       <AnimatePresence initial={false}>
         {toasts.map((t) => {
           const Icon =

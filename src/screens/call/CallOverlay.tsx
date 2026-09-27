@@ -309,7 +309,12 @@ export function CallOverlay() {
         dragConstraints={{ top: -window.innerHeight + 140, left: -window.innerWidth + 260, right: 8, bottom: 8 }}
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="fixed bottom-5 right-5 z-[95] w-[232px] rounded-card overflow-hidden border border-edge-strong bg-surface shadow-2xl"
+        // See `.above-tabbar` in index.css. Draggable, so this is only the
+        // resting spot rather than a hard limit — but a resting spot right
+        // at the viewport's true bottom edge sat this tile on the mobile
+        // tab bar, or a phone's gesture handle, before anybody had touched
+        // it.
+        className="fixed right-5 z-[95] w-[232px] rounded-card overflow-hidden border border-edge-strong bg-surface shadow-2xl above-tabbar"
       >
         <div className="h-[130px] bg-base relative cursor-grab active:cursor-grabbing">
           {selfCam && selfStream ? (
@@ -571,7 +576,18 @@ export function CallOverlay() {
       )}
 
       {/* controls */}
-      <footer className="shrink-0 border-t border-edge bg-surface px-4 py-2.5 flex items-center justify-center gap-1.5 flex-wrap safe-b">
+      <footer
+        className={cn(
+          'shrink-0 border-t border-edge bg-surface px-4 pt-2.5 flex items-center justify-center gap-1.5 flex-wrap',
+          // `py-2.5 safe-b` on one element let two rules fight over the same
+          // padding-bottom property, with no guarantee which one the build
+          // keeps — the call controls could end up flush against the
+          // gesture-nav strip depending on class order alone. Self-contained
+          // instead: at least the usual gap, or the real inset, never both
+          // silently discarded for the other.
+          '[padding-bottom:max(0.625rem,env(safe-area-inset-bottom))]',
+        )}
+      >
         <ControlButton
           label={selfMuted ? 'Unmute' : 'Mute'}
           active={!selfMuted}

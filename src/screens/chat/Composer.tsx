@@ -207,7 +207,17 @@ export function Composer({
   const canSend = draft.trim().length > 0 || attachments.length > 0;
 
   return (
-    <div className="shrink-0 border-t border-edge bg-surface p-2.5 safe-b">
+    <div
+      className={cn(
+        'shrink-0 border-t border-edge bg-surface pt-2.5 px-2.5',
+        // `p-2.5 safe-b` on one element left it to chance which rule won
+        // padding-bottom — the composer could end up flush against the
+        // gesture-nav strip depending on class order alone. Self-contained
+        // instead: at least the usual gap, or the real inset, never both
+        // silently discarded for the other.
+        '[padding-bottom:max(0.625rem,env(safe-area-inset-bottom))]',
+      )}
+    >
       {/* reply banner */}
       <AnimatePresence>
         {replyTo && (
