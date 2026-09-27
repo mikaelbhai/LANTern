@@ -309,8 +309,24 @@ pub fn annotate_with(
 /// The single place the decision is made, so there is one thing to read to
 /// know whether restricted content can leave this machine.
 pub fn may_serve(state: &AppState, key: Option<&str>, stream_path: &str, name: &str) -> bool {
-    let needs = min_age_for(state, stream_path, name);
     let device = requester(state, key);
+    may_serve_as(state, device, stream_path, name)
+}
+
+/// The same decision, for a caller already identified.
+///
+/// A browser has no key to present, so it names itself with a cookie this
+/// server minted for it - which is how one browser can be through a pass
+/// phrase while the browser on the next device is not. Without this every
+/// browser in the house was the same anonymous caller, and one person typing
+/// the 18 phrase would have opened it on all of them.
+pub fn may_serve_as(
+    state: &AppState,
+    device: Option<String>,
+    stream_path: &str,
+    name: &str,
+) -> bool {
+    let needs = min_age_for(state, stream_path, name);
     let allowed = match &device {
         Some(device) => allowed_age(state, device),
         None => allowed_age(state, ""),

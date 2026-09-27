@@ -1,0 +1,353 @@
+/*
+ * The browser client's whole stylesheet.
+ *
+ * Inlined into every page by hosting.rs rather than served as a file: these
+ * pages are opened by somebody who has nothing installed, often on a phone
+ * over a network with no way out, and a second request that has to complete
+ * before anything renders is a second thing that can fail. It is four
+ * kilobytes; the request would cost more than the bytes.
+ *
+ * Light and dark from the system, because this is the one surface that has no
+ * settings screen to offer a choice on.
+ */
+
+:root {
+  --bg: #0c0f14;
+  --card: #141921;
+  --raised: #1c2330;
+  --edge: #252e3f;
+  --txt: #e6eaf3;
+  --dim: #8c97ae;
+  --accent: #2bd97c;
+  --on-accent: #071a0f;
+  --warn: #e8a83a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fb;
+    --card: #ffffff;
+    --raised: #f1f4f9;
+    --edge: #e6eaf1;
+    --txt: #161c27;
+    --dim: #58647a;
+    --accent: #1a834b;
+    --on-accent: #ffffff;
+    --warn: #925e0c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--txt);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Kills the 300ms a mobile browser spends deciding whether a tap was the
+     first half of a double-tap zoom. Pinch-zoom is deliberately left on. */
+  touch-action: manipulation;
+}
+
+header,
+main,
+footer,
+nav {
+  width: 100%;
+  max-width: 680px;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  margin: 6px 0 2px;
+}
+
+h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin: 26px 0 10px;
+}
+
+.sub {
+  color: var(--dim);
+  font-size: 14px;
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ cards */
+
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cards a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 15px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.cards a:hover {
+  border-color: var(--accent);
+}
+
+.cards a:active {
+  transform: scale(0.99);
+}
+
+.cards a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ico {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  color: var(--accent);
+  display: flex;
+}
+
+.ico svg {
+  width: 100%;
+  height: 100%;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  display: block;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: block;
+  font-size: 13px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chev {
+  flex: none;
+  color: var(--dim);
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* A title this device has not been cleared for. Shown rather than hidden, so
+   the shelf does not silently change shape per viewer — the name is not the
+   secret, the film is. */
+.locked {
+  opacity: 0.55;
+}
+
+.locked .ico {
+  color: var(--dim);
+}
+
+.empty {
+  color: var(--dim);
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 20px 16px;
+  margin: 20px 0 0;
+}
+
+/* ----------------------------------------------------------------- player */
+
+.player {
+  width: 100%;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+}
+
+.player video {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.resume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.resume button {
+  margin-left: auto;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+button,
+.btn {
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--raised);
+  color: var(--txt);
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+button:hover,
+.btn:hover {
+  border-color: var(--accent);
+}
+
+button:active,
+.btn:active {
+  transform: scale(0.98);
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+/* -------------------------------------------------------------- pin entry */
+
+.pin {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 18px 16px;
+  margin-top: 16px;
+}
+
+.pin p {
+  margin: 0 0 12px;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.pin form {
+  display: flex;
+  gap: 8px;
+}
+
+.pin input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--raised);
+  color: var(--txt);
+}
+
+.pin .said {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.pin .said.bad {
+  color: var(--warn);
+}
+
+.pin .said.good {
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ table */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 6px;
+}
+
+td {
+  padding: 9px 12px 9px 0;
+  border-bottom: 1px solid var(--edge);
+}
+
+td a {
+  text-decoration: none;
+}
+
+td a:hover {
+  text-decoration: underline;
+}
+
+.s {
+  color: var(--dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- footer */
+
+footer {
+  color: var(--dim);
+  font-size: 13px;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--edge);
+}
+
+footer a {
+  color: var(--accent);
+}
+
+nav.crumbs {
+  font-size: 13px;
+  color: var(--dim);
+  margin: 4px 0 14px;
+}
+
+nav.crumbs a {
+  text-decoration: none;
+}

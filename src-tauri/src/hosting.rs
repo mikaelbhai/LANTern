@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
         // What a peer reads to discover what this device publishes.
         .route("/shares.json", get(shares_json))
         .route("/get/:name", get(serve_installer))
+        .route("/unlock", get(unlock))
         // A peer's profile picture, fetched like any other file this device
         // publishes rather than pushed down the signalling link.
         .route("/avatar.png", get(serve_avatar))
@@ -225,40 +226,28 @@ async fn serve_transfer(
  * script - the network this runs on may have no way out, and a page that
  * waits on a CDN before it renders is a page that never renders.
  */
-const PAGE_HEAD: &str = "<!doctype html><html lang=en><meta charset=utf-8>\
-<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-<meta name=color-scheme content=\"dark light\">\
-<title>LANTern</title><style>\
-:root{--bg:#0C0F14;--card:#141921;--edge:#252E3F;--txt:#E6EAF3;--dim:#8C97AE;--accent:#2BD97C}\
-@media(prefers-color-scheme:light){:root{--bg:#F7F8FB;--card:#FFFFFF;--edge:#E6EAF1;--txt:#161C27;--dim:#58647A;--accent:#1A834B}}\
-*{box-sizing:border-box}\
-body{margin:0;background:var(--bg);color:var(--txt);\
-font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif;\
-padding:24px 16px 48px;display:flex;flex-direction:column;align-items:center}\
-header,main,footer{width:100%;max-width:640px}\
-h1{font-size:26px;font-weight:600;letter-spacing:-.4px;margin:8px 0 2px}\
-h2{font-size:12px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;\
-color:var(--dim);margin:28px 0 10px}\
-.sub{color:var(--dim);font-size:14px;margin:0}\
-.cards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}\
-.cards a{display:flex;align-items:center;gap:14px;padding:14px 16px;\
-background:var(--card);border:1px solid var(--edge);border-radius:12px;\
-color:inherit;text-decoration:none;transition:border-color .15s,transform .15s}\
-.cards a:hover{border-color:var(--accent)}\
-.cards a:active{transform:scale(.99)}\
-.cards a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}\
-.ico{flex:none;width:22px;height:22px;color:var(--accent);display:flex}\
-.ico svg{width:100%;height:100%}\
-.body{flex:1;min-width:0}\
-.name{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
-.meta{display:block;font-size:13px;color:var(--dim);overflow:hidden;\
-text-overflow:ellipsis;white-space:nowrap}\
-.chev{flex:none;color:var(--dim);font-size:20px;line-height:1}\
-.empty{color:var(--dim);background:var(--card);border:1px solid var(--edge);\
-border-radius:12px;padding:20px 16px;margin:20px 0 0}\
-footer{color:var(--dim);font-size:13px;margin-top:32px;padding-top:16px;\
-border-top:1px solid var(--edge)}\
-</style>";
+/*
+ * The browser client's stylesheet and script, compiled in.
+ *
+ * They live in `src/web/` as real files - a stylesheet that is edited as a
+ * stylesheet, by an editor that knows what one is - and are inlined into
+ * every page rather than served as separate requests. These pages are opened
+ * by somebody with nothing installed, often on a phone, on a network that may
+ * have no way out: a second request that has to land before the page works is
+ * a second thing that can fail.
+ */
+const PANEL_CSS: &str = include_str!("web/panel.css");
+const PANEL_JS: &str = include_str!("web/panel.js");
+
+/// Everything before the body, for any page this server draws.
+fn page_head(title: &str) -> String {
+    format!(
+        "<!doctype html><html lang=en><meta charset=utf-8>         <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">         <meta name=color-scheme content=\"dark light\">         <meta name=theme-color content=\"#F7F8FB\" media=\"(prefers-color-scheme: light)\">         <meta name=theme-color content=\"#0C0F14\" media=\"(prefers-color-scheme: dark)\">         <title>{}</title><style>{}</style><script>{}</script>",
+        escape(title),
+        PANEL_CSS,
+        PANEL_JS,
+    )
+}
 
 /// A folder, drawn rather than named, so the page needs no icon font.
 const FOLDER_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
@@ -290,7 +279,7 @@ async fn index(
     let host = state.with(|s| s.display_name.clone());
     let installers = installer_list(&state);
 
-    let mut body = String::from(PAGE_HEAD);
+    let mut body = page_head("LANTern");
     body.push_str(&format!(
         "<header><h1>LANTern</h1><p class=sub>Shared from {}</p></header><main>",
         escape(&host),
@@ -345,6 +334,87 @@ async fn index(
          Nothing here leaves your network.</footer>",
     );
     html(body)
+}
+
+/*
+ * Who a browser is, for the rating gate.
+ *
+ * A peer presents a key it was issued; a browser has nothing. Until now that
+ * meant every browser on the network was the same anonymous caller and got
+ * the household default, which is right for the shelf and useless for a pass
+ * phrase - one person typing the 18 phrase would have unlocked it for every
+ * browser in the house, including the one in a child's hand.
+ *
+ * So a browser gets an identity the first time it asks: a random name in a
+ * cookie, which is its own and nobody else's. It is not a credential and
+ * proves nothing - clearing cookies gets you a new one, at the household
+ * default, with every unlock gone. That is the correct outcome: the phrase is
+ * the secret, and this is only the thing the unlock is remembered against.
+ */
+const BROWSER_COOKIE: &str = "lantern_who";
+
+/// The browser's id from its cookies, if it has been here before.
+fn browser_id(headers: &HeaderMap) -> Option<String> {
+    let jar = headers.get(header::COOKIE)?.to_str().ok()?;
+    jar.split(';')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .find(|(k, _)| *k == BROWSER_COOKIE)
+        // Only what this server mints, so a hand-written cookie cannot name
+        // a real device id and inherit what the host granted it.
+        .filter(|(_, v)| v.len() == 32 && v.chars().all(|c| c.is_ascii_hexdigit()))
+        .map(|(_, v)| format!("browser:{v}"))
+}
+
+/// A new browser name, and the header that gives it to them.
+fn mint_browser_id() -> (String, String) {
+    // The same generator the transfer tokens use - 32 hex characters, and a
+    // crate already in the tree rather than a second source of randomness.
+    let raw = uuid::Uuid::new_v4().simple().to_string();
+    (
+        format!("browser:{raw}"),
+        format!("{BROWSER_COOKIE}={raw}; Path=/; Max-Age=31536000; SameSite=Lax"),
+    )
+}
+
+/// Takes a pass phrase and says which tier it opened, if any.
+///
+/// Answers the same way whether the phrase was wrong or there are no phrases
+/// set at all: `{"age":null}`. Saying "no phrases are set here" tells somebody
+/// probing that there is nothing to find, and saying "wrong phrase" tells
+/// them there is.
+async fn unlock(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let phrase = params.get("pin").cloned().unwrap_or_default();
+
+    let (who, set_cookie) = match browser_id(&headers) {
+        Some(id) => (id, None),
+        None => {
+            let (id, cookie) = mint_browser_id();
+            (id, Some(cookie))
+        }
+    };
+
+    let age = crate::rating::unlock(&state, &who, &phrase);
+    let body = format!(
+        "{{\"age\":{}}}",
+        age.map(|a| a.to_string()).unwrap_or_else(|| "null".into())
+    );
+
+    let mut response = (
+        [(header::CONTENT_TYPE, "application/json")],
+        body,
+    )
+        .into_response();
+    if let Some(cookie) = set_cookie {
+        if let Ok(value) = cookie.parse() {
+            response.headers_mut().insert(header::SET_COOKIE, value);
+        }
+    }
+    response
 }
 
 /// One installer this machine is offering.
@@ -503,13 +573,14 @@ async fn serve_path(
     // Every variant is the same title, so they share one identity: the path,
     // without the parameters that only say how to serve it.
     let stream_path = format!("/{slug}/{path}");
+    // A peer presents a key; a browser names itself with the cookie this
+    // server minted for it. Without the second, every browser in the house
+    // was one anonymous caller, so a pass phrase typed on any of them would
+    // have opened the title on all of them.
+    let caller = crate::rating::requester(&state, params.get("k").map(String::as_str))
+        .or_else(|| browser_id(&headers));
     if !from_this_machine(&state, from)
-        && !crate::rating::may_serve(
-            &state,
-            params.get("k").map(String::as_str),
-            &stream_path,
-            &path,
-        )
+        && !crate::rating::may_serve_as(&state, caller, &stream_path, &path)
     {
         return (
             StatusCode::FORBIDDEN,
@@ -2156,5 +2227,60 @@ mod installer_tests {
         assert!(!listed.iter().any(|n| n.contains("..")));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod browser_identity_tests {
+    use super::*;
+
+    fn jar(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, value.parse().unwrap());
+        h
+    }
+
+    #[test]
+    fn a_browser_with_no_cookie_is_nobody_yet() {
+        assert_eq!(browser_id(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn a_minted_name_is_read_back() {
+        let (id, cookie) = mint_browser_id();
+        let raw = cookie
+            .split(';')
+            .next()
+            .unwrap()
+            .split_once('=')
+            .unwrap()
+            .1
+            .to_string();
+        assert_eq!(browser_id(&jar(&format!("lantern_who={raw}"))), Some(id));
+    }
+
+    #[test]
+    fn a_hand_written_cookie_cannot_name_a_real_device() {
+        // Without the shape check a visitor could set `lantern_who` to a peer's
+        // device id and inherit whatever the host had granted that peer.
+        assert_eq!(browser_id(&jar("lantern_who=mikael-desktop")), None);
+        assert_eq!(browser_id(&jar("lantern_who=")), None);
+        assert_eq!(browser_id(&jar("lantern_who=../../etc")), None);
+    }
+
+    #[test]
+    fn a_browser_name_cannot_collide_with_a_device_id() {
+        // Prefixed, so the namespace a browser lives in is visibly not the one
+        // peers live in.
+        let (id, _) = mint_browser_id();
+        assert!(id.starts_with("browser:"));
+    }
+
+    #[test]
+    fn other_cookies_are_ignored() {
+        let (id, cookie) = mint_browser_id();
+        let raw = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
+        let mixed = format!("theme=dark; lantern_who={raw}; lt_at_abc=120");
+        assert_eq!(browser_id(&jar(&mixed)), Some(id));
     }
 }
