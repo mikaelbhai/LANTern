@@ -382,6 +382,15 @@ function PersonRow({
    */
   const sleepers = here ? [] : person.devices.map((d) => wakeable.get(d.deviceId)).filter(isWakeable);
   const canWake = !here && sleepers.length > 0;
+  /*
+   * The chevron appears only for somebody with more than one machine, because
+   * that is what it is for - but the devices open for anybody who is here.
+   *
+   * Gating the panel on `several` too meant a person with one device had no
+   * way to open it, and the only route to "send this to that machine" lives
+   * inside it. Which is most people: one phone, one row, and a Send button
+   * that could not be reached from this screen at all.
+   */
   const several = here && person.devices.length > 1;
 
   return (
@@ -412,7 +421,7 @@ function PersonRow({
         machine you are not chatting to.
       */
       onClick={onOpen}
-      onAvatarClick={several ? onToggle : undefined}
+      onAvatarClick={here ? onToggle : undefined}
       right={
         <div className="flex items-center gap-1.5">
           {canWake &&
@@ -453,7 +462,7 @@ function PersonRow({
         </div>
       }
     >
-      {expanded && several && (
+      {expanded && here && (
         <div className="bg-raised border-t border-edge/70 pl-[68px] pr-3 py-1">
           {person.devices.map((device) => {
             const sleeper = wakeable.get(device.deviceId);
