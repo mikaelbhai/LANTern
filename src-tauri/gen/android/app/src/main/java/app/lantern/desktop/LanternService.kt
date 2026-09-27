@@ -7,8 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.app.ForegroundServiceStartNotAllowedException
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 
 /**
  * Keeps LANTern reachable while it is not on screen.
@@ -52,11 +54,44 @@ class LanternService : Service() {
     }
 
     createChannel()
-    startForeground(NOTIFICATION_ID, buildNotification())
+
+    /*
+     * `intent` arrives null here whenever Android is the one calling this,
+     * not MainActivity - which is exactly the START_STICKY redelivery this
+     * service asks for after being killed. That redelivery carries no
+     * foreground-privileged caller behind it, and Android 12+ refuses a
+     * background process permission to promote itself with
+     * ForegroundServiceStartNotAllowedException. Before this was caught, the
+     * refusal was an uncaught RuntimeException: it killed the fresh restart
+     * outright, which START_STICKY then restarted, which was refused again,
+     * looping until Android gave up and surfaced "LANTern keeps stopping" -
+     * visible on whatever the person had switched to, since the crash was
+     * never on their screen to begin with.
+     *
+     * A refusal here means the OS will not let this device announce itself
+     * right now. That is disappointing, not fatal: stopping quietly leaves
+     * the app reachable the moment it is opened again, which is what every
+     * other Android app does when backgrounded, rather than repeating a
+     * system crash dialog over whatever the person is actually doing.
+     */
+    try {
+      startForeground(NOTIFICATION_ID, buildNotification())
+    } catch (refused: ForegroundServiceStartNotAllowedException) {
+      Log.w("LanternService", "background start refused, stopping quietly", refused)
+      stopSelf()
+      return START_NOT_STICKY
+    } catch (refused: IllegalStateException) {
+      // Older API levels that predate the typed exception above still throw
+      // for the same reason, just as a plainer one.
+      Log.w("LanternService", "could not start foreground, stopping quietly", refused)
+      stopSelf()
+      return START_NOT_STICKY
+    }
 
     // Restart if the system reclaims us: being reachable is the whole point,
     // and a device that quietly stopped answering is worse than one that
-    // never started.
+    // never started. The catch above is what keeps that restart from being
+    // a crash the next time it is refused.
     return START_STICKY
   }
 

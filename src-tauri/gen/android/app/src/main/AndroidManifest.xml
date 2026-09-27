@@ -16,10 +16,18 @@
 
     <!-- Peers stay reachable while the app is backgrounded during a call. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Android 14 requires a typed foreground service; dataSync is the type
-         for "keeps talking to something over the network on the user's
-         behalf", which is exactly what staying reachable to peers is. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+         Not dataSync. That type reads right - "keeps talking to something
+         over the network on the user's behalf" - and it crashed the app for
+         it: Android 14 caps a dataSync foreground service at roughly six
+         hours in a rolling day and then kills it outright, which for a
+         service whose entire job is to run indefinitely is not a limit, it
+         is a countdown. specialUse carries no such cap; it exists for
+         exactly a service that does not fit the other typed buckets and
+         means to keep running. See the service declaration below for the
+         reason string Android requires alongside it.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Handing a downloaded APK to the system package installer. Android
          still asks the user to approve both the permission and the install;
@@ -57,7 +65,15 @@
         <service
             android:name=".LanternService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <!-- Required by Android 14+ for any specialUse foreground
+                 service - a free-text reason, reviewed only if this ever
+                 goes through the Play Store, which a sideloaded LAN app
+                 does not. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Stays reachable to other devices on the local network while not on screen" />
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"
