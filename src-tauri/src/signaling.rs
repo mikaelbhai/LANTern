@@ -300,10 +300,81 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 continue;
             }
 
+            /*
+             * An address on a network this one cannot be found from.
+             *
+             * Acted on here rather than passed to the window, because the
+             * dialling is native and a device sitting with no window open
+             * still has to learn it — which is most of them, most of the
+             * time. Writing it down is what makes it survive a restart; the
+             * reconciler picks it up on its next pass.
+             *
+             * Only private addresses are kept. A peer saying "also dial this"
+             * is a peer causing an outbound connection, and this application
+             * does not make those — see `dialable`.
+             */
+            if envelope.kind == "upstream" {
+                let address = envelope
+                    .payload
+                    .get("address")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let port = envelope
+                    .payload
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u16;
+                if port != 0 && remember_upstream(&state, &address, port) {
+                    // New to us, so everyone we are linked to may not have it
+                    // either. Only on a change, or three devices in a room
+                    // would tell each other the same address forever.
+                    announce_upstreams(&state);
+                }
+                continue;
+            }
+
             deliver(&app, &envelope);
         }
     });
     tx
+}
+
+/// Tells every peer we are linked to about the networks we can reach.
+///
+/// This is what makes it set-up-once-per-network rather than once per device.
+/// Somebody types an address into one machine; that machine tells whoever it
+/// is linked to on its own LAN, they write it down and tell whoever they are
+/// linked to, and a device that arrives next month hears it from whoever is
+/// already on. Nobody configures anything twice.
+///
+/// Idempotent by construction: a device only passes an address on when it was
+/// new to itself, so the set converges and the chatter stops.
+pub fn announce_upstreams(state: &AppState) {
+    let (links, me, mine) = state.with(|s| {
+        (
+            s.links.clone(),
+            s.device_id.clone(),
+            s.peers.values().map(|p| p.device_id.clone()).collect::<Vec<_>>(),
+        )
+    });
+
+    for up in known_upstreams(state) {
+        for device in &mine {
+            links.send(
+                device,
+                &Envelope {
+                    v: 1,
+                    from: me.clone(),
+                    kind: "upstream".into(),
+                    payload: serde_json::json!({
+                        "address": up.address,
+                        "port": up.port,
+                    }),
+                },
+            );
+        }
+    }
 }
 
 /// Records a peer we have an open link to.
@@ -788,6 +859,11 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // a TXT record is a few hundred bytes and a picture is not, so the
         // announcement says who is there and this says what they look like.
         "profile" => "peer:profile",
+        // An address on a network this one cannot be found from, passed on
+        // by a peer that already had it. Handled natively rather than in the
+        // frontend: the dialling is native, and a device with no window open
+        // must still learn it.
+        "upstream" => "net:upstream",
         "signal" => "call:state",
         _ => return,
     };
@@ -826,6 +902,22 @@ pub fn reconcile(app: AppHandle, state: AppState, links: Links) {
                 )
             });
 
+            /*
+             * The networks this one cannot be found from.
+             *
+             * Dialled on every pass, not once at startup: the router below may
+             * come up after this device does, and a link that was refused at
+             * boot would otherwise never be retried. `dial` is a no-op when a
+             * link to that address is already up, so this costs nothing once
+             * it has worked.
+             */
+            for up in known_upstreams(&state) {
+                let app = app.clone();
+                let state_c = state.clone();
+                let links_c = links.clone();
+                let _ = dial(app, state_c, links_c, up.address, up.port).await;
+            }
+
             for (device_id, addresses, peer_port) in peers {
                 if device_id.is_empty() || links.has(&device_id) {
                     continue;
@@ -846,6 +938,153 @@ pub fn reconcile(app: AppHandle, state: AppState, links: Links) {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
     });
+}
+
+/* ------------------------------------------------- reaching across a NAT */
+
+/*
+ * Networks this one cannot be found from, and how every device learns them.
+ *
+ * mDNS is multicast and stops at the router, so a device on the network above
+ * or below this one is never discovered. It has to be dialled by address —
+ * and the connection only works in one direction: a device on the inner
+ * network can always reach out, and nothing outside can reach in without a
+ * mapping somebody configured.
+ *
+ * So the inner device does the dialling, and the link it opens carries
+ * traffic both ways afterwards. That part already worked; what did not was
+ * everything around it. The address was held in memory, so it was gone at the
+ * next restart. And it was known only to the one device somebody had typed it
+ * into, so every other device on that LAN had to be set up by hand.
+ *
+ * Both are fixed here. The address is written down, and it is told to every
+ * peer on this LAN — which is how one person typing it once makes the whole
+ * inner network reachable, including devices that arrive months later. They
+ * hear about it from whoever is already on.
+ */
+
+/// An address worth dialling, and the port it answers on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Upstream {
+    pub address: String,
+    pub port: u16,
+}
+
+/// Whether an address is one this application will dial on somebody's say-so.
+///
+/// Private ranges only. The gossip below means a peer can cause every device
+/// on a LAN to open a connection to an address it names — which is fine when
+/// that address is another room in the same building, and is something else
+/// entirely if it can be a host on the public internet. LANTern makes no
+/// outbound connections; this must not become the exception.
+pub fn dialable(address: &str) -> bool {
+    use std::net::IpAddr;
+    let Ok(ip) = address.parse::<IpAddr>() else {
+        // A name rather than an address. Resolving it would need DNS, which is
+        // off this network, and the whole point is that there is no off.
+        return false;
+    };
+    match ip {
+        IpAddr::V4(v4) => {
+            (v4.is_private() || v4.is_link_local()) && !v4.is_loopback() && !v4.is_broadcast()
+        }
+        // Unique-local and link-local only, by the same argument.
+        IpAddr::V6(v6) => {
+            let seg = v6.segments()[0];
+            (seg & 0xfe00 == 0xfc00 || seg & 0xffc0 == 0xfe80) && !v6.is_loopback()
+        }
+    }
+}
+
+/// Writes an address down so it survives a restart.
+pub fn remember_upstream(state: &AppState, address: &str, port: u16) -> bool {
+    if !dialable(address) {
+        return false;
+    }
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return false;
+        };
+        db.execute(
+            "INSERT INTO upstream_peers (address, port, learned_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(address, port) DO NOTHING",
+            rusqlite::params![address, port, crate::model::now_ms() as i64],
+        )
+        .map(|changed| changed > 0)
+        .unwrap_or(false)
+    })
+}
+
+/// Every address this device has been told about.
+pub fn known_upstreams(state: &AppState) -> Vec<Upstream> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut q) = db.prepare("SELECT address, port FROM upstream_peers") else {
+            return Vec::new();
+        };
+        let Ok(rows) = q.query_map([], |r| {
+            Ok(Upstream {
+                address: r.get::<_, String>(0)?,
+                port: r.get::<_, i64>(1)? as u16,
+            })
+        }) else {
+            return Vec::new();
+        };
+        rows.flatten().filter(|u| dialable(&u.address)).collect()
+    })
+}
+
+/// Forgets one, for when a network is gone for good.
+pub fn forget_upstream(state: &AppState, address: &str, port: u16) {
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "DELETE FROM upstream_peers WHERE address = ?1 AND port = ?2",
+                rusqlite::params![address, port],
+            );
+        }
+    });
+}
+
+#[cfg(test)]
+mod upstream_tests {
+    use super::*;
+
+    #[test]
+    fn only_addresses_on_a_private_network_are_dialled() {
+        assert!(dialable("192.168.1.1"));
+        assert!(dialable("10.0.4.1"));
+        assert!(dialable("172.16.9.3"));
+    }
+
+    #[test]
+    fn a_public_address_is_never_dialled() {
+        // A peer can cause every device on a LAN to open a connection to an
+        // address it names. That is acceptable for another room in the same
+        // building and is something else entirely for a host on the internet -
+        // this application makes no outbound connections and this must not
+        // become the exception.
+        assert!(!dialable("8.8.8.8"));
+        assert!(!dialable("1.1.1.1"));
+        assert!(!dialable("203.0.113.7"));
+    }
+
+    #[test]
+    fn a_name_is_not_an_address() {
+        // Resolving one needs DNS, which is off this network, and the whole
+        // point is that there may be no off.
+        assert!(!dialable("example.com"));
+        assert!(!dialable("router.local"));
+        assert!(!dialable(""));
+    }
+
+    #[test]
+    fn loopback_and_broadcast_are_refused() {
+        assert!(!dialable("127.0.0.1"));
+        assert!(!dialable("255.255.255.255"));
+    }
 }
 
 #[cfg(test)]

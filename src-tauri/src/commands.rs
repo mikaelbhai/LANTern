@@ -215,6 +215,21 @@ pub fn boot(app: AppHandle, state: AppState) {
     // The installer folder, before the host server starts reading it.
     load_installers(&state);
 
+    /*
+     * Tell this LAN what networks we can reach, shortly after starting.
+     *
+     * Delayed because there are no links yet at this point - the reconciler
+     * dials on a five-second cycle - and an announcement sent to nobody is
+     * not retried. Ten seconds is two of its passes.
+     */
+    {
+        let state = (*state).clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            crate::signaling::announce_upstreams(&state);
+        });
+    }
+
     // Bring previously published folders back, still running, and keep them
     // current as their contents change.
     {
@@ -557,6 +572,26 @@ pub fn net_add_manual_peer(
     };
     state.with(|s| s.peers.insert(peer.id.clone(), peer.clone()));
     let _ = app.emit("peer:joined", &peer);
+
+    /*
+     * Written down, and told to everybody on this LAN.
+     *
+     * An address typed in by hand used to live in memory on the one machine
+     * somebody typed it into: gone at the next restart, and unknown to every
+     * other device in the building. Both are why reaching a network through a
+     * router was a thing you did once per device, forever.
+     *
+     * Now it survives a restart and travels: whoever is linked to this
+     * machine on its own LAN writes it down too, passes it on in turn, and a
+     * device that arrives next month hears it from whoever is already here.
+     * One person types it once per network.
+     *
+     * Private addresses only — see `dialable` in signaling.rs.
+     */
+    if crate::signaling::remember_upstream(&state, &peer.ip, peer.port) {
+        crate::signaling::announce_upstreams(&state);
+    }
+
     peer
 }
 

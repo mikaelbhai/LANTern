@@ -38,6 +38,11 @@ pub fn router(state: AppState) -> Router {
         .route("/control/screen", get(serve_screen))
         .route("/control/size", get(serve_screen_size))
         .route("/:slug", get(serve_root))
+        // `/media/` as well as `/media`. The wildcard below does not match an
+        // empty tail, so every folder link the landing page had ever emitted -
+        // all of which ended in a slash - answered 404. It is also what
+        // somebody types when they type an address by hand.
+        .route("/:slug/", get(serve_root))
         .route("/:slug/*path", get(serve_path))
         .with_state(Arc::new(state))
 }
@@ -295,7 +300,7 @@ async fn index(
         body.push_str("<h2>Folders</h2><ul class=cards>");
         for (slug, name) in shares {
             body.push_str(&format!(
-                "<li><a href=\"/{0}/\"><span class=ico>{2}</span><span class=body>\
+                "<li><a href=\"/{0}\"><span class=ico>{2}</span><span class=body>\
                  <span class=name>{1}</span><span class=meta>Open in this browser</span>\
                  </span><span class=chev>&rsaquo;</span></a></li>",
                 escape(&slug),
@@ -1365,8 +1370,9 @@ async fn listing(root: &Path, dir: &Path, slug: &str) -> Response {
     if !rel_str.is_empty() {
         let parent = base.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         body.push_str(&format!(
-            "<tr><td><a href=\"{}/\">../</a></td><td class=s></td></tr>",
-            escape(parent)
+            "<tr><td><a href=\"{}\">../</a></td><td class=s></td></tr>",
+            // No trailing slash, for the same reason as the cards above.
+            escape(if parent.is_empty() { "/" } else { parent })
         ));
     }
     for (name, is_dir, size) in entries {

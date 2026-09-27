@@ -224,6 +224,23 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
         [],
     );
 
+    // Addresses on a network this one cannot be found from.
+    //
+    // mDNS does not cross a NAT, so a device on the network above or below
+    // this one is never discovered — it has to be dialled, and the address
+    // has to survive a restart or the link is set up once and lost at the
+    // next reboot. Learned from a person typing it, or from another device on
+    // this LAN that already had it; see `upstream` in signaling.rs.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS upstream_peers (
+            address    TEXT NOT NULL,
+            port       INTEGER NOT NULL,
+            learned_at INTEGER NOT NULL,
+            PRIMARY KEY (address, port)
+        )",
+        [],
+    );
+
     // A pass phrase per rating tier, set by the host.
     //
     // Not in `preferences` with the other settings: these are secrets, and a
