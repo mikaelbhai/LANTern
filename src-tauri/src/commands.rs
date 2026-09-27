@@ -2382,6 +2382,107 @@ pub fn open_privacy_settings(app: AppHandle, kind: String) -> bool {
     false
 }
 
+/// The folder LANTern keeps installers in when it manages them itself.
+///
+/// Its own folder rather than one somebody picks, because the whole point of
+/// the toggle is that nobody has to think about where builds live. Created on
+/// demand: a host who never turns the offer on never gets an empty directory
+/// in their app data.
+fn managed_installers(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("no app data directory: {e}"))?
+        .join("installers");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {dir:?}: {e}"))?;
+    Ok(dir)
+}
+
+/// Turns the offer on using LANTern's own folder, and reports where it is.
+#[tauri::command]
+pub fn installers_manage(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let dir = managed_installers(&app)?;
+    let shown = dir.to_string_lossy().to_string();
+    set_installers(state, shown.clone())?;
+    Ok(shown)
+}
+
+/// What is already sitting in the managed folder.
+///
+/// Reported so the screen can say what the network is currently being offered
+/// without the host opening a file manager to find out.
+#[tauri::command]
+pub fn installers_held(app: AppHandle) -> Vec<serde_json::Value> {
+    let Ok(dir) = managed_installers(&app) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<serde_json::Value> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| {
+            serde_json::json!({
+                "name": e.file_name().to_string_lossy(),
+                "size": e.metadata().map(|m| m.len()).unwrap_or(0),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+    out
+}
+
+/// Fetches one release asset into the managed folder.
+///
+/// Reuses `fetch_update`, which is the only thing in this application that
+/// makes an outbound request: the host allow-list and the digest check are
+/// the reason it exists, and a second downloader beside it would be a second
+/// place for those to be got wrong. The frontend has already asked GitHub
+/// what a release contains — that call runs in the webview, as the update
+/// check does — so what arrives here is a URL that still has to pass the same
+/// checks as an update of this machine's own.
+///
+/// One asset per call, so a failure names the file that failed rather than
+/// abandoning four others halfway.
+#[tauri::command]
+pub async fn installers_fetch(
+    app: AppHandle,
+    url: String,
+    name: String,
+    expected: Option<String>,
+) -> Result<(), String> {
+    if !is_plain_filename(&name) {
+        return Err("refusing a file with a suspicious name".into());
+    }
+
+    let dir = managed_installers(&app)?;
+    let path = dir.join(&name);
+
+    let emitter = app.clone();
+    let label = name.clone();
+    fetch_update(&url, &path, expected.as_deref(), move |done, total| {
+        let _ = emitter.emit(
+            "installers:progress",
+            serde_json::json!({ "name": label, "done": done, "total": total }),
+        );
+    })
+    .await
+}
+
+/// Removes one file from the managed folder.
+#[tauri::command]
+pub fn installers_remove(app: AppHandle, name: String) -> Result<(), String> {
+    if !is_plain_filename(&name) {
+        return Err("that is not a name in this folder".into());
+    }
+    let dir = managed_installers(&app)?;
+    std::fs::remove_file(dir.join(&name)).map_err(|e| e.to_string())
+}
+
 /// Sets, changes or clears the pass phrase for one rating tier.
 ///
 /// An empty phrase removes it, and with it every unlock anybody earned using

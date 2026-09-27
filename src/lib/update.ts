@@ -208,5 +208,48 @@ export function pickAsset(
   };
 }
 
+/**
+ * Every installer in the latest release, for a host offering them on the LAN.
+ *
+ * Not `pickAsset`, which answers a different question: that picks the one
+ * build *this* machine can install, and the point here is the ones it cannot.
+ * A Windows desktop offering the landing page is offering the APK to phones
+ * and the .dmg to a Mac, neither of which it could run.
+ *
+ * The check itself runs in the webview, like the update check, so no HTTPS
+ * client exists on the native side to ask GitHub anything — the native side
+ * only ever fetches a URL it is handed, and re-checks the host and digest
+ * before it writes a byte.
+ */
+export async function latestInstallers(): Promise<ReleaseAsset[]> {
+  const response = await request(
+    `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`,
+    {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(8000),
+    },
+  );
+  if (!response.ok) throw new Error(`GitHub answered ${response.status}.`);
+
+  const release = (await response.json()) as {
+    draft?: boolean;
+    assets?: { name: string; browser_download_url: string; size: number; digest?: string }[];
+  };
+  if (release.draft) return [];
+
+  // The extensions the landing page knows how to label. Anything else in a
+  // release — checksums, source archives — is not something anybody installs.
+  const installer = /\.(apk|exe|msi|dmg|appimage|deb)$/i;
+
+  return (release.assets ?? [])
+    .filter((a) => installer.test(a.name))
+    .map((a) => ({
+      name: a.name,
+      url: a.browser_download_url,
+      size: a.size,
+      digest: a.digest,
+    }));
+}
+
 /** Bytes as a SHA-256 hex string, using the webview's own crypto. */
 

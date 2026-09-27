@@ -4,6 +4,7 @@ import {
   AppWindow,
   Check,
   Copy,
+  Download,
   ExternalLink,
   Eye,
   Clapperboard,
@@ -33,8 +34,9 @@ import {
   Toggle,
   Tooltip,
 } from '../../components/ui';
-import { api } from '../../lib/bridge';
+import { api, on } from '../../lib/bridge';
 import { canHost, hostBlocker, pickFolder } from '../../lib/picker';
+import { latestInstallers } from '../../lib/update';
 import { useStore } from '../../lib/store';
 import { cn, formatBytes, relativeTime } from '../../lib/utils';
 import { useNow } from '../../lib/hooks';
@@ -154,31 +156,107 @@ function KeepHosting() {
  */
 function OfferTheApp() {
   const [dir, setDir] = React.useState('');
+  const [held, setHeld] = React.useState<{ name: string; size: number }[]>([]);
   const [supported, setSupported] = React.useState(true);
+  const [busy, setBusy] = React.useState<string | null>(null);
   const toast = useStore((s) => s.toast);
+
+  const refresh = React.useCallback(() => {
+    void api.service.heldInstallers().then(setHeld).catch(() => setHeld([]));
+  }, []);
 
   React.useEffect(() => {
     void api.service
       .installers()
-      .then(setDir)
+      .then((d) => {
+        setDir(d);
+        if (d) refresh();
+      })
       .catch(() => setSupported(false));
-  }, []);
+  }, [refresh]);
+
+  // Which file is arriving and how far in, from the native side.
+  const [progress, setProgress] = React.useState<{ name: string; pct: number } | null>(null);
+  React.useEffect(
+    () =>
+      on('installers:progress', (p: { name: string; done: number; total: number }) =>
+        setProgress({
+          name: p.name,
+          pct: p.total > 0 ? Math.round((p.done / p.total) * 100) : 0,
+        }),
+      ),
+    [],
+  );
 
   if (!supported || !canHost()) return null;
 
-  const choose = async () => {
+  const turnOn = async () => {
+    try {
+      const managed = await api.service.manageInstallers();
+      setDir(managed);
+      refresh();
+    } catch (err) {
+      toast({ kind: 'error', title: 'Could not turn that on', body: String(err) });
+    }
+  };
+
+  const turnOff = async () => {
+    setDir(await api.service.setInstallers('').catch(() => ''));
+    setHeld([]);
+  };
+
+  /*
+   * Fetch the builds, one at a time.
+   *
+   * Sequentially rather than all at once: these are forty megabytes each,
+   * and four of them arriving together on a home connection is slower than
+   * four in a row while also making the progress line meaningless.
+   */
+  const fetchAll = async () => {
+    setBusy('Asking GitHub what the latest release holds…');
+    try {
+      const assets = await latestInstallers();
+      if (!assets.length) {
+        toast({ kind: 'info', title: 'Nothing to fetch', body: 'That release has no installers attached.' });
+        return;
+      }
+      for (const asset of assets) {
+        setBusy(`Fetching ${asset.name}…`);
+        await api.service.fetchInstaller(asset.url, asset.name, asset.digest);
+      }
+      refresh();
+      toast({
+        kind: 'success',
+        title: `${assets.length} build${assets.length === 1 ? '' : 's'} on offer`,
+        body: 'Anyone opening this machine in a browser can install LANTern from it.',
+      });
+    } catch (err) {
+      // Offline is the normal case for this application, so it is said
+      // plainly rather than as a failure.
+      toast({
+        kind: 'error',
+        title: 'Could not fetch the builds',
+        body: `${err}. LANTern works without them — this only fills the landing page.`,
+      });
+    } finally {
+      setBusy(null);
+      setProgress(null);
+    }
+  };
+
+  const pickFolderInstead = async () => {
     const picked = await pickFolder();
     if (!picked?.path) return;
     try {
       setDir(await api.service.setInstallers(picked.path));
+      setHeld([]);
     } catch (err) {
       toast({ kind: 'error', title: 'Could not offer that folder', body: String(err) });
     }
   };
 
-  const stop = async () => {
-    setDir(await api.service.setInstallers('').catch(() => ''));
-  };
+  const on_ = !!dir;
+  const managed = on_ && held.length >= 0 && !!dir && dir.includes('installers');
 
   return (
     <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3">
@@ -186,28 +264,72 @@ function OfferTheApp() {
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium">Offer the app on your landing page</p>
           <p className="text-2xs text-muted leading-relaxed mt-0.5">
-            Point this at a folder holding the installers and anyone who opens this
-            machine&rsquo;s address in a browser can download LANTern from it. The newest
-            APK, .exe, .dmg, AppImage and .deb are shown; anything else in the folder is
-            ignored.
+            Anyone who opens this machine&rsquo;s address in a browser can install LANTern
+            from it &mdash; which is the only way onto this network for somebody who
+            hasn&rsquo;t got it yet. LANTern keeps the builds itself; you never have to go
+            and find them.
           </p>
-          {dir && (
-            <p className="text-2xs font-mono text-dim mt-1.5 truncate" title={dir}>
+        </div>
+        <Toggle checked={on_} onChange={(v) => void (v ? turnOn() : turnOff())} />
+      </div>
+
+      {on_ && (
+        <div className="mt-2.5 pt-2.5 border-t border-edge">
+          {held.length > 0 ? (
+            <ul className="space-y-1 mb-2.5">
+              {held.map((file) => (
+                <li key={file.name} className="flex items-center gap-2 text-2xs">
+                  <Check size={11} className="text-gold shrink-0" />
+                  <span className="truncate flex-1">{file.name}</span>
+                  <span className="text-muted shrink-0 tabular-nums">
+                    {formatBytes(file.size)}
+                  </span>
+                  <button
+                    onClick={() => void api.service.removeInstaller(file.name).then(refresh)}
+                    aria-label={`Stop offering ${file.name}`}
+                    className="text-muted hover:text-danger shrink-0"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-2xs text-muted mb-2.5">
+              Nothing on offer yet. Fetch the current release and it appears on the page.
+            </p>
+          )}
+
+          {busy && (
+            <p className="text-2xs text-gold mb-2 truncate">
+              {progress ? `${progress.name} — ${progress.pct}%` : busy}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="xs"
+              variant="primary"
+              icon={<Download size={12} />}
+              disabled={!!busy}
+              onClick={() => void fetchAll()}
+            >
+              {held.length ? 'Check for newer builds' : 'Fetch the latest builds'}
+            </Button>
+            {/* For somebody who builds their own and wants those offered
+                instead. Rare, and deliberately the quieter option. */}
+            <Button size="xs" variant="ghost" disabled={!!busy} onClick={() => void pickFolderInstead()}>
+              Use my own folder
+            </Button>
+          </div>
+
+          {!managed && (
+            <p className="text-2xs font-mono text-dim mt-2 truncate" title={dir}>
               {dir}
             </p>
           )}
         </div>
-        <div className="flex flex-col gap-1.5 shrink-0">
-          <Button size="xs" icon={<FolderOpen size={12} />} onClick={() => void choose()}>
-            {dir ? 'Change' : 'Choose folder'}
-          </Button>
-          {dir && (
-            <Button size="xs" variant="ghost" onClick={() => void stop()}>
-              Stop offering
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

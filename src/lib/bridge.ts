@@ -459,6 +459,19 @@ export const api = {
      */
     installers: () => call<string>('installers_dir'),
     setInstallers: (dir: string) => call<string>('set_installers', { dir }),
+    /** Turns the offer on using LANTern's own folder, and says where it is. */
+    manageInstallers: () => call<string>('installers_manage'),
+    /** What is in that folder now, so the screen can say what is on offer. */
+    heldInstallers: () => call<{ name: string; size: number }[]>('installers_held'),
+    /**
+     * Fetches one release asset into it.
+     *
+     * One per call, so a failure names the file that failed rather than
+     * abandoning the others halfway.
+     */
+    fetchInstaller: (url: string, name: string, expected?: string) =>
+      call<void>('installers_fetch', { url, name, expected }),
+    removeInstaller: (name: string) => call<void>('installers_remove', { name }),
     set: (enabled: boolean) => call<void>('service_set', { enabled }),
     running: () => call<boolean>('service_running'),
     /**
