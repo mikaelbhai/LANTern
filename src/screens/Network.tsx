@@ -21,6 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { NetworkPrivacy } from '../components/NetworkPrivacy';
 import { DeviceTag } from '../components/PeerName';
 import { QrCode } from '../components/QrCode';
 import { ConnBadge, LAYER_META, NatBadge, ScopeBadge, latencyTone } from '../components/ConnBadge';
@@ -90,6 +91,11 @@ export function Network() {
       />
 
       <div className="flex-1 scroll-y p-4 space-y-5">
+        {/* The fix for the strip's own "set to Public" fault. It used to
+            live only on Files → Published folders, which meant tapping Fix
+            from the strip landed here to a screen with nothing on it that
+            actually did anything about what the strip had just said. */}
+        <NetworkPrivacy />
         <MyNetworkCard onFirewall={() => setFirewallOpen(true)} />
         <UpstreamCard />
 

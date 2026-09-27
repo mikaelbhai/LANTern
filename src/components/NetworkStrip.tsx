@@ -16,10 +16,11 @@
  * is always the more urgent of the two.
  */
 import React from 'react';
-import { AlertTriangle, WifiOff } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, WifiOff } from 'lucide-react';
 
-import { on } from '../lib/bridge';
+import { api, on } from '../lib/bridge';
 import { useStore } from '../lib/store';
+import type { ConnectionProfile } from './NetworkPrivacy';
 import type { Screen } from '../lib/nav';
 
 interface Fault {
@@ -56,10 +57,42 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
     [],
   );
 
+  /*
+   * This machine's own network category, on Windows.
+   *
+   * The same check `NetworkPrivacy.tsx` already makes, on the one screen
+   * somebody had to think to visit. It belongs here too: a Public network
+   * makes every published folder invisible to the entire house, silently,
+   * with nothing else in the interface saying why - which is exactly what
+   * this strip exists to say out loud, the moment it is true rather than
+   * behind a tab in Files nobody thought was where the answer would be.
+   *
+   * Polled rather than pushed: there is no event for "the network changed
+   * category," only a question Windows will answer when asked. Every 20s
+   * costs one PowerShell spawn, which is cheap next to what missing this
+   * costs - a library that looks empty to everyone else in the building.
+   */
+  const [profiles, setProfiles] = React.useState<ConnectionProfile[]>([]);
+  React.useEffect(() => {
+    let live = true;
+    const load = () => {
+      void api.net
+        .connectionProfiles()
+        .then((p) => live && setProfiles(p))
+        .catch(() => live && setProfiles([]));
+    };
+    load();
+    const id = setInterval(load, 20_000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, []);
+
   // A call owns this space while it is running.
   if (call && call.state !== 'ended') return null;
 
-  const fault = firstFault(net, unreachable, service, Object.keys(peers).length);
+  const fault = firstFault(net, unreachable, service, profiles, Object.keys(peers).length);
   if (!fault) return null;
 
   return (
@@ -91,6 +124,7 @@ function firstFault(
   net: ReturnType<typeof useStore.getState>['net'],
   unreachable: string[],
   service: string | null,
+  profiles: ConnectionProfile[],
   peerCount: number,
 ): Fault | null {
   if (service) {
@@ -98,6 +132,25 @@ function firstFault(
       title: service,
       body: 'Another copy of LANTern may already be running',
       icon: <AlertTriangle size={15} />,
+    };
+  }
+
+  /*
+   * A network set to Public blocks every peer from reaching in.
+   *
+   * Ranked ahead of the interface clash below: that one costs calls, this
+   * one costs every published folder and every film in Theatre, for
+   * everyone else in the house, and looks exactly like this device having
+   * nothing to offer rather than like a setting one click away from fixed.
+   */
+  const blocked = profiles.filter((p) => p.blocksPeers);
+  if (blocked.length > 0) {
+    return {
+      title: `${blocked.map((p) => p.alias).join(' and ')} ${
+        blocked.length > 1 ? 'are' : 'is'
+      } set to Public`,
+      body: 'Other devices cannot open what this one publishes',
+      icon: <ShieldAlert size={15} />,
     };
   }
 
