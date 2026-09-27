@@ -555,12 +555,22 @@ function SendModal({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
+          {/*
+            `rows`, not `files`.
+
+            The native picker - which is the only source that yields a path,
+            and therefore the only one that can actually send anything - fills
+            `staged`. `files` is filled by a drag-and-drop, which a phone does
+            not have. So picking a film on a phone listed it, let you choose
+            the PC, and left Send greyed out with nothing saying why. The
+            count beside the label had the same fault and read "Send to 1".
+          */}
           <Button
             variant="primary"
-            disabled={!files.length || !selected.length}
+            disabled={!rows.length || !selected.length}
             onClick={() => void send()}
           >
-            Send {files.length || ''} to {selected.length || 'peer'}
+            Send {rows.length || ''} to {selected.length || 'peer'}
           </Button>
         </>
       }

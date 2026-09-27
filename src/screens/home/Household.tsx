@@ -33,16 +33,18 @@ import {
   Monitor,
   Play,
   Power,
+  Send,
   Smartphone,
   Tv,
   Users,
 } from 'lucide-react';
 
 import { api } from '../../lib/bridge';
-import { openDm } from '../../lib/actions';
+import { openDm, sendFilesToPeer } from '../../lib/actions';
+import { pickFilesToSend } from '../../lib/picker';
 import { useStore } from '../../lib/store';
 import { Avatar } from '../../components/Avatar';
-import { Button } from '../../components/ui';
+import { Button, IconButton } from '../../components/ui';
 import { cn, whenLabel } from '../../lib/utils';
 import { useNow } from '../../lib/hooks';
 import type { Message, Peer, Room, Transfer, Wakeable } from '../../lib/types';
@@ -474,6 +476,23 @@ function PersonRow({
                     <div className="text-2xs text-muted truncate mt-0.5">{whereabouts(device)}</div>
                   )}
                 </div>
+                {/*
+                  Sending starts from the thing you are sending to.
+
+                  The five action icons under every person went, and with
+                  them the only one-tap route to "put this on the PC" - which
+                  left the Files screen, four steps away, and a picker that
+                  does not say which device it will land on. Here the device
+                  is the row, so the question is already answered.
+                */}
+                {!asleep && (
+                  <IconButton
+                    label={`Send a file to ${device.deviceName || device.name}`}
+                    onClick={() => void sendTo(device.id)}
+                  >
+                    <Send size={14} />
+                  </IconButton>
+                )}
                 {asleep && sleeper && (
                   <Button
                     size="sm"
@@ -569,6 +588,18 @@ function RoomRow({
  */
 function nameOf(device: Wakeable): string {
   return device.name || device.deviceName || 'A device on this network';
+}
+
+/**
+ * Ask for files, then hand them to one named machine.
+ *
+ * To that device, not to "the nearest awake one": the point of opening
+ * somebody's devices is that you have decided which of them you mean.
+ */
+async function sendTo(peerId: string) {
+  const picked = await pickFilesToSend();
+  const paths = picked.map((f) => f.path).filter((p): p is string => !!p);
+  if (paths.length) void sendFilesToPeer(peerId, paths);
 }
 
 /** Narrows away the devices we have no hardware address for. */
