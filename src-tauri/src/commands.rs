@@ -2537,6 +2537,36 @@ pub fn rating_relock(state: State<'_, AppState>) {
     crate::rating::relock(&state, &me);
 }
 
+/// Tries one phrase against every host this device is currently linked to.
+///
+/// Fire-and-forget: there is one link per host and each answers in its own
+/// time, as its own `pinresult` envelope, which is what `rating:unlocked`
+/// events arrive as on the frontend — one per host, not a single combined
+/// reply. A phrase belongs to whichever hosts happen to recognise it, which
+/// this device cannot know in advance, so it is not asked to guess: it
+/// hears back from each one that does.
+#[tauri::command]
+pub fn rating_unlock_peers(state: State<'_, AppState>, phrase: String) {
+    let (links, me, targets) = state.with(|s| {
+        (
+            s.links.clone(),
+            s.device_id.clone(),
+            s.links.connected(),
+        )
+    });
+    for peer in targets {
+        links.send(
+            &peer,
+            &crate::signaling::Envelope {
+                v: 1,
+                from: me.clone(),
+                kind: "pinunlock".into(),
+                payload: serde_json::json!({ "phrase": phrase.clone() }),
+            },
+        );
+    }
+}
+
 /// The folder of installers this machine offers on its landing page.
 ///
 /// Remembered so it survives a restart: a host who set this up once should

@@ -16,11 +16,11 @@
  * leave. Nothing depends on the watching app agreeing to behave.
  */
 import React from 'react';
-import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe } from 'lucide-react';
+import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe, KeyRound, X } from 'lucide-react';
 
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
-import { Button, Checkbox, SectionTitle, Select, Spinner } from './ui';
+import { Button, Checkbox, IconButton, Input, SectionTitle, Select, Spinner } from './ui';
 import type { RatingsStatus, Share } from '../lib/types';
 
 /**
@@ -121,6 +121,8 @@ export function Audience({ compact = false }: { compact?: boolean }) {
   const [ratings, setRatings] = React.useState<RatingsStatus | null>(null);
   const [approvals, setApprovals] = React.useState<Approval[]>([]);
   const [shares, setShares] = React.useState<Share[]>([]);
+  /** Which tiers already have a phrase set. Never the phrases themselves. */
+  const [pins, setPins] = React.useState<number[]>([]);
   /** Which folder's device list is open. One at a time; they get long. */
   const [opened, setOpened] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
@@ -131,6 +133,7 @@ export function Audience({ compact = false }: { compact?: boolean }) {
     void api.ratings.status().then(setRatings).catch(() => setRatings(null));
     void api.ratings.approvals().then(setApprovals).catch(() => setApprovals([]));
     void api.host.list().then(setShares).catch(() => setShares([]));
+    void api.ratings.pins().then(setPins).catch(() => setPins([]));
   }, []);
   React.useEffect(load, [load]);
 
@@ -353,6 +356,8 @@ export function Audience({ compact = false }: { compact?: boolean }) {
         )}
       </section>
 
+      <RatingPins pins={pins} onChange={load} compact={compact} />
+
       {shares.length > 0 && (
         <section>
           <SectionTitle>Published folders</SectionTitle>
@@ -495,6 +500,146 @@ function allDevices(
     if (row && p.name) row.name = p.name;
   }
   return [...out.values()];
+}
+
+/**
+ * Pass phrases: the other way past the rating gate.
+ *
+ * An approval needs the host present, at their own screen, saying yes to a
+ * specific device and a specific title. A phrase needs neither — whoever
+ * knows it unlocks the tier on whatever they are holding, on this device and
+ * on every other device on the network that happens to answer to the same
+ * phrase, which is how one parent typing it once can open it for every
+ * child's tablet in the house without walking to each one.
+ *
+ * Only the tiers are ever shown, never the phrases. Once set, a phrase is
+ * write-only from here — checked against, never displayed — because a
+ * settings screen is not a safe place to leave a secret sitting in plain
+ * text for whoever looks at it next.
+ */
+function RatingPins({
+  pins,
+  onChange,
+  compact,
+}: {
+  pins: number[];
+  onChange: () => void;
+  compact: boolean;
+}) {
+  const [editing, setEditing] = React.useState<number | null>(null);
+  const [phrase, setPhrase] = React.useState('');
+  const [busy, setBusy] = React.useState<number | null>(null);
+  const [error, setError] = React.useState('');
+
+  // Every tier worth a phrase. Not 0 — that is the floor nobody is unlocking
+  // up into — and not 99, which already means everything and has nothing
+  // left for a phrase to open.
+  const tiers = AGES.filter((a) => a.value !== '0' && a.value !== '99');
+
+  const startEditing = (age: number) => {
+    setEditing(age);
+    setPhrase('');
+    setError('');
+  };
+
+  const save = async (age: number) => {
+    if (phrase.trim().length > 0 && phrase.trim().length < 4) {
+      setError('At least four characters.');
+      return;
+    }
+    setBusy(age);
+    try {
+      await api.ratings.pinSet(age, phrase.trim());
+      setEditing(null);
+      setPhrase('');
+      onChange();
+    } catch (err) {
+      setError(String(err ?? 'Could not save that.'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clear = async (age: number) => {
+    setBusy(age);
+    try {
+      await api.ratings.pinSet(age, '');
+      onChange();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section>
+      <SectionTitle>Pass phrases</SectionTitle>
+      {!compact && (
+        <p className="text-2xs text-muted leading-relaxed mb-2">
+          A phrase set here unlocks that tier on any device that types it — this one
+          included. It only ever raises what a device may watch, never lowers it, and a
+          phrase entered on a device already allowed further does nothing.
+        </p>
+      )}
+      <div className="panel divide-y divide-edge/60">
+        {tiers.map((tier) => {
+          const age = Number(tier.value);
+          const set = pins.includes(age);
+          const isEditing = editing === age;
+
+          return (
+            <div key={tier.value}>
+              <Entry
+                icon={<KeyRound size={13} className={set ? 'text-gold' : 'text-muted'} />}
+                name={tier.label}
+                hint={set ? 'A phrase is set' : undefined}
+                busy={busy === age}
+                action={
+                  isEditing ? (
+                    <IconButton label="Cancel" size="xs" onClick={() => setEditing(null)}>
+                      <X size={12} />
+                    </IconButton>
+                  ) : set ? (
+                    <div className="flex items-center gap-1.5">
+                      <Button size="xs" onClick={() => startEditing(age)}>
+                        Change
+                      </Button>
+                      <Button size="xs" variant="danger" onClick={() => void clear(age)}>
+                        Remove
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="xs" onClick={() => startEditing(age)}>
+                      Set a phrase…
+                    </Button>
+                  )
+                }
+              />
+              {isEditing && (
+                <div className="px-3 pb-3 flex items-start gap-2">
+                  <div className="flex-1">
+                    <Input
+                      autoFocus
+                      value={phrase}
+                      onChange={(e) => {
+                        setPhrase(e.target.value);
+                        setError('');
+                      }}
+                      onKeyDown={(e) => e.key === 'Enter' && void save(age)}
+                      placeholder="At least four characters"
+                    />
+                    {error && <p className="text-2xs text-danger mt-1">{error}</p>}
+                  </div>
+                  <Button size="xs" variant="primary" onClick={() => void save(age)}>
+                    Save
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function Entry({

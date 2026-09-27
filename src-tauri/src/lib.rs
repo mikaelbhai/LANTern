@@ -191,6 +191,7 @@ pub fn run() {
             commands::rating_unlock,
             commands::rating_unlocked,
             commands::rating_relock,
+            commands::rating_unlock_peers,
             commands::set_installers,
             commands::installers_manage,
             commands::installers_held,

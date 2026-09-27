@@ -573,6 +573,33 @@ export const api = {
           expiresAt: number;
         }[]
       >('ratings_approvals'),
+
+    /*
+     * Pass phrases, the other way past the rating gate.
+     *
+     * An approval needs the host present, looking at a specific device and
+     * a specific title, saying yes. A phrase needs neither: whoever knows
+     * the number unlocks the tier on whatever they are holding, and the
+     * number is the whole of the secret — never read back by anything,
+     * including this application's own screens.
+     */
+    pinSet: (age: number, phrase: string) => call<void>('rating_pin_set', { age, phrase }),
+    /** Which tiers have a phrase set. Never the phrases themselves. */
+    pins: () => call<number[]>('rating_pins'),
+    /** Tries a phrase against this device's own rating store. */
+    unlock: (phrase: string) => call<number | null>('rating_unlock', { phrase }),
+    /** What this device has already typed its way into, if anything. */
+    unlocked: () => call<number | null>('rating_unlocked'),
+    /** Puts this device's own lock back, so the next title asks again. */
+    relock: () => call<void>('rating_relock'),
+    /**
+     * Tries one phrase against every host this device is linked to right
+     * now, all at once — a phrase does not say which host it belongs to,
+     * or whether it belongs to more than one. Each host answers for itself,
+     * arriving as its own `rating:unlocked` event; there is no single
+     * combined reply to await.
+     */
+    unlockPeers: (phrase: string) => call<void>('rating_unlock_peers', { phrase }),
   },
   /**
    * Rejoining a known network at startup.

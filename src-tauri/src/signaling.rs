@@ -313,6 +313,53 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
              * is a peer causing an outbound connection, and this application
              * does not make those — see `dialable`.
              */
+            /*
+             * A pass phrase, tried against this device's own rating PINs.
+             *
+             * The guest broadcasts one phrase to every host it is linked to
+             * at once — see `rating_unlock_peers` — because the phrase
+             * itself does not say which host it belongs to, or whether it
+             * belongs to more than one. Each host answers for itself, using
+             * exactly the same `rating::unlock` a browser's `/unlock`
+             * endpoint already calls, so a phrase that happens to match a
+             * PIN on two different hosts opens both, and one host's answer
+             * can never see or affect another's.
+             *
+             * The phrase itself never reaches the frontend on either end:
+             * checked here, on the host, and never emitted as an event
+             * carrying anything but the age it did or did not open.
+             */
+            if envelope.kind == "pinunlock" {
+                let phrase = envelope
+                    .payload
+                    .get("phrase")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let age = crate::rating::unlock(&state, &envelope.from, &phrase);
+
+                let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                links.send(
+                    &envelope.from,
+                    &Envelope {
+                        v: 1,
+                        from: me,
+                        kind: "pinresult".into(),
+                        payload: serde_json::json!({ "age": age }),
+                    },
+                );
+                continue;
+            }
+
+            // The answer to the above, arriving back at whoever asked. This
+            // one does reach the frontend — it carries nothing but a number
+            // or nothing at all, and is how the person who typed the phrase
+            // finds out it did anything.
+            if envelope.kind == "pinresult" {
+                deliver(&app, &envelope);
+                continue;
+            }
+
             if envelope.kind == "upstream" {
                 let address = envelope
                     .payload
@@ -864,6 +911,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // frontend: the dialling is native, and a device with no window open
         // must still learn it.
         "upstream" => "net:upstream",
+        // The answer to a pass phrase this device broadcast to every host
+        // it is linked to. See the native handling above — this is only
+        // ever the reply, never the phrase itself.
+        "pinresult" => "rating:unlocked",
         "signal" => "call:state",
         _ => return,
     };

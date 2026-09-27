@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Avatar } from '../components/Avatar';
+import { LockButton } from '../components/PinUnlock';
+import { canHost } from '../lib/picker';
 import { Badge, Button, Empty, IconButton, Input, Modal, Select, Spinner } from '../components/ui';
 import { Audience, TITLE_AGES, ratingLabel } from '../components/Audience';
 import { Artwork, Thumbnail, TitleCard } from '../lib/poster';
@@ -251,14 +253,30 @@ export function Theatre() {
             >
               <RefreshCw size={16} />
             </IconButton>
-            {/* Publishing is deciding who it is for, so the two sit together
-                rather than one of them being three screens away in Settings. */}
-            <IconButton label="Who can watch" onClick={() => setAudienceOpen(true)}>
-              <ShieldCheck size={16} />
-            </IconButton>
-            <IconButton label="Add videos" onClick={() => setPublishOpen(true)}>
-              <Plus size={18} />
-            </IconButton>
+            {canHost() ? (
+              <>
+                {/* Publishing is deciding who it is for, so the two sit
+                    together rather than one of them being three screens
+                    away in Settings. */}
+                <IconButton label="Who can watch" onClick={() => setAudienceOpen(true)}>
+                  <ShieldCheck size={16} />
+                </IconButton>
+                <IconButton label="Add videos" onClick={() => setPublishOpen(true)}>
+                  <Plus size={18} />
+                </IconButton>
+              </>
+            ) : (
+              /*
+               * A phone or a television cannot publish here — Android's
+               * picker hands back a `content://` URI, not a path the file
+               * server can hold open and serve from, so the folder button
+               * led to a picker that could not finish what it started.
+               * What a viewer-only device gets instead is a way to see
+               * further into what is already published: a phrase, tried
+               * against every host on the network at once.
+               */
+              <LockButton />
+            )}
           </>
         }
       />
@@ -304,11 +322,17 @@ export function Theatre() {
           <Empty
             icon={<Tv size={20} />}
             title="Nothing to watch yet"
-            hint="Publish a folder of videos and it appears here — and in the Theatre of everyone else on the network."
+            hint={
+              canHost()
+                ? 'Publish a folder of videos and it appears here — and in the Theatre of everyone else on the network.'
+                : 'Nothing is published on the network yet. A phone or a television watches — publishing is a desktop or a laptop\'s job.'
+            }
             action={
-              <Button variant="primary" icon={<Upload size={13} />} onClick={() => setPublishOpen(true)}>
-                Add videos
-              </Button>
+              canHost() ? (
+                <Button variant="primary" icon={<Upload size={13} />} onClick={() => setPublishOpen(true)}>
+                  Add videos
+                </Button>
+              ) : undefined
             }
           />
         ) : searching ? (
