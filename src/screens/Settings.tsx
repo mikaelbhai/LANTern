@@ -40,6 +40,7 @@ import { clearUpdateProgress, showUpdateProgress } from '../lib/updateAlerts';
 import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
+import { copyText } from '../lib/clipboard';
 import type { ControlStatus, RatingsStatus, WifiStatus } from '../lib/types';
 
 type Tab =
@@ -1075,6 +1076,20 @@ function AboutTab() {
   const [installing, setInstalling] = React.useState(false);
   const [progress, setProgress] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
+  const [logCopied, setLogCopied] = React.useState(false);
+  const toast = useStore((s) => s.toast);
+
+  const copyLog = async () => {
+    const text = await api.system.errorLog();
+    if (!text) {
+      toast({ kind: 'info', title: 'Nothing recorded', body: 'The diagnostic log is empty.' });
+      return;
+    }
+    const ok = await copyText(text);
+    if (!ok) return;
+    setLogCopied(true);
+    setTimeout(() => setLogCopied(false), 1600);
+  };
 
   React.useEffect(() => {
     void currentVersion().then(setVersion).catch(() => setVersion('unknown'));
@@ -1242,6 +1257,17 @@ function AboutTab() {
           the release before it is saved, and your system's own installer does the installing.
           Everything comes from github.com/{RELEASE_REPO}.
         </p>
+      </Group>
+
+      <Group title="Diagnostics">
+        <Row
+          label="Diagnostic log"
+          hint="Uncaught errors and a few call-flow breadcrumbs, kept on disk since the app last started fresh — for describing a bug that left nothing else behind."
+        >
+          <Button size="sm" variant="ghost" onClick={() => void copyLog()}>
+            {logCopied ? 'Copied' : 'Copy to clipboard'}
+          </Button>
+        </Row>
       </Group>
 
       <Group title="Privacy posture">

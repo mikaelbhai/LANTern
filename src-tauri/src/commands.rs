@@ -47,6 +47,20 @@ pub fn debug_last_crash() -> Option<String> {
     crate::crashlog::last_crash()
 }
 
+/// One line from the webview - an uncaught error, an unhandled rejection, or
+/// a breadcrumb the frontend chose to record - kept where a reload cannot
+/// take it with it. See `clientlog.rs`.
+#[tauri::command]
+pub fn debug_log(level: String, message: String) {
+    crate::clientlog::append(&level, &message);
+}
+
+/// The rolling window itself, for exporting or reading back.
+#[tauri::command]
+pub fn debug_client_log() -> String {
+    crate::clientlog::read()
+}
+
 pub fn boot(app: AppHandle, state: AppState) {
     let already = state.with(|s| std::mem::replace(&mut s.services_started, true));
     if already {

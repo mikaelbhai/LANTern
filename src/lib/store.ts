@@ -6,6 +6,7 @@ import { notifyMessage } from './ringer';
 import { gameName } from './games';
 import { openPrivacySettings, readMediaError } from './mediaerror';
 import { primed } from './primergate';
+import { logBreadcrumb } from './errorlog';
 import type { Screen } from './nav';
 import type { MediaWanted } from './mediaerror';
 import { emptyScores, record } from './scores';
@@ -34,8 +35,18 @@ import { uid } from './utils';
  *
  * Kept out of the store deliberately: this holds an SDP description, which is
  * neither serialisable nor something any component should re-render on.
+ *
+ * Carried across a dev-mode hot reload rather than recreated - a live edit
+ * to this module while a call was still ringing otherwise wiped this out
+ * from under it, and Answer did nothing with nothing on screen to say why.
+ * `import.meta.hot` is undefined in a production build, so this is a plain
+ * `new Map()` there, same as before.
  */
-const pendingOffers = new Map<string, rtc.SignalMessage>();
+const pendingOffers: Map<string, rtc.SignalMessage> =
+  (import.meta.hot?.data.pendingOffers as Map<string, rtc.SignalMessage> | undefined) ?? new Map();
+if (import.meta.hot) {
+  import.meta.hot.data.pendingOffers = pendingOffers;
+}
 
 /**
  * How long a call rings before it gives up.
@@ -1699,7 +1710,17 @@ export const useStore = create<State>((set, get) => {
     answerCall() {
       const call = get().call;
       const pending = call && pendingOffers.get(call.id);
-      if (!call || !pending) return;
+      if (!call || !pending) {
+        // `pendingOffers` lives outside the store on purpose (see its own
+        // comment) - which also means a dev-mode module reload empties it
+        // out from under a call that is still ringing, and a press here
+        // does nothing with nothing on screen to say why. Silent otherwise;
+        // this is the one branch that was worth being able to prove.
+        logBreadcrumb(
+          `answerCall: no pending offer for call ${call?.id ?? 'none'} (state=${call?.state ?? 'none'})`,
+        );
+        return;
+      }
 
       // Claimed straight away, not once the answer has gone out.
       //

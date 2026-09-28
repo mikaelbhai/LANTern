@@ -5,7 +5,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { Hud } from './hud/Hud';
+import { installErrorBackhaul } from './lib/errorlog';
 import './index.css';
+
+// Before anything else can throw. See errorlog.ts: this is what makes a bug
+// that leaves no trace in a live session readable after the fact instead.
+installErrorBackhaul();
 
 /**
  * Two windows, one bundle.

@@ -673,6 +673,17 @@ export const api = {
      * read once at the next launch and cleared the moment it is.
      */
     lastCrash: () => call<string | null>('debug_last_crash'),
+    /**
+     * Writes one line to a rolling on-disk log, kept across reloads and
+     * restarts — the backhaul for whatever a live debugging session would
+     * otherwise need to be attached at the exact moment to catch. Fire and
+     * forget: a diagnostic write that itself needed handling would defeat
+     * the point.
+     */
+    logError: (level: 'error' | 'warn' | 'info', message: string) =>
+      call<void>('debug_log', { level, message }),
+    /** The log as it stands, for exporting or reading back. */
+    errorLog: () => call<string>('debug_client_log'),
   },
   profile: {
     os: () => call<string>('host_os'),

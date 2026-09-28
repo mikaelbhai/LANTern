@@ -12,6 +12,7 @@ mod apkinstall;
 mod audiotrack;
 mod battery;
 mod callaudio;
+mod clientlog;
 mod incomingcall;
 #[cfg(target_os = "windows")]
 pub mod autoshare;
@@ -201,6 +202,8 @@ pub fn run() {
             commands::rating_relock,
             commands::rating_unlock_peers,
             commands::debug_last_crash,
+            commands::debug_log,
+            commands::debug_client_log,
             commands::set_installers,
             commands::installers_manage,
             commands::installers_held,
@@ -270,6 +273,7 @@ pub fn run() {
             // the way down. See crashlog.rs.
             if let Ok(dir) = app.path().app_data_dir() {
                 crashlog::install(&dir);
+                clientlog::install(&dir);
             }
 
             // Services come up with the process, not with the window.
