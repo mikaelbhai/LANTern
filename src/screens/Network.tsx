@@ -14,6 +14,7 @@ import {
   Radar,
   Repeat,
   Router,
+  ShieldCheck,
   ShieldQuestion,
   Trash2,
   Wifi,
@@ -120,6 +121,8 @@ export function Network() {
           )}
         </section>
 
+        <KnownDevices peerList={peerList} />
+
         <div className="grid gap-5 lg:grid-cols-2">
           <RelayHubCard />
           <UpnpManager />
@@ -134,6 +137,77 @@ export function Network() {
       <FirewallModal open={firewallOpen} onClose={() => setFirewallOpen(false)} />
       <DiagnosticsModal peerId={diagPeer} onClose={() => setDiagPeer(null)} />
     </div>
+  );
+}
+
+/* -------------------------------------------------------- Known devices */
+
+/**
+ * Devices trusted before, not on the network right now.
+ *
+ * The live "Peer connections" list above is exactly that — live — so a
+ * device that stepped away disappeared from Network entirely, with nothing
+ * to say it had ever been seen. Trust itself, and any per-device rating
+ * limit, were already durable (see peers_trust's own comment on why: a
+ * cache tied to the peer record meant "auto-accept from trusted peers"
+ * could never once fire) — this is the view that was missing, not the data.
+ */
+function KnownDevices({ peerList }: { peerList: { deviceId: string }[] }) {
+  const [trusted, setTrusted] = React.useState<
+    { deviceId: string; name: string; trustedAt: number }[] | null
+  >(null);
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  const load = React.useCallback(() => {
+    void api.peers.trusted().then(setTrusted).catch(() => setTrusted([]));
+  }, []);
+  React.useEffect(load, [load]);
+
+  const liveIds = new Set(peerList.map((p) => p.deviceId));
+  const offline = (trusted ?? []).filter((t) => !liveIds.has(t.deviceId));
+
+  if (!offline.length) return null;
+
+  const forget = async (deviceId: string) => {
+    setBusy(deviceId);
+    try {
+      await api.peers.trust(deviceId, false);
+      load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section>
+      <SectionTitle right={<Badge tone="muted">{offline.length}</Badge>}>Known devices</SectionTitle>
+      <p className="text-2xs text-muted leading-relaxed mb-2">
+        Trusted before, not here right now. Trust and any rating limit already set for these
+        come back the moment one is seen again — nothing to redo.
+      </p>
+      <div className="panel divide-y divide-edge/60">
+        {offline.map((t) => (
+          <div key={t.deviceId} className="flex items-center gap-3 p-3">
+            <Avatar name={t.name || 'Unknown device'} muted size={32} />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium truncate">{t.name || 'Unknown device'}</div>
+              <div className="text-2xs text-muted flex items-center gap-1">
+                <ShieldCheck size={11} className="text-emerald-400 shrink-0" />
+                Trusted {relativeTime(t.trustedAt)}
+              </div>
+            </div>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={busy === t.deviceId}
+              onClick={() => void forget(t.deviceId)}
+            >
+              Forget
+            </Button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
