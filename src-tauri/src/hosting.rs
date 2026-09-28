@@ -25,6 +25,8 @@ pub fn router(state: AppState) -> Router {
         // Registered before the slug routes so a share can never be named
         // "transfer" and shadow a file someone is receiving.
         .route("/transfer/:token", get(serve_transfer))
+        // Same reasoning: a folder named "speedtest" must not shadow this.
+        .route("/speedtest", get(speedtest))
         // What a peer reads to discover what this device publishes.
         .route("/shares.json", get(shares_json))
         .route("/get/:name", get(serve_installer))
@@ -335,11 +337,61 @@ async fn index(
         body.push_str("</ul>");
     }
 
+    /*
+     * What this network can actually move, not what an internet speed test
+     * would answer — that measures the link to whatever server it picked,
+     * an entirely different wire than the one between two devices in this
+     * building. The whole reason a LAN app exists is that the two numbers
+     * are not the same, so the page that explains it is where this belongs.
+     */
+    body.push_str(
+        "<div class=speed><p>An internet speed test measures the wire to some \
+         far-off server. This measures the one that actually matters here — \
+         device to device, on this network.</p>\
+         <button type=button class=primary id=speedtestBtn>Test download speed</button>\
+         <p class=speedresult></p></div>",
+    );
+
     body.push_str(
         "</main><footer>Served straight from the machine holding the files. \
          Nothing here leaves your network.</footer>",
     );
     html(body)
+}
+
+/// A synthetic download for measuring what this network's link can actually
+/// move, device to device — separate from however fast a real published
+/// file happens to read off disk.
+///
+/// Streamed rather than sized: the client decides how long is enough and
+/// aborts the fetch once its own reading has settled, the way every browser
+/// speed test works, rather than this end guessing at a duration. Capped at
+/// 2 GiB so a connection nobody ever aborts does not hold the socket open
+/// forever.
+async fn speedtest() -> Response {
+    const CHUNK: usize = 256 * 1024;
+    const CAP: usize = 2 * 1024 * 1024 * 1024;
+    let chunk = axum::body::Bytes::from(vec![0u8; CHUNK]);
+
+    let stream = async_stream::stream! {
+        let mut sent = 0usize;
+        while sent < CAP {
+            yield Ok::<_, std::io::Error>(chunk.clone());
+            sent += CHUNK;
+        }
+    };
+
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response()
 }
 
 /*
@@ -2144,6 +2196,40 @@ mod tests {
             !response.contains("http://lantern.local/"),
             "built a url to port 80: {response}"
         );
+    }
+
+    /// Confirms the speed-test endpoint actually streams real bytes rather
+    /// than erroring or hanging — reads a bounded amount and disconnects
+    /// early, the same way a browser aborting the fetch after a few seconds
+    /// does. Nothing here waits around for the full 2 GiB cap.
+    #[tokio::test]
+    async fn speedtest_streams_real_bytes() {
+        let (addr, _root) = serve_fixture(ShareMode::Media).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET /speedtest HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+
+        let mut buf = vec![0u8; 300 * 1024];
+        let mut total = 0usize;
+        while total < buf.len() {
+            let n = stream.read(&mut buf[total..]).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            total += n;
+        }
+        drop(stream);
+
+        let head = String::from_utf8_lossy(&buf[..total.min(300)]).to_lowercase();
+        assert!(head.starts_with("http/1.1 200"), "answered: {head}");
+        assert!(
+            head.contains("content-type: application/octet-stream"),
+            "wrong content type: {head}"
+        );
+        assert!(total > 200_000, "expected real chunks of body, got {total} bytes");
     }
 }
 

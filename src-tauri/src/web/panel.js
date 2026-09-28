@@ -192,6 +192,81 @@
     });
   }
 
+  /* ------------------------------------------------------------- speed */
+
+  /*
+   * How fast this network actually moves a file, measured rather than
+   * assumed. The server streams zeros until told to stop; this reads them
+   * for a few seconds, then aborts and reports what arrived. Aborting is
+   * the point rather than a size limit — a fixed download either finishes
+   * too fast to average out jitter on a quick link, or takes unreasonably
+   * long on a slow one, and neither answer is what somebody pressing a
+   * button wants to wait for.
+   */
+  function wireSpeedTest(button) {
+    var out = button.parentNode.querySelector('.speedresult');
+    var DURATION_MS = 4000;
+
+    button.addEventListener('click', function () {
+      if (typeof fetch !== 'function' || typeof AbortController !== 'function') {
+        out.textContent = 'This browser cannot run the test.';
+        return;
+      }
+
+      button.disabled = true;
+      out.textContent = 'Testing…';
+
+      var controller = new AbortController();
+      var started = performance.now();
+      var bytes = 0;
+      var timer = setInterval(function () {
+        var elapsed = (performance.now() - started) / 1000;
+        if (elapsed > 0) out.textContent = mbps(bytes, elapsed) + ' — testing…';
+      }, 200);
+
+      var finish = function () {
+        clearInterval(timer);
+        button.disabled = false;
+        var elapsed = (performance.now() - started) / 1000;
+        if (bytes === 0 || elapsed < 0.05) {
+          out.textContent = 'Could not measure — connection interrupted.';
+          return;
+        }
+        out.textContent =
+          mbps(bytes, elapsed) + ' (' + mb(bytes) + ' in ' + elapsed.toFixed(1) + 's)';
+      };
+
+      fetch('/speedtest', { signal: controller.signal, cache: 'no-store' })
+        .then(function (res) {
+          var reader = res.body.getReader();
+          function pump() {
+            return reader.read().then(function (step) {
+              if (step.done) return;
+              bytes += step.value.length;
+              if (performance.now() - started >= DURATION_MS) {
+                controller.abort();
+                return;
+              }
+              return pump();
+            });
+          }
+          return pump();
+        })
+        .catch(function () {
+          /* Abort throws too; either way there is bytes and elapsed to report. */
+        })
+        .then(finish);
+    });
+  }
+
+  function mbps(bytes, seconds) {
+    return ((bytes * 8) / seconds / 1e6).toFixed(1) + ' Mbps';
+  }
+
+  function mb(bytes) {
+    return (bytes / 1e6).toFixed(0) + ' MB';
+  }
+
   /* ---------------------------------------------------------------- start */
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -200,5 +275,8 @@
 
     var form = document.querySelector('.pin form');
     if (form) wirePin(form);
+
+    var speedBtn = document.getElementById('speedtestBtn');
+    if (speedBtn) wireSpeedTest(speedBtn);
   });
 })();

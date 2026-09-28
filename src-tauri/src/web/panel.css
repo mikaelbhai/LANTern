@@ -313,6 +313,34 @@ button.primary {
   color: var(--accent);
 }
 
+/* --------------------------------------------------------------- speed */
+
+.speed {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 18px 16px;
+  margin-top: 16px;
+}
+
+.speed p {
+  margin: 0 0 12px;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+.speedresult {
+  margin: 12px 0 0 !important;
+  font-size: 20px !important;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--txt) !important;
+}
+
+.speedresult:empty {
+  display: none;
+}
+
 /* ------------------------------------------------------------------ table */
 
 table {
