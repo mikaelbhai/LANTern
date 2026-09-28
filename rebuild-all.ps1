@@ -54,9 +54,13 @@ function Stop-Lantern {
   Write-Warning "lantern.exe is still locked; the build may fail to link"
 }
 
-Stop-Lantern
-
 if (-not $SkipDesktop) {
+  # Only the desktop build's linker ever needs lantern.exe unlocked - an
+  # Android-only run (-SkipDesktop) never touches that file, and killing a
+  # copy someone is actively using to build the phone app was a needless
+  # interruption every time.
+  Stop-Lantern
+
   Write-Host "`n=== desktop (release) ===" -ForegroundColor Cyan
   Set-Location $root
   # The link step is the only part that touches lantern.exe, and it happens
