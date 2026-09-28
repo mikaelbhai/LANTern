@@ -353,7 +353,17 @@ pub async fn fetch_peer(
 /// Local entries are rebuilt first so the two halves cannot drift: this is the
 /// one place that decides what Theatre shows.
 pub async fn refresh_all(app: AppHandle, state: AppState) {
-    let local = crate::media::refresh(&state);
+    // `media::refresh` walks every published folder and probes every video
+    // container on disk - real, synchronous I/O. Called directly on an async
+    // task the way `media_manifest` and subtitle extraction in hosting.rs
+    // already know not to: a rescan of a large library would otherwise
+    // occupy a Tokio worker thread for its whole duration, and that pool is
+    // shared with the axum server streaming to every connected peer. A guest
+    // mid-stream should not stall because someone else's device rescanned.
+    let owned = state.clone();
+    let local = tokio::task::spawn_blocking(move || crate::media::refresh(&owned))
+        .await
+        .unwrap_or_default();
 
     let (links, peers, default_port) = state.with(|s| {
         (

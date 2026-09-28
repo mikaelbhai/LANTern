@@ -1,16 +1,63 @@
 //! Builds the Theatre library from published media shares.
 //!
 //! Titles come from filenames, because a media folder rarely carries metadata
-//! and LANTern will not ask the internet for any. Durations are left at zero
-//! and filled in by the player once it reads the file's own headers — probing
-//! every file up front would mean decoding gigabytes to show a grid.
+//! and LANTern will not ask the internet for any. Duration and track lists do
+//! come from the container header, read once per file and cached — see
+//! `probe_cached` below.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::model::ShareMode;
 use crate::state::AppState;
 
 const VIDEO_EXTS: [&str; 7] = ["mp4", "webm", "mkv", "mov", "m4v", "avi", "ogv"];
+
+/// One file's container header, kept as long as the file has not changed.
+struct CachedProbe {
+    size: u64,
+    mtime_ms: u64,
+    probe: crate::ebml::Probe,
+}
+
+/// Reads duration and track list from a container header, at most once per
+/// file per run.
+///
+/// A rescan happens every time a share changes at all — one new episode
+/// republishes the whole folder — and without this, every title already on
+/// the shelf paid the same seek-and-parse cost as the one that actually
+/// changed. Keyed on size and modified time rather than trusted blindly: a
+/// file replaced in place (a better rip of the same name) gets a cache miss
+/// because at least one of the two almost always changes with it.
+fn probe_cached(path: &Path, size: u64, mtime_ms: u64) -> Option<crate::ebml::Probe> {
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<PathBuf, CachedProbe>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(entry) = guard.get(path) {
+            if entry.size == size && entry.mtime_ms == mtime_ms {
+                return Some(entry.probe.clone());
+            }
+        }
+    }
+
+    let probe = if crate::ebml::is_matroska(path) {
+        crate::ebml::probe(path).ok()
+    } else if crate::mp4::is_mp4(path) {
+        crate::mp4::probe(path).ok()
+    } else {
+        None
+    }?;
+
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(
+            path.to_path_buf(),
+            CachedProbe { size, mtime_ms, probe: probe.clone() },
+        );
+    }
+    Some(probe)
+}
 
 /// Rescans every running media share and returns the library.
 pub fn rebuild(state: &AppState) -> Vec<serde_json::Value> {
@@ -57,7 +104,13 @@ pub fn items_for_share(
 
     for rel in walk_videos(root) {
         let meta = std::fs::metadata(root.join(&rel)).ok();
-        let size = meta.map(|m| m.len()).unwrap_or(0);
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let mtime_ms = meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let parsed = parse_title(&rel);
 
         let url_path = rel
@@ -104,14 +157,9 @@ pub fn items_for_share(
         // Both containers, not just Matroska. Half a typical library is MP4,
         // and a web release routinely carries a dozen subtitle tracks and
         // several audio ones — reading only MKV meant those files showed
-        // nothing at all.
-        let probed = if crate::ebml::is_matroska(&video_path) {
-            crate::ebml::probe(&video_path).ok()
-        } else if crate::mp4::is_mp4(&video_path) {
-            crate::mp4::probe(&video_path).ok()
-        } else {
-            None
-        };
+        // nothing at all. Cached on size and modified time, so a rescan only
+        // pays for the header seek-and-parse on a file that actually changed.
+        let probed = probe_cached(&video_path, size, mtime_ms);
 
         if let Some(probed) = probed {
             duration_sec = probed.duration_sec.unwrap_or(0.0);
