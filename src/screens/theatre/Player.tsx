@@ -924,6 +924,12 @@ export function Player({
           <video
             ref={videoRef}
             src={source}
+            // The real first frame, not the WebView's own oversized play-glyph
+            // placeholder — that generic icon is what shows in the gap between
+            // the element mounting and the first frame actually decoding when
+            // no poster is set, and on Android it renders large enough to look
+            // like part of the design rather than a loading state.
+            poster={item.posterUrl}
             className="bg-black"
             // Sized rather than classed. `object-fit: cover` would crop, but
             // it crops to the element, so the element still has to be the

@@ -149,9 +149,20 @@ export function groupLibrary(items: MediaItem[], overrides: Overrides): Grouping
       if (kind === 'series') {
         return (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0);
       }
-      const oa = splitSequel(a.title).ordinal ?? 1;
-      const ob = splitSequel(b.title).ordinal ?? 1;
-      return oa - ob || a.title.localeCompare(b.title);
+      const oa = splitSequel(a.title).ordinal;
+      const ob = splitSequel(b.title).ordinal;
+      // An explicit sequel marker beats everything else when both titles
+      // have one - "Part 3" belongs before "Part 10" even on the rare film
+      // shot out of story order. Otherwise fall back to release year, which
+      // is what a saga's actual order means when its titles don't carry
+      // numbers at all: "Avengers: Endgame" sorted before "Avengers:
+      // Infinity War" because nothing here read past the alphabet, and nine
+      // times out of ten a saga's naming has nothing to do with the order
+      // it was released in.
+      if (oa !== null && ob !== null && oa !== ob) return oa - ob;
+      if (a.year && b.year && a.year !== b.year) return a.year - b.year;
+      if (oa !== null && ob !== null) return oa - ob;
+      return a.title.localeCompare(b.title);
     });
 
     const seasonMap = new Map<number, MediaItem[]>();

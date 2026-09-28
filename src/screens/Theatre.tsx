@@ -1709,6 +1709,10 @@ function CollectionSheet({
                             : item.title}
                         </div>
                         <div className="text-2xs text-muted mt-0.5">
+                          {/* The saga's own sort now reads this - showing it
+                              is what lets a wrong order actually be checked
+                              against the thing it's supposed to follow. */}
+                          {item.year ? `${item.year} · ` : ''}
                           {item.durationSec > 0 ? `${runtime(item.durationSec)} · ` : ''}
                           {ownerName(item)}
                         </div>
