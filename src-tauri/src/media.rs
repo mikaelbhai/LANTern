@@ -450,6 +450,60 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
                 }
             }
         }
+        // A freshly scanned episode has never been rated, which looks exactly
+        // like a rating that reset to whoever added it: every other episode
+        // still carries the host's own choice, and this one silently does
+        // not. Where every existing, explicitly-rated sibling in the same
+        // series agrees, a new episode inherits that rating rather than
+        // starting over - it can still be changed by hand afterwards, the
+        // same as any title. A series with no rated siblings yet, or one
+        // that disagrees with itself, is left alone: there is nothing
+        // unambiguous to inherit.
+        let mut inherited: Vec<(String, u8)> = Vec::new();
+        for item in &built {
+            let Some(series) = item.get("series").and_then(|v| v.as_str()) else { continue };
+            let Some(url) = item.get("streamUrl").and_then(|v| v.as_str()) else { continue };
+            let path = crate::rating::stream_path(url);
+            if s.title_ages.contains_key(&path) {
+                continue;
+            }
+            let mut agreed: Option<u8> = None;
+            let mut all_agree = true;
+            for other in &built {
+                if other.get("series").and_then(|v| v.as_str()) != Some(series) {
+                    continue;
+                }
+                let Some(other_url) = other.get("streamUrl").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let other_path = crate::rating::stream_path(other_url);
+                if other_path == path {
+                    continue;
+                }
+                // No entry means no signal from this sibling either way - not
+                // agreement, not disagreement, just nothing to weigh yet.
+                let Some(&age) = s.title_ages.get(&other_path) else {
+                    continue;
+                };
+                match agreed {
+                    None => agreed = Some(age),
+                    Some(a) if a == age => {}
+                    _ => {
+                        all_agree = false;
+                        break;
+                    }
+                }
+            }
+            if all_agree {
+                if let Some(age) = agreed {
+                    inherited.push((path, age));
+                }
+            }
+        }
+        for (path, age) in inherited {
+            s.title_ages.insert(path, age);
+        }
+
         // What each title is rated, carried on the entry itself. Marked up
         // here rather than where the library is handed out, so every reader -
         // the screen that asks for it, and the four places that push it -
@@ -1205,6 +1259,121 @@ mod tests {
         });
 
         assert!(refresh(&state).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_episode_inherits_its_series_agreed_rating() {
+        let root = std::env::temp_dir().join(format!("lantern-media-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("Subnet")).unwrap();
+        std::fs::write(root.join("Subnet/S01E01.mkv"), b"x").unwrap();
+        std::fs::write(root.join("Subnet/S01E02.mkv"), b"x").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            s.net.ip = "192.168.1.5".into();
+            s.net.host_port = 7981;
+            s.shares.push(Share {
+                id: "sh".into(),
+                name: "Videos".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "videos".into(),
+                mode: ShareMode::Media,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: false,
+                audience: Vec::new(),
+                file_count: 2,
+                total_bytes: 2,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            });
+        });
+
+        // Both existing episodes rated by hand, in agreement, the way the
+        // host actually does it: one title at a time or the whole show.
+        let first = refresh(&state);
+        for item in &first {
+            let path = item["streamPath"].as_str().unwrap().to_string();
+            state.with(|s| {
+                s.title_ages.insert(path, 16);
+            });
+        }
+        let annotated = refresh(&state);
+        assert!(annotated.iter().all(|i| i["ratedByHost"].as_bool() == Some(true)));
+
+        // A new episode lands in the same folder, the way it would from a
+        // peer sync or a fresh download - nobody has rated this file yet.
+        std::fs::write(root.join("Subnet/S01E03.mkv"), b"x").unwrap();
+        let after = refresh(&state);
+        assert_eq!(after.len(), 3, "expected 3 episodes, got {}", after.len());
+
+        let new_one = after
+            .iter()
+            .find(|i| i["episode"].as_u64() == Some(3))
+            .expect("the new episode should be in the library");
+        assert_eq!(new_one["minAge"].as_u64(), Some(16), "{new_one:?}");
+        assert_eq!(new_one["ratedByHost"].as_bool(), Some(true), "{new_one:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_episode_does_not_inherit_a_disputed_rating() {
+        let root = std::env::temp_dir().join(format!("lantern-media-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("Subnet")).unwrap();
+        std::fs::write(root.join("Subnet/S01E01.mkv"), b"x").unwrap();
+        std::fs::write(root.join("Subnet/S01E02.mkv"), b"x").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            s.shares.push(Share {
+                id: "sh".into(),
+                name: "Videos".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "videos".into(),
+                mode: ShareMode::Media,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: false,
+                audience: Vec::new(),
+                file_count: 2,
+                total_bytes: 2,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            });
+        });
+
+        // The two existing episodes disagree with each other - a household
+        // where somebody restricted one episode and not the other, on
+        // purpose or not. Either way, nothing unambiguous to hand a new
+        // episode.
+        let first = refresh(&state);
+        for (item, age) in first.iter().zip([13u8, 18u8]) {
+            let path = item["streamPath"].as_str().unwrap().to_string();
+            state.with(|s| {
+                s.title_ages.insert(path, age);
+            });
+        }
+
+        std::fs::write(root.join("Subnet/S01E03.mkv"), b"x").unwrap();
+        let after = refresh(&state);
+        let new_one = after
+            .iter()
+            .find(|i| i["episode"].as_u64() == Some(3))
+            .expect("the new episode should be in the library");
+        assert_eq!(new_one["ratedByHost"].as_bool(), Some(false), "{new_one:?}");
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
