@@ -36,6 +36,7 @@ import {
 } from '../lib/update';
 import { useLocalStorage } from '../lib/hooks';
 import { api, on } from '../lib/bridge';
+import { clearUpdateProgress, showUpdateProgress } from '../lib/updateAlerts';
 import { pickFolder } from '../lib/picker';
 import { cn, formatBytes } from '../lib/utils';
 import { sfx } from '../lib/audio';
@@ -1102,9 +1103,15 @@ function AboutTab() {
 
     // Progress is reported from underneath, because that is where the bytes
     // are now. Nothing of the file passes through here.
-    const off = on('update:progress', (p: { done?: number; total?: number }) =>
-      setProgress(p?.total ? (p.done ?? 0) / p.total : 0),
-    );
+    //
+    // Also mirrored to a system notification: this screen is usually the
+    // first thing backgrounded once a download this size is under way, and a
+    // progress bar nobody is looking at is the same as no progress bar.
+    const off = on('update:progress', (p: { done?: number; total?: number }) => {
+      const fraction = p?.total ? (p.done ?? 0) / p.total : 0;
+      setProgress(fraction);
+      showUpdateProgress(fraction);
+    });
 
     try {
       const path = await api.update.download(
@@ -1117,6 +1124,7 @@ function AboutTab() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       off();
+      clearUpdateProgress();
       setInstalling(false);
     }
   };
