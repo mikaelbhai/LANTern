@@ -2,11 +2,13 @@ import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft,
+  Gauge,
   Maximize,
   Minimize,
   Pause,
   PictureInPicture2,
   Play,
+  Repeat,
   RotateCcw,
   RotateCw,
   SkipBack,
@@ -137,6 +139,42 @@ export function Player({
     'lantern.subtitleStyle',
     'classic',
   );
+
+  // Playback speed. Not persisted across titles — a 1.5x lecture and the
+  // film that follows it are not the same request.
+  const [rate, setRate] = React.useState(1);
+  const [speedOpen, setSpeedOpen] = React.useState(false);
+
+  /**
+   * A-B repeat: one point set, then two, loops between them until cleared.
+   *
+   * One button cycling through three states rather than three buttons -
+   * "set the start", "set the end", "stop" is one decision at a time, the
+   * same order VLC's own single repeat button asks it in.
+   */
+  const [repeatA, setRepeatA] = React.useState<number | null>(null);
+  const [repeatB, setRepeatB] = React.useState<number | null>(null);
+  const cycleRepeat = () => {
+    if (repeatA === null) {
+      setRepeatA(time);
+    } else if (repeatB === null) {
+      // The later of the two, whichever order they were pressed in - a
+      // press before the first point is a mistake, not a request to loop
+      // backwards.
+      if (time > repeatA) setRepeatB(time);
+      else {
+        setRepeatB(repeatA);
+        setRepeatA(time);
+      }
+    } else {
+      setRepeatA(null);
+      setRepeatB(null);
+    }
+  };
+  React.useEffect(() => {
+    setRepeatA(null);
+    setRepeatB(null);
+  }, [item.id]);
 
   const subtitles = item.subtitles ?? [];
   const audioTracks = item.audioTracks ?? [];
@@ -338,6 +376,23 @@ export function Player({
     if (playing) void el.play().catch(() => setPlaying(false));
     else el.pause();
   }, [playing, unreachable]);
+
+  // Reapplied on every rate change, and again in onLoadedMetadata below - a
+  // remuxed seek loads a fresh <video> source, which resets playbackRate to
+  // 1 on its own with no event this effect would otherwise catch.
+  React.useEffect(() => {
+    const el = videoRef.current;
+    if (el) el.playbackRate = rate;
+  }, [rate]);
+
+  // A-B repeat's loop: once both points exist, reaching the second jumps
+  // back to the first rather than playing past it. `unreachable`'s local
+  // clock and the video element's own ticks both flow through `time`, so
+  // one check here covers either source.
+  React.useEffect(() => {
+    if (repeatA === null || repeatB === null) return;
+    if (time >= repeatB) seekTo(repeatA);
+  }, [time, repeatA, repeatB, seekTo]);
 
   /*
    * The tap on Android's own PiP overlay button.
@@ -733,6 +788,7 @@ export function Player({
             playsInline
             onLoadedMetadata={(e) => {
               const el = e.currentTarget;
+              el.playbackRate = rate;
               setNatural({ w: el.videoWidth, h: el.videoHeight });
               // A remuxed stream is fragmented MP4 with no index, so it
               // reports a duration of a few seconds — the length of what has
@@ -906,11 +962,36 @@ export function Player({
                     className="h-full bg-white/30 absolute"
                     style={{ width: `${bufferedPct}%` }}
                   />
+                  {/* The loop region, so it reads as a range rather than two
+                      unrelated marks someone has to remember the meaning of. */}
+                  {repeatA !== null && repeatB !== null && duration > 0 && (
+                    <div
+                      className="h-full bg-gold/25 absolute"
+                      style={{
+                        left: `${(repeatA / duration) * 100}%`,
+                        width: `${((repeatB - repeatA) / duration) * 100}%`,
+                      }}
+                    />
+                  )}
                   <div
                     className="h-full bg-gold relative"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
+                {repeatA !== null && duration > 0 && (
+                  <span
+                    className="absolute h-3 w-0.5 bg-gold -ml-px"
+                    style={{ left: `${(repeatA / duration) * 100}%` }}
+                    title="Loop start"
+                  />
+                )}
+                {repeatB !== null && duration > 0 && (
+                  <span
+                    className="absolute h-3 w-0.5 bg-gold -ml-px"
+                    style={{ left: `${(repeatB / duration) * 100}%` }}
+                    title="Loop end"
+                  />
+                )}
                 <span
                   className="absolute h-3 w-3 rounded-full bg-gold shadow -ml-1.5 opacity-0 group-hover/bar:opacity-100 transition-opacity"
                   style={{ left: `${pct}%` }}
@@ -1009,6 +1090,67 @@ export function Player({
                       would just be noise.
                     */}
                     {lost > 0 && <span className="text-white/50">{lost}%</span>}
+                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setSpeedOpen((o) => !o)}
+                      className={cn(
+                        'flex items-center gap-1.5 text-[11px] hover:text-white',
+                        rate !== 1 ? 'text-gold' : 'text-white/80',
+                      )}
+                      aria-haspopup="menu"
+                      aria-expanded={speedOpen}
+                    >
+                      <Gauge size={15} />
+                      {rate === 1 ? 'Speed' : `${rate}x`}
+                    </button>
+                    {speedOpen && (
+                      <>
+                        <button
+                          aria-label="Close speed menu"
+                          className="track-scrim fixed inset-0 z-20 cursor-default"
+                          onClick={() => setSpeedOpen(false)}
+                        />
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-24 rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg">
+                          {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => (
+                            <button
+                              key={s}
+                              onClick={() => {
+                                setRate(s);
+                                setSpeedOpen(false);
+                              }}
+                              className={cn(
+                                'track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised',
+                                rate === s && 'text-gold',
+                              )}
+                            >
+                              {s === 1 ? 'Normal' : `${s}x`}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={cycleRepeat}
+                    className={cn(
+                      'flex items-center gap-1.5 text-[11px] hover:text-white',
+                      repeatA !== null ? 'text-gold' : 'text-white/80',
+                    )}
+                    title={
+                      repeatA === null
+                        ? 'Mark the start of a loop (A-B repeat)'
+                        : repeatB === null
+                          ? 'Mark the end of the loop'
+                          : 'Clear the loop'
+                    }
+                  >
+                    <Repeat size={15} />
+                    {repeatA !== null && repeatB !== null
+                      ? 'A-B'
+                      : repeatA !== null
+                        ? 'A-…'
+                        : 'Repeat'}
                   </button>
                   {audioTracks.length > 1 && (
                     <div className="relative">
