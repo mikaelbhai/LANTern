@@ -28,6 +28,7 @@ import { SCREEN_TITLES, type Screen } from './lib/nav';
 import { cn } from './lib/utils';
 import { HeaderSlot } from './components/ScreenHeader';
 import { useBackDismiss } from './lib/hooks';
+import { pushLayer } from './lib/backstack';
 import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
 import { IncomingFile } from './components/IncomingFile';
 import { IncomingGame } from './components/IncomingGame';
@@ -161,13 +162,34 @@ export default function App() {
 
   // Navigating during a call minimises it rather than blocking the app — the
   // session keeps running in the floating window.
-  // Back walks the trail one screen at a time, then Home, then out of the
-  // app. It used to jump straight to Home from anywhere, so two steps in lost
-  // both of them — and coming back from Settings to the chat you were reading
-  // meant navigating there again by hand.
-  useBackDismiss(screen !== 'home' || useStore.getState().screenTrail.length > 0, () => {
-    goBack();
-  });
+  /*
+   * Back walks the trail one screen at a time, then Home, then out of the
+   * app. It used to jump straight to Home from anywhere, so two steps in lost
+   * both of them — and coming back from Settings to the chat you were reading
+   * meant navigating there again by hand.
+   *
+   * A single `useBackDismiss(open, ...)` very nearly does this, but `open` is
+   * a boolean and stays `true` for the entire time you are away from Home —
+   * so it fires `pushLayer` once on the way in and never again, no matter how
+   * many screens deep the trail goes. One history entry then covers however
+   * many `goBack()`s are actually needed, so the first hardware back press
+   * works and every press after it - still mid-trail - finds no history left
+   * to intercept and quits the app instead. This keeps one layer pushed per
+   * trail entry instead, added and removed as the trail grows and shrinks by
+   * any means: a hardware back press, or a Back button inside a screen
+   * calling `goBack()` directly.
+   */
+  const trailLength = useStore((s) => s.screenTrail.length);
+  const depth = trailLength > 0 ? trailLength : screen !== 'home' ? 1 : 0;
+  const backLayers = React.useRef<Array<() => void>>([]);
+  React.useEffect(() => {
+    while (backLayers.current.length < depth) {
+      backLayers.current.push(pushLayer(() => goBack()));
+    }
+    while (backLayers.current.length > depth) {
+      backLayers.current.pop()?.();
+    }
+  }, [depth]);
   useBackDismiss(drawerOpen, () => setDrawerOpen(false));
 
   const go = React.useCallback(
