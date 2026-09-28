@@ -726,7 +726,16 @@ pub fn name_from_uri(uri: &str) -> String {
         .unwrap_or("");
 
     let decoded = percent_decode(last);
-    let trimmed = decoded.trim();
+    // The decoded document id is frequently the file's whole relative path
+    // from its storage volume - "primary:Download/1DM Torrents/Some Site -
+    // Title (2009)/Title.mkv" - not a bare filename. Its internal slashes
+    // were hidden as `%2F` until decoding revealed them, one step after the
+    // first `rsplit('/')` above already looked. Without this second split,
+    // the whole path got welded into one filename by the sanitiser below
+    // instead of just its last, real, component - which is what actually
+    // arrived on the far side as the file's name.
+    let leaf = decoded.rsplit(['/', ':']).next().unwrap_or(&decoded);
+    let trimmed = leaf.trim();
 
     // A name needs an extension to be worth preferring over nothing: it is
     // what tells the far side, and its operating system, what the file is.
@@ -821,6 +830,32 @@ mod name_tests {
             let name = name_from_uri(odd);
             assert!(!name.is_empty(), "{odd:?} gave nothing");
         }
+    }
+
+    #[test]
+    fn a_saf_document_id_that_is_a_whole_path_gives_up_only_its_leaf() {
+        // What Android's Storage Access Framework actually hands back for a
+        // file picked from inside a folder: the document id is the file's
+        // full relative path from its storage volume, encoded as one opaque
+        // segment - not a bare filename. Decoding it too early, before
+        // isolating the last component, welded the whole thing into one
+        // filename: this exact input is what arrived as
+        // "primary_Download_1DM_Torrents_www.UIndex.org_..._Inglourious_
+        // Basterds_2009_Inglourious_Basterds.mkv" and showed up as a
+        // Theatre title to match.
+        assert_eq!(
+            name_from_uri(
+                "content://com.android.externalstorage.documents/document/\
+                 primary%3ADownload%2F1DM%20Torrents%2Fwww.UIndex.org%20-%20\
+                 Inglourious%20Basterds%20(2009)%2FInglourious%20Basterds.mkv"
+            ),
+            "Inglourious Basterds.mkv",
+        );
+        // No subfolder at all - just the volume prefix ahead of the name.
+        assert_eq!(
+            name_from_uri("content://com.android.externalstorage.documents/document/primary%3AMovie.mkv"),
+            "Movie.mkv",
+        );
     }
 
     #[test]
