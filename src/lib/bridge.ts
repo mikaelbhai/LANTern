@@ -373,6 +373,13 @@ export const api = {
     /** Hands the audio stack back when the call ends. */
     resetAudio: () => call<void>('call_audio_reset'),
   },
+  /** Android's battery optimizer, a second gate on top of the foreground service. */
+  battery: {
+    /** Always true on desktop, which has no optimizer to be exempt from. */
+    unrestricted: () => call<boolean>('battery_unrestricted'),
+    /** Opens the system dialogue that grants the exemption. */
+    requestUnrestricted: () => call<void>('battery_request_unrestricted'),
+  },
   /** Shared games across devices. */
   game: {
     start: (game: GameKind, peerIds: string[], seed: number) =>

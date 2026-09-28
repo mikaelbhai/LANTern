@@ -12,6 +12,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
@@ -305,6 +306,39 @@ class MainActivity : TauriActivity() {
      * Leaving the mode set keeps the phone in call routing afterwards, which
      * is how a device ends up playing music through the earpiece.
      */
+    /**
+     * Whether Android's battery optimizer is currently free to doze this
+     * process. The foreground service is what is supposed to keep LANTern
+     * reachable in the background, but the optimizer can still suspend it
+     * between wakeups on top of that - this is the other half.
+     */
+    @JvmStatic
+    fun batteryUnrestricted(): Boolean = runCatching {
+      val ctx = appContext ?: return false
+      val power = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+      power.isIgnoringBatteryOptimizations(ctx.packageName)
+    }.getOrDefault(false)
+
+    /**
+     * Asks the user to exempt LANTern from battery optimization.
+     *
+     * Unlike `installPackage`'s settings deep-link, `ACTION_REQUEST_IGNORE_
+     * BATTERY_OPTIMIZATIONS` shows the grant itself as a system dialog - one
+     * Allow/Deny, no navigating through Settings to find the right toggle.
+     */
+    @JvmStatic
+    fun requestBatteryUnrestricted() {
+      val ctx = appContext ?: return
+      runCatching {
+        ctx.startActivity(
+          Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${ctx.packageName}"),
+          ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      }.exceptionOrNull()?.let { Log.w("LANTern", "battery optimization request", it) }
+    }
+
     @JvmStatic
     fun clearCallAudio() {
       val ctx = appContext ?: return

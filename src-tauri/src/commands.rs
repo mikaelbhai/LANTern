@@ -499,6 +499,19 @@ pub fn call_audio_reset() {
     crate::callaudio::reset();
 }
 
+/// Whether Android's battery optimizer currently leaves this process alone.
+/// Always true on desktop, which has no such optimizer to be exempt from.
+#[tauri::command]
+pub fn battery_unrestricted() -> bool {
+    crate::battery::unrestricted()
+}
+
+/// Opens the system dialogue that grants the exemption.
+#[tauri::command]
+pub fn battery_request_unrestricted() {
+    crate::battery::request_unrestricted();
+}
+
 /// Tells the window layer that a film is on screen, or is no longer.
 ///
 /// Only Android acts on it, where leaving the app mid-film puts the whole

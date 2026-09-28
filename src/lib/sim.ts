@@ -356,6 +356,12 @@ export async function handle(cmd: string, args: any): Promise<any> {
     case 'net_set_private':
       return null;
 
+    case 'battery_unrestricted':
+      return true;
+
+    case 'battery_request_unrestricted':
+      return null;
+
     case 'net_add_manual_peer': {
       const p = makePeer({
         name: `${args.ip}`,

@@ -10,6 +10,7 @@
 #[cfg(target_os = "android")]
 mod apkinstall;
 mod audiotrack;
+mod battery;
 mod callaudio;
 #[cfg(target_os = "windows")]
 pub mod autoshare;
@@ -137,6 +138,8 @@ pub fn run() {
             commands::pip_set_playing,
             commands::call_audio_earpiece,
             commands::call_audio_reset,
+            commands::battery_unrestricted,
+            commands::battery_request_unrestricted,
             commands::net_info,
             commands::net_set_relay_hub,
             commands::net_set_port,

@@ -1,13 +1,17 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, Baby, FolderOpen } from 'lucide-react';
+import { ArrowRight, Baby, BatteryCharging, Bell, Check, FolderOpen, Video } from 'lucide-react';
 import { Wordmark } from './Logo';
 import { Avatar } from './Avatar';
 import { Button, Input, Select } from './ui';
 import { AGES } from './Audience';
-import { api } from '../lib/bridge';
+import { api, isTauri } from '../lib/bridge';
+import { openPrivacySettings, readMediaError } from '../lib/mediaerror';
+import { prepareCallAlerts } from '../lib/ringer';
 import { AVATAR_COLORS, useStore } from '../lib/store';
 import { cn } from '../lib/utils';
+
+type Grant = 'idle' | 'checking' | 'granted' | 'denied';
 
 const EMOJI_CHOICES = [
   '🏮', '🦊', '🎧', '🚀', '🖥', '🔧', '🌙', '⚡',
@@ -29,10 +33,65 @@ export function Onboarding() {
    * without ever having been set. It is one question and it belongs here,
    * where the answer is cheap and there is nothing yet to go wrong.
    */
-  const [step, setStep] = React.useState<'you' | 'watching'>('you');
+  const [step, setStep] = React.useState<'you' | 'watching' | 'permissions'>('you');
   const [maxAge, setMaxAge] = React.useState('13');
 
   const canGo = name.trim().length > 0;
+
+  /**
+   * Everything the app will otherwise ask for piecemeal, mid-use: the camera
+   * prompt interrupting the first call, the notification dialog racing an
+   * incoming one, a phone quietly dozed the whole time because nobody was
+   * ever asked to exempt it. Asked here instead, together, while there is
+   * nothing yet in progress for an interruption to break.
+   */
+  const [os, setOs] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (step === 'permissions') void api.profile.os().then(setOs).catch(() => {});
+  }, [step]);
+
+  const [camera, setCamera] = React.useState<Grant>('idle');
+  const [cameraError, setCameraError] = React.useState<string | null>(null);
+  const requestCamera = async () => {
+    setCamera('checking');
+    setCameraError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      stream.getTracks().forEach((t) => t.stop());
+      setCamera('granted');
+    } catch (err) {
+      setCamera('denied');
+      setCameraError(readMediaError(err, 'camera').body);
+    }
+  };
+
+  const [notifications, setNotifications] = React.useState<Grant>('idle');
+  const requestNotifications = async () => {
+    setNotifications('checking');
+    const granted = await prepareCallAlerts().catch(() => false);
+    setNotifications(granted ? 'granted' : 'denied');
+  };
+
+  const [battery, setBattery] = React.useState<Grant>('idle');
+  const requestBattery = async () => {
+    setBattery('checking');
+    if (await api.battery.unrestricted().catch(() => true)) {
+      setBattery('granted');
+      return;
+    }
+    // The grant is a system dialogue this app is handed no answer from -
+    // re-checked once the window has focus again rather than assumed.
+    const recheck = () => {
+      if (document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', recheck);
+      void api.battery
+        .unrestricted()
+        .then((granted) => setBattery(granted ? 'granted' : 'denied'))
+        .catch(() => setBattery('denied'));
+    };
+    document.addEventListener('visibilitychange', recheck);
+    await api.battery.requestUnrestricted().catch(() => {});
+  };
 
   const submit = () => {
     if (!canGo) return;
@@ -146,7 +205,7 @@ export function Onboarding() {
             Continue
           </Button>
           </>
-          ) : (
+          ) : step === 'watching' ? (
           <>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -186,6 +245,68 @@ export function Onboarding() {
               variant="primary"
               size="lg"
               full
+              onClick={() => setStep('permissions')}
+              icon={<ArrowRight size={15} />}
+            >
+              Continue
+            </Button>
+          </div>
+          </>
+          ) : (
+          <>
+          <p className="text-2xs text-muted leading-relaxed -mt-1">
+            Asked once, together, rather than one at a time mid-call. Every one
+            of these can be changed later in Settings — none of them block
+            lighting the lantern.
+          </p>
+
+          <PermissionRow
+            icon={<Video size={13} />}
+            label="Camera & microphone"
+            body="For voice and video calls. Skip this and it is asked the first time you actually call someone."
+            grant={camera}
+            onRequest={requestCamera}
+          />
+          {camera === 'denied' && (
+            <p className="text-2xs text-danger -mt-3 leading-relaxed">
+              {cameraError}
+              {isTauri() && (
+                <button
+                  onClick={() => void openPrivacySettings('camera')}
+                  className="text-cyan hover:underline ml-1"
+                >
+                  Open settings
+                </button>
+              )}
+            </p>
+          )}
+
+          <PermissionRow
+            icon={<Bell size={13} />}
+            label="Notifications"
+            body="So a call or a message reaches you while the app is out of sight."
+            grant={notifications}
+            onRequest={requestNotifications}
+          />
+
+          {os === 'android' && (
+            <PermissionRow
+              icon={<BatteryCharging size={13} />}
+              label="Stay reachable in the background"
+              body="Android's battery saver can doze LANTern between wakeups even while it is meant to be listening. Exempting it is what keeps calls and messages arriving while the screen is off."
+              grant={battery}
+              onRequest={requestBattery}
+            />
+          )}
+
+          <div className="flex gap-2">
+            <Button size="lg" onClick={() => setStep('watching')}>
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              size="lg"
+              full
               onClick={submit}
               icon={<ArrowRight size={15} />}
             >
@@ -200,6 +321,47 @@ export function Onboarding() {
           Everything stays on this device and your LAN. Nothing leaves the network.
         </p>
       </motion.div>
+    </div>
+  );
+}
+
+function PermissionRow({
+  icon,
+  label,
+  body,
+  grant,
+  onRequest,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  body: string;
+  grant: Grant;
+  onRequest: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            'h-7 w-7 rounded-full grid place-items-center shrink-0 border',
+            grant === 'granted'
+              ? 'bg-cyan/15 border-cyan/40 text-cyan'
+              : 'bg-raised border-edge text-muted',
+          )}
+        >
+          {grant === 'granted' ? <Check size={13} /> : icon}
+        </span>
+        <label className="label !mb-0 flex-1">{label}</label>
+        <Button
+          size="xs"
+          variant={grant === 'granted' ? 'subtle' : 'outline'}
+          disabled={grant === 'checking' || grant === 'granted'}
+          onClick={onRequest}
+        >
+          {grant === 'granted' ? 'Allowed' : grant === 'denied' ? 'Try again' : 'Allow'}
+        </Button>
+      </div>
+      <p className="text-2xs text-muted leading-relaxed">{body}</p>
     </div>
   );
 }

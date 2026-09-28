@@ -29,6 +29,12 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The foreground service above keeps LANTern reachable while
+         backgrounded, but Android's battery optimizer can still doze the
+         process and drop it off the network between wakeups. This permission
+         only allows asking to be exempted - the system dialog it opens is
+         the actual grant, and it can be refused. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Handing a downloaded APK to the system package installer. Android
          still asks the user to approve both the permission and the install;
          this only allows the app to make the request. -->
