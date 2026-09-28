@@ -12,6 +12,7 @@ import {
   RotateCcw,
   RotateCw,
   SkipBack,
+  Sun,
   Subtitles,
   SkipForward,
   Users,
@@ -48,6 +49,8 @@ import {
 } from '../../lib/aspect';
 
 const HIDE_AFTER_MS = 2800;
+// A full-height vertical swipe covers the full 0-1 brightness/volume range.
+const SWIPE_RANGE_PX = 220;
 
 /**
  * Finds the track carrying a language, or -1.
@@ -96,6 +99,13 @@ export function Player({
   const [duration, setDuration] = React.useState(item.durationSec);
   const [volume, setVolume] = React.useState(1);
   const [muted, setMuted] = React.useState(false);
+  /**
+   * A software dim, VLC's own answer to there being no web API for the
+   * screen's actual backlight. `filter: brightness()` on the picture itself
+   * — honest about what it is: a swipe that visibly does something, not a
+   * claim about the panel underneath it.
+   */
+  const [brightness, setBrightness] = React.useState(1);
   const [buffered, setBuffered] = React.useState(0);
   const [chrome, setChrome] = React.useState(true);
   const [fullscreen, setFullscreen] = React.useState(false);
@@ -174,6 +184,7 @@ export function Player({
   React.useEffect(() => {
     setRepeatA(null);
     setRepeatB(null);
+    setBrightness(1);
   }, [item.id]);
 
   /**
@@ -192,7 +203,100 @@ export function Player({
     null,
   );
   const seekFlashTimer = React.useRef<ReturnType<typeof setTimeout>>();
+
+  /**
+   * Vertical swipe for brightness (left third) and volume (right third),
+   * VLC's other pair of mobile gestures. A drag is told from a tap by
+   * movement past a small threshold — under that, this stays out of the
+   * way entirely and the touch is free to become a tap or a double-tap.
+   */
+  const dragRef = React.useRef<{
+    zone: 'left' | 'right';
+    startY: number;
+    startValue: number;
+    dragging: boolean;
+  } | null>(null);
+  const [swipeFlash, setSwipeFlash] = React.useState<{ zone: 'left' | 'right'; pct: number } | null>(
+    null,
+  );
+
+  const onStageTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xPct = (touch.clientX - rect.left) / rect.width;
+    const zone: 'left' | 'right' | null = xPct < 0.35 ? 'left' : xPct > 0.65 ? 'right' : null;
+    if (!zone) {
+      dragRef.current = null;
+      return;
+    }
+    dragRef.current = {
+      zone,
+      startY: touch.clientY,
+      startValue: zone === 'left' ? brightness : muted ? 0 : volume,
+      dragging: false,
+    };
+  };
+
+  /**
+   * A plain DOM listener rather than React's onTouchMove.
+   *
+   * React attaches touch listeners passively at the root for scroll
+   * performance, and a passive listener's preventDefault is silently
+   * ignored — confirmed in the browser sim as a console error, "Unable to
+   * preventDefault inside passive event listener invocation," with the
+   * drag itself still working but the page free to bounce under it. Only a
+   * listener added with { passive: false } can actually stop that.
+   */
+  const touchSurfaceRef = React.useRef<HTMLButtonElement>(null);
+  const onStageTouchMove = React.useCallback(
+    (e: TouchEvent) => {
+      const drag = dragRef.current;
+      const touch = e.touches[0];
+      if (!drag || !touch) return;
+
+      const deltaY = drag.startY - touch.clientY; // up is positive
+      if (!drag.dragging && Math.abs(deltaY) < 12) return;
+      drag.dragging = true;
+      // A drag in progress is not a scroll, and this page has nothing to
+      // scroll anyway — left default the gesture would otherwise bounce the
+      // whole webview on some Android builds.
+      e.preventDefault();
+
+      if (drag.zone === 'left') {
+        // 0.4-1.6: dim to less than half, or brighten enough to matter,
+        // without washing the picture out past recognition.
+        const next = Math.max(0.4, Math.min(1.6, drag.startValue + (deltaY / SWIPE_RANGE_PX) * 1.2));
+        setBrightness(next);
+        setSwipeFlash({ zone: 'left', pct: Math.round(((next - 0.4) / 1.2) * 100) });
+      } else {
+        const next = Math.max(0, Math.min(1, drag.startValue + deltaY / SWIPE_RANGE_PX));
+        setVolume(next);
+        setMuted(false);
+        setSwipeFlash({ zone: 'right', pct: Math.round(next * 100) });
+      }
+    },
+    // SWIPE_RANGE_PX is a module-scope constant, not a dependency.
+    [],
+  );
+  React.useEffect(() => {
+    const el = touchSurfaceRef.current;
+    if (!el) return;
+    el.addEventListener('touchmove', onStageTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onStageTouchMove);
+  }, [onStageTouchMove]);
+
   const onStageTouchEnd = (e: React.TouchEvent) => {
+    const wasDragging = dragRef.current?.dragging ?? false;
+    dragRef.current = null;
+    if (wasDragging) {
+      setSwipeFlash(null);
+      // A drag is not a tap, so it must not seed the next double-tap check
+      // with a stale zone from before the finger moved.
+      lastEdgeTap.current = { time: 0, zone: null };
+      return;
+    }
+
     const touch = e.changedTouches[0];
     if (!touch) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -789,7 +893,11 @@ export function Player({
         than the frame. Without this the crop spills over the controls and out
         of the window instead of being a crop at all.
       */}
-      <div ref={stageRef} className="absolute inset-0 grid place-items-center overflow-hidden">
+      <div
+        ref={stageRef}
+        className="absolute inset-0 grid place-items-center overflow-hidden"
+        style={brightness !== 1 ? { filter: `brightness(${brightness})` } : undefined}
+      >
         {unreachable ? (
           <div className="relative h-full w-full">
             <Artwork
@@ -889,6 +997,7 @@ export function Player({
         anything, that gets the two-step.
       */}
       <button
+        ref={touchSurfaceRef}
         aria-label={!chrome ? 'Show controls' : playing ? 'Pause' : 'Play'}
         onClick={() => {
           if (following) return;
@@ -901,6 +1010,7 @@ export function Player({
           broadcast(next, time);
         }}
         onDoubleClick={() => void toggleFullscreen()}
+        onTouchStart={onStageTouchStart}
         onTouchEnd={onStageTouchEnd}
         className="absolute inset-0 z-10"
       />
@@ -928,6 +1038,43 @@ export function Player({
               )}
               <span className="absolute mt-9 text-[11px] font-semibold text-white tabular-nums">
                 {seekFlash.amount > 0 ? `+${seekFlash.amount}s` : `${seekFlash.amount}s`}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Vertical swipe: brightness on the left, volume on the right - a
+          filled bar rather than a number, since a fast swipe is read at a
+          glance, not by reading digits. */}
+      <AnimatePresence>
+        {swipeFlash && (
+          <motion.div
+            key={swipeFlash.zone}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className={cn(
+              'absolute top-1/2 -translate-y-1/2 z-10 pointer-events-none',
+              swipeFlash.zone === 'left' ? 'left-8' : 'right-8',
+            )}
+          >
+            <div className="rounded-full bg-black/60 px-2.5 py-3 flex flex-col items-center gap-2 w-11">
+              {swipeFlash.zone === 'left' ? (
+                <Sun size={16} className="text-white shrink-0" />
+              ) : swipeFlash.pct === 0 ? (
+                <VolumeX size={16} className="text-white shrink-0" />
+              ) : (
+                <Volume2 size={16} className="text-white shrink-0" />
+              )}
+              <div className="h-24 w-1.5 rounded-full bg-white/25 overflow-hidden flex flex-col justify-end">
+                <div
+                  className="w-full bg-white rounded-full transition-[height]"
+                  style={{ height: `${swipeFlash.pct}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-semibold text-white tabular-nums">
+                {swipeFlash.pct}%
               </span>
             </div>
           </motion.div>
