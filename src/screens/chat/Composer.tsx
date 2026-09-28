@@ -576,8 +576,12 @@ function VoiceRecorder({ onSend }: { onSend: (v: VoiceClip) => void }) {
     if (m && send) {
       m.recorder.onstop = async () => {
         const blob = new Blob(m.chunks, { type: 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        onSend({ durationMs: duration, peaks: captured, dataUrl: url });
+        // A blob: URL only resolves inside the page that minted it - sent to
+        // a peer as-is, it travelled as a string that named nothing on their
+        // device, so the clip played back for the sender and nobody else. A
+        // data: URL carries the actual bytes, the same way a pasted image
+        // already does.
+        onSend({ durationMs: duration, peaks: captured, dataUrl: await fileToDataUrl(blob) });
       };
     }
     stopAll();
