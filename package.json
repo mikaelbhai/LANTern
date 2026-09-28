@@ -4,6 +4,7 @@
   "version": "1.2.6",
   "type": "module",
   "description": "LANTern — unleash your Wi-Fi's potential.",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

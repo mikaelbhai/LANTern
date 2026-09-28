@@ -1,12 +1,19 @@
 # LANTern
 
-A communication suite for devices on the same local network. Chat, voice and
-video calls, screen sharing, file transfer, folder hosting and a shared video
-library — with no accounts, no cloud, and no outbound internet connections.
+[![Release](https://img.shields.io/github/v/release/mikaelbhai/LANTern)](https://github.com/mikaelbhai/LANTern/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-informational)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-informational)](#platforms)
 
-Everything runs on the devices themselves. Peers find each other over mDNS,
-talk over a direct TCP link, and stream media straight from the machine holding
-the file.
+A self-hosted, offline-first communication suite for devices on the same local
+network — the private LAN messenger and media server for a home, an office, or
+a LAN party with no internet in the building. Chat, voice and video calls,
+screen sharing, file transfer, folder hosting and a shared video library — with
+no accounts, no cloud, and no outbound internet connections.
+
+Everything runs peer-to-peer on the devices themselves. Peers find each other
+over mDNS, talk over a direct TCP link, and stream media straight from the
+machine holding the file — full local network speed, not whatever the internet
+connection behind the router allows.
 
 ## What is here
 
