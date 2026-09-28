@@ -1,8 +1,10 @@
 import React from 'react';
 import { AnimatePresence, Reorder, motion } from 'framer-motion';
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   Film,
   Info,
   Play,
@@ -93,10 +95,42 @@ export function Theatre() {
     setLoading(false);
   }, []);
 
+  /**
+   * Titles pulled from a peer onto this device already, and which transfer
+   * is carrying one still in flight — keyed by the *original* item id, not
+   * the synced copy's own (a different share entirely), which is what lets
+   * a row ask "do I already have this one" about the title it is showing.
+   */
+  const [syncedIds, setSyncedIds] = React.useState<Set<string>>(new Set());
+  const loadSynced = React.useCallback(() => {
+    void api.media.syncedIds().then((ids) => setSyncedIds(new Set(ids)));
+  }, []);
+  const [syncTransfers, setSyncTransfers] = React.useState<Record<string, string>>({});
+  const startSync = React.useCallback(async (item: MediaItem) => {
+    const transferId = await api.media.sync(item);
+    setSyncTransfers((prev) => ({ ...prev, [item.id]: transferId }));
+  }, []);
+  const removeSync = React.useCallback(async (item: MediaItem) => {
+    await api.media.removeSynced(item.id);
+    setSyncedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(item.id);
+      return next;
+    });
+  }, []);
+
   React.useEffect(() => {
     void load();
-    return on('media:changed', (list: MediaItem[]) => setItems(list));
-  }, [load]);
+    loadSynced();
+    // A completed sync rescans on the native side and emits the same event
+    // a folder being republished does — refreshing both here is what makes
+    // a title that just finished syncing show its "Synced" state without a
+    // manual reload.
+    return on('media:changed', (list: MediaItem[]) => {
+      setItems(list);
+      loadSynced();
+    });
+  }, [load, loadSynced]);
 
   const ownerName = React.useCallback(
     (item: MediaItem) =>
@@ -411,6 +445,10 @@ export function Theatre() {
         onRated={() => void load()}
         onClose={() => setDetail(null)}
         onPlay={play}
+        syncedIds={syncedIds}
+        syncTransfers={syncTransfers}
+        onSync={startSync}
+        onRemoveSync={removeSync}
       />
 
       <CollectionSheet
@@ -425,6 +463,10 @@ export function Theatre() {
           setCollection(null);
           setDetail(i);
         }}
+        syncedIds={syncedIds}
+        syncTransfers={syncTransfers}
+        onSync={startSync}
+        onRemoveSync={removeSync}
       />
 
       <PublishMediaModal
@@ -975,6 +1017,10 @@ function DetailSheet({
   onPlay,
   onWatchTogether,
   peerCount,
+  syncedIds,
+  syncTransfers,
+  onSync,
+  onRemoveSync,
 }: {
   item: MediaItem | null;
   owner: string;
@@ -989,6 +1035,10 @@ function DetailSheet({
   onRated: () => void;
   onClose: () => void;
   onPlay: (i: MediaItem) => void;
+  syncedIds: Set<string>;
+  syncTransfers: Record<string, string>;
+  onSync: (i: MediaItem) => void;
+  onRemoveSync: (i: MediaItem) => void;
 }) {
   const peers = useStore((s) => s.peers);
 
@@ -1113,6 +1163,13 @@ function DetailSheet({
                     Watch together
                   </Button>
                 )}
+                <SyncControl
+                  item={item}
+                  synced={syncedIds.has(item.id)}
+                  transferId={syncTransfers[item.id]}
+                  onSync={onSync}
+                  onRemove={onRemoveSync}
+                />
                 <Button onClick={onClose}>Close</Button>
               </div>
             </div>
@@ -1120,6 +1177,69 @@ function DetailSheet({
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/**
+ * Sync to this device, for offline viewing — or the state that button is in.
+ *
+ * A peer's own title only: this device's own files are already here, and
+ * "sync" would just be a second copy of a file already local.
+ */
+function SyncControl({
+  item,
+  synced,
+  transferId,
+  onSync,
+  onRemove,
+  compact,
+}: {
+  item: MediaItem;
+  synced: boolean;
+  transferId: string | undefined;
+  onSync: (i: MediaItem) => void;
+  onRemove: (i: MediaItem) => void;
+  compact?: boolean;
+}) {
+  const transfer = useStore((s) => (transferId ? s.transfers[transferId] : undefined));
+  const active = !!transfer && !['done', 'failed', 'cancelled'].includes(transfer.state);
+  const size = compact ? 'xs' : 'sm';
+
+  if (!item.peerId) return null;
+
+  if (active && transfer) {
+    const pct = transfer.size ? Math.round((transfer.sent / transfer.size) * 100) : 0;
+    return (
+      <Button size={size} variant="ghost" disabled icon={<Download size={compact ? 11 : 13} />}>
+        {pct}%
+      </Button>
+    );
+  }
+
+  if (synced) {
+    return (
+      <Button
+        size={size}
+        variant="ghost"
+        icon={<Check size={compact ? 11 : 13} className="text-cyan" />}
+        onClick={() => onRemove(item)}
+        title="Synced to this device — click to remove the local copy"
+      >
+        {compact ? '' : 'Synced'}
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      size={size}
+      variant="ghost"
+      icon={<Download size={compact ? 11 : 13} />}
+      onClick={() => onSync(item)}
+      title="Sync to this device for offline viewing"
+    >
+      {compact ? '' : 'Sync'}
+    </Button>
   );
 }
 
@@ -1386,6 +1506,10 @@ function CollectionSheet({
   onClose,
   onPlay,
   onInfo,
+  syncedIds,
+  syncTransfers,
+  onSync,
+  onRemoveSync,
 }: {
   collection: Collection | null;
   ownerName: (i: MediaItem) => string;
@@ -1396,6 +1520,10 @@ function CollectionSheet({
   onClose: () => void;
   onPlay: (i: MediaItem) => void;
   onInfo: (i: MediaItem) => void;
+  syncedIds: Set<string>;
+  syncTransfers: Record<string, string>;
+  onSync: (i: MediaItem) => void;
+  onRemoveSync: (i: MediaItem) => void;
 }) {
   const [renaming, setRenaming] = React.useState(false);
   const [draft, setDraft] = React.useState('');
@@ -1417,6 +1545,14 @@ function CollectionSheet({
     : 0;
 
   if (!collection) return null;
+
+  // Peers' episodes not already synced or mid-sync — what a "Sync" button
+  // for a whole season or the whole collection actually has left to do.
+  const syncTargets = (items: MediaItem[]) =>
+    items.filter((i) => i.peerId && !syncedIds.has(i.id) && !syncTransfers[i.id]);
+  const syncMany = (items: MediaItem[]) => {
+    for (const item of syncTargets(items)) onSync(item);
+  };
 
   // Only our own titles can be rated here, and only a rating every one of them
   // already shares can be shown as the collection's — a season where one
@@ -1515,7 +1651,18 @@ function CollectionSheet({
             {collection.seasons.map(({ season, items }) => (
               <section key={season}>
                 {collection.kind === 'series' && collection.seasons.length > 1 && (
-                  <h3 className="label mb-2">Season {season}</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="label !mb-0">Season {season}</h3>
+                    {syncTargets(items).length > 0 && (
+                      <button
+                        onClick={() => syncMany(items)}
+                        className="text-2xs text-dim hover:text-gold flex items-center gap-1"
+                      >
+                        <Download size={10} />
+                        Sync season
+                      </button>
+                    )}
+                  </div>
                 )}
                 <div className="space-y-1.5">
                   {items.map((item) => (
@@ -1567,6 +1714,14 @@ function CollectionSheet({
                         </div>
                       </div>
 
+                      <SyncControl
+                        item={item}
+                        synced={syncedIds.has(item.id)}
+                        transferId={syncTransfers[item.id]}
+                        onSync={onSync}
+                        onRemove={onRemoveSync}
+                        compact
+                      />
                       <Button size="xs" variant="ghost" onClick={() => onInfo(item)}>
                         Info
                       </Button>
@@ -1599,6 +1754,18 @@ function CollectionSheet({
               Grouped automatically from filenames. Rename it, or remove a title that does
               not belong.
             </p>
+            {/* Every episode not already local, all at once — the point of
+                grouping episodes into a collection in the first place is not
+                having to open each one to ask the same question. */}
+            {syncTargets(collection.items).length > 0 && (
+              <Button
+                size="sm"
+                icon={<Download size={13} />}
+                onClick={() => syncMany(collection.items)}
+              >
+                Sync all ({syncTargets(collection.items).length})
+              </Button>
+            )}
             {/*
               Undoing the whole collection, not one title at a time.
 

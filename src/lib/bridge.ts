@@ -336,6 +336,28 @@ export const api = {
      */
     setTracks: (id: string, audioLang: string, subtitleLang: string) =>
       call<void>('media_set_tracks', { id, audioLang, subtitleLang }),
+    /**
+     * Pulls one title into this device's own synced library, for offline
+     * viewing. Returns a transfer id straight away — the download itself
+     * shows up wherever a transfer's progress already does.
+     *
+     * The video comes across whole, embedded audio tracks and all: no
+     * `?audio=` remux, so a multi-language release keeps every track it
+     * already had rather than syncing only the one the player happened to
+     * be on.
+     */
+    sync: (item: MediaItem) =>
+      call<string>('media_sync_start', {
+        itemId: item.id,
+        videoUrl: item.streamUrl,
+        videoRelPath: item.relPath,
+        size: item.sizeBytes,
+        subtitleUrls: (item.subtitles ?? []).map((s) => s.url),
+      }),
+    /** Original item ids that already have a local, synced copy. */
+    syncedIds: () => call<string[]>('media_synced_ids'),
+    /** Deletes a synced copy and drops it off Theatre's shelf. */
+    removeSynced: (itemId: string) => call<boolean>('media_sync_remove', { id: itemId }),
   },
   /**
    * Installing a newer version.

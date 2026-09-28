@@ -1390,6 +1390,56 @@ pub fn files_offer(
     crate::transfers::offer(&app, &state, &peer_id, paths, via_chat.unwrap_or(false))
 }
 
+/// Pulls a title from a peer into this device's own synced library -
+/// a movie, one episode, or one of many calls a season/collection sync
+/// makes, one title at a time.
+///
+/// Returns the transfer id straight away, generated here rather than in
+/// `sync_media`, so the frontend can watch progress on it before the
+/// download has even started.
+#[tauri::command]
+pub fn media_sync_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    item_id: String,
+    video_url: String,
+    video_rel_path: String,
+    size: u64,
+    subtitle_urls: Vec<String>,
+) -> String {
+    let transfer_id = uid();
+    let owned = (*state).clone();
+    tauri::async_runtime::spawn(crate::transfers::sync_media(
+        app,
+        owned,
+        transfer_id.clone(),
+        item_id,
+        video_url,
+        video_rel_path,
+        size,
+        subtitle_urls,
+    ));
+    transfer_id
+}
+
+/// Titles that already have a local copy, by their original id.
+#[tauri::command]
+pub fn media_synced_ids(state: State<'_, AppState>) -> Vec<String> {
+    crate::transfers::synced_ids(&state)
+}
+
+/// Deletes a synced copy and rescans, so it drops off Theatre's shelf the
+/// same moment it drops off disk.
+#[tauri::command]
+pub fn media_sync_remove(app: AppHandle, state: State<'_, AppState>, id: String) -> bool {
+    let removed = crate::transfers::remove_synced(&state, &id);
+    if removed {
+        let items = media::refresh(&state);
+        let _ = app.emit("media:changed", &items);
+    }
+    removed
+}
+
 /// Starts (or resumes) pulling a file a peer has offered.
 ///
 /// `dir` is where the person receiving it wants it: a folder they picked for

@@ -289,6 +289,21 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
         [],
     );
 
+    // A title pulled from a peer onto this device, for offline viewing.
+    //
+    // Keyed by the *original* item id (peer share id : relative path), not
+    // the synced copy's own id, which belongs to a different share entirely
+    // - this is what lets Theatre ask "do I already have this one" about the
+    // title someone is looking at, not about the local copy it would become.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS synced (
+            item_id    TEXT PRIMARY KEY,
+            local_path TEXT NOT NULL,
+            synced_at  INTEGER NOT NULL
+        )",
+        [],
+    );
+
     Ok(())
 }
 

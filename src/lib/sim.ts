@@ -225,6 +225,8 @@ let mappings: PortMapping[] = [
 ];
 
 const transfers = new Map<string, Transfer>();
+/** Original item ids synced to a local copy, for media_synced_ids. */
+const syncedIds = new Set<string>();
 let shares: Share[] = [];
 let started = false;
 
@@ -669,6 +671,54 @@ export async function handle(cmd: string, args: any): Promise<any> {
       }
       emit('media:changed', media.map((m) => ({ ...m })));
       return null;
+    }
+
+    case 'media_sync_start': {
+      const original = media.find((m) => m.id === args.itemId);
+      const t: Transfer = {
+        id: uid(),
+        name: `${original?.title ?? 'Video'}.mkv`,
+        size: args.size || original?.sizeBytes || 0,
+        sent: 0,
+        peerId: original?.peerId ?? '',
+        direction: 'in',
+        state: 'active',
+        speedBps: 0,
+        startedAt: Date.now(),
+        mime: 'video/x-matroska',
+      };
+      transfers.set(t.id, t);
+      driveTransfer(t.id);
+
+      // Real sync rescans the synced share once the bytes land, which is
+      // what makes the copy show up in Theatre — mirrored here so the sim
+      // exercises the same "it just appears" behaviour.
+      const syncedId = `synced:${args.itemId}`;
+      const watchForDone = () => {
+        const cur = transfers.get(t.id);
+        if (!cur) return;
+        if (cur.state !== 'done') {
+          setTimeout(watchForDone, 300);
+          return;
+        }
+        syncedIds.add(args.itemId);
+        if (original && !media.some((m) => m.id === syncedId)) {
+          media.push({ ...original, id: syncedId, peerId: undefined, shareId: 'lantern-synced' });
+        }
+        emit('media:changed', media.map((m) => ({ ...m })));
+      };
+      setTimeout(watchForDone, 300);
+      return t.id;
+    }
+
+    case 'media_synced_ids':
+      return [...syncedIds];
+
+    case 'media_sync_remove': {
+      const had = syncedIds.delete(args.id);
+      media = media.filter((m) => m.id !== `synced:${args.id}`);
+      emit('media:changed', media.map((m) => ({ ...m })));
+      return had;
     }
 
     /* ------------------------------------------------------- hosting */
