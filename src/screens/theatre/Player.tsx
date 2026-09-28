@@ -176,6 +176,44 @@ export function Player({
     setRepeatB(null);
   }, [item.id]);
 
+  /**
+   * Double-tap the left or right edge to seek, the way VLC's mobile app
+   * does. Layered on top of the existing single-tap-to-toggle-chrome
+   * surface rather than replacing any of it: a fast second tap in the same
+   * edge within the window additionally seeks, on top of whatever the taps
+   * already did on their own (the first showed the controls, is all).
+   * Nothing here calls preventDefault, so that behaviour is untouched.
+   */
+  const lastEdgeTap = React.useRef<{ time: number; zone: 'left' | 'right' | null }>({
+    time: 0,
+    zone: null,
+  });
+  const [seekFlash, setSeekFlash] = React.useState<{ zone: 'left' | 'right'; amount: number } | null>(
+    null,
+  );
+  const seekFlashTimer = React.useRef<ReturnType<typeof setTimeout>>();
+  const onStageTouchEnd = (e: React.TouchEvent) => {
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xPct = (touch.clientX - rect.left) / rect.width;
+    // The middle third is the toggle-chrome zone and stays exactly that -
+    // a middle tap here does not chain into anything.
+    const zone: 'left' | 'right' | null = xPct < 0.35 ? 'left' : xPct > 0.65 ? 'right' : null;
+    if (!zone) return;
+
+    const now = Date.now();
+    const chained = now - lastEdgeTap.current.time < 400 && lastEdgeTap.current.zone === zone;
+    lastEdgeTap.current = { time: now, zone };
+    if (!chained) return;
+
+    const delta = zone === 'left' ? -10 : 10;
+    seekTo(time + delta);
+    setSeekFlash((f) => ({ zone, amount: f && f.zone === zone ? f.amount + delta : delta }));
+    clearTimeout(seekFlashTimer.current);
+    seekFlashTimer.current = setTimeout(() => setSeekFlash(null), 650);
+  };
+
   const subtitles = item.subtitles ?? [];
   const audioTracks = item.audioTracks ?? [];
 
@@ -863,8 +901,38 @@ export function Player({
           broadcast(next, time);
         }}
         onDoubleClick={() => void toggleFullscreen()}
+        onTouchEnd={onStageTouchEnd}
         className="absolute inset-0 z-10"
       />
+
+      {/* The double-tap-to-seek flash, VLC's own confirmation that the tap
+          landed and counted rather than a seek that happened with nothing
+          on screen to say so. */}
+      <AnimatePresence>
+        {seekFlash && (
+          <motion.div
+            key={seekFlash.zone}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className={cn(
+              'absolute inset-y-0 z-10 w-1/3 flex items-center justify-center pointer-events-none',
+              seekFlash.zone === 'left' ? 'left-0' : 'right-0',
+            )}
+          >
+            <div className="rounded-full bg-black/60 h-20 w-20 grid place-items-center">
+              {seekFlash.zone === 'left' ? (
+                <RotateCcw size={22} className="text-white" />
+              ) : (
+                <RotateCw size={22} className="text-white" />
+              )}
+              <span className="absolute mt-9 text-[11px] font-semibold text-white tabular-nums">
+                {seekFlash.amount > 0 ? `+${seekFlash.amount}s` : `${seekFlash.amount}s`}
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/*
         The chrome is always mounted and fades with a CSS transition. A
