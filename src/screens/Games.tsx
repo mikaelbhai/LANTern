@@ -183,6 +183,11 @@ function GamesHub() {
   const call = useStore((s) => s.call);
   const setGameSession = useStore((s) => s.setGameSession);
   const toast = useStore((s) => s.toast);
+  // The rejoin banner floats fixed at the bottom of the screen — see
+  // LeaveGuard.tsx — over whatever is there rather than pushing it up, so
+  // the last row of the game list needs somewhere to scroll clear to while
+  // it's showing.
+  const heldGame = useStore((s) => s.heldGame);
 
   // In a call, the people in it. Otherwise everyone online.
   //
@@ -276,7 +281,7 @@ function GamesHub() {
       />
 
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 scroll-y p-4">
+        <div className={cn('flex-1 min-w-0 scroll-y p-4', heldGame && 'pb-24')}>
           {/* Before the board: who was asked, and who has actually turned
               up. The host starts it from here. */}
           <GameLobby />
