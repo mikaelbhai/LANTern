@@ -61,7 +61,16 @@ pub fn router(state: AppState) -> Router {
 /// machine answers on. The window fetches from this device's own LAN address,
 /// because the manifest it reads is the same one peers read.
 fn from_this_machine(state: &AppState, addr: SocketAddr) -> bool {
-    let ip = addr.ip();
+    // A dual-stack listener can hand back a request's source as an
+    // IPv4-mapped IPv6 address - `::ffff:192.168.1.5` rather than
+    // `192.168.1.5` - depending on the platform and how the connection
+    // actually arrived. `is_loopback` does not recognise that shape as
+    // loopback, and the string match against this device's own recorded
+    // interfaces (always plain IPv4) would not either: the one request that
+    // most needs to pass this check, the device asking for its own library,
+    // would fail it exactly when the difference matters. Canonicalising
+    // first is what makes both checks see the same address either way.
+    let ip = addr.ip().to_canonical();
     let mine = ip.to_string();
     state.with(|s| {
         s.trust_local_requests
@@ -1651,8 +1660,40 @@ pub async fn serve(state: AppState, port: u16) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{now_ms, Share};
+    use crate::model::{now_ms, Interface, Share};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A device asking for its own library over its own LAN address must
+    /// always pass this check - see the function's own doc comment - and a
+    /// dual-stack listener handing that request back as an IPv4-mapped IPv6
+    /// address is exactly the shape that used to fail it silently.
+    #[test]
+    fn a_mapped_ipv4_address_is_still_recognised_as_this_machine() {
+        let state = AppState::new();
+        state.with(|s| {
+            s.trust_local_requests = true;
+            s.net.interfaces.push(Interface {
+                name: "eth0".into(),
+                ip: "192.168.1.5".into(),
+                kind: "wifi".into(),
+                mask: "255.255.255.0".into(),
+                cidr: "192.168.1.0/24".into(),
+            });
+        });
+
+        let plain: SocketAddr = "192.168.1.5:54321".parse().unwrap();
+        assert!(from_this_machine(&state, plain));
+
+        let mapped: SocketAddr = "[::ffff:192.168.1.5]:54321".parse().unwrap();
+        assert!(from_this_machine(&state, mapped), "an IPv4-mapped IPv6 source was refused");
+
+        let mapped_loopback: SocketAddr = "[::ffff:127.0.0.1]:54321".parse().unwrap();
+        assert!(from_this_machine(&state, mapped_loopback), "mapped loopback was refused");
+
+        // A genuinely different machine, still refused.
+        let elsewhere: SocketAddr = "192.168.1.9:54321".parse().unwrap();
+        assert!(!from_this_machine(&state, elsewhere));
+    }
 
     /// Serves a temp directory and returns the address it is reachable on.
     async fn serve_fixture(mode: ShareMode) -> (std::net::SocketAddr, std::path::PathBuf) {
