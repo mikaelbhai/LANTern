@@ -19,6 +19,7 @@ import {
   Smile,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
 import { Badge, Button, IconButton, Modal, Tooltip } from '../../components/ui';
@@ -631,6 +632,11 @@ function TransferAttachment({
     }
   };
 
+  // Declining is cancelling before ever accepting: same command, same
+  // "cancelled" state Files.tsx already shows a retry chip for — nothing new
+  // for the sender's side to learn, just reached earlier.
+  const decline = () => void api.files.cancel(t.id);
+
   if (t.direction === 'in' && (t.state === 'queued' || saving)) {
     return (
       <div className="flex items-center gap-2.5 p-2 rounded-card border border-gold/40 bg-gold/[0.06] max-w-sm">
@@ -651,6 +657,30 @@ function TransferAttachment({
         </IconButton>
         <IconButton label="Download" size="sm" disabled={saving} onClick={() => void download()}>
           <Download size={14} />
+        </IconButton>
+        <IconButton label="Decline" size="sm" disabled={saving} onClick={decline}>
+          <X size={13} />
+        </IconButton>
+      </div>
+    );
+  }
+
+  // The other side of the same wait: sent, not yet accepted. Falling through
+  // to the "done" chip below would show it as a finished, openable file when
+  // nothing has moved yet - this is the honest version, with the one thing
+  // the sender can still do about it.
+  if (t.direction === 'out' && t.state === 'queued') {
+    return (
+      <div className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm">
+        <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-muted shrink-0">
+          <Upload size={14} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs truncate">{t.name}</div>
+          <div className="text-2xs text-muted">Waiting for them to accept</div>
+        </div>
+        <IconButton label="Withdraw" size="sm" onClick={decline}>
+          <X size={13} />
         </IconButton>
       </div>
     );
