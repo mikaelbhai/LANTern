@@ -1562,6 +1562,18 @@ pub fn files_reveal(app: AppHandle, path: String) {
     reveal(&app, &path);
 }
 
+/// Whether a transfer's saved copy is still where it was put.
+///
+/// A received file can leave without this app's help - moved, renamed, or
+/// deleted by its own expiry - and the transfer record has no way to know
+/// until something asks. Cheap enough to check on demand rather than watch
+/// for: one stat call, no polling, right before the row that would open it
+/// decides whether to offer that at all.
+#[tauri::command]
+pub fn files_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_file()
+}
+
 #[tauri::command]
 pub fn files_open(app: AppHandle, path: String) {
     use tauri_plugin_opener::OpenerExt;

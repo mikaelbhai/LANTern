@@ -29,7 +29,7 @@ import { Markdown, isJumboEmoji, openLink } from '../../lib/markdown';
 import { QUICK_REACTIONS } from '../../lib/emoji';
 import { pickFolder } from '../../lib/picker';
 import { useStore } from '../../lib/store';
-import { useClickOutside } from '../../lib/hooks';
+import { useClickOutside, useFileExists } from '../../lib/hooks';
 import {
   clockTime,
   cn,
@@ -789,6 +789,12 @@ function MediaModal({ attachment, onClose }: { attachment: Attachment; onClose: 
   const t = useStore((s) => (attachment.transferId ? s.transfers[attachment.transferId] : undefined));
   const toast = useStore((s) => s.toast);
   const path = t?.localPath;
+  // `path` says a transfer once landed somewhere, not that it is still
+  // there — moved, renamed, deleted by hand, or by its own expiry are all
+  // real, and Open/Show in folder have no error of their own to catch when
+  // the target is gone; the operating system's own "cannot find" dialog is
+  // what said so instead.
+  const stillThere = useFileExists(path);
   const [busy, setBusy] = React.useState(false);
 
   const saveCopy = async () => {
@@ -826,7 +832,7 @@ function MediaModal({ attachment, onClose }: { attachment: Attachment; onClose: 
             </div>
           </div>
 
-          {path ? (
+          {path && stillThere !== false ? (
             <div className="flex flex-wrap gap-2">
               <Button size="sm" icon={<ExternalLink size={13} />} onClick={() => void api.files.open(path)}>
                 Open
@@ -840,7 +846,9 @@ function MediaModal({ attachment, onClose }: { attachment: Attachment; onClose: 
             </div>
           ) : (
             <p className="text-2xs text-muted">
-              This has not been downloaded to this device yet — save it first.
+              {path
+                ? "This copy is no longer on disk — it may have moved, been deleted, or expired."
+                : 'This has not been downloaded to this device yet — save it first.'}
             </p>
           )}
         </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { pushLayer } from './backstack';
+import { api } from './bridge';
 
 export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = React.useState(
@@ -159,4 +160,36 @@ export function useBackDismiss(open: boolean, onDismiss: () => void): void {
     if (!open) return;
     return pushLayer(() => handler.current());
   }, [open]);
+}
+
+/**
+ * Whether a saved copy is still where a transfer left it.
+ *
+ * Checked once when the path appears, not watched — a file that leaves
+ * outside this app (moved, renamed, deleted, expired) has no event to tell
+ * this about it either way, so "still there" is only ever as fresh as the
+ * last time something asked. `undefined` while unknown, so a row can wait
+ * rather than assume either answer before the check returns.
+ */
+export function useFileExists(path: string | null | undefined): boolean | undefined {
+  const [exists, setExists] = React.useState<boolean | undefined>(undefined);
+
+  React.useEffect(() => {
+    setExists(undefined);
+    if (!path) return;
+    let cancelled = false;
+    void api.files
+      .exists(path)
+      .then((v) => {
+        if (!cancelled) setExists(v);
+      })
+      .catch(() => {
+        if (!cancelled) setExists(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  return exists;
 }

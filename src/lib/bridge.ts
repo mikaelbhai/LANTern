@@ -254,6 +254,9 @@ export const api = {
      */
     saveCopy: (path: string, destDir: string) =>
       call<string>('files_save_copy', { path, destDir }),
+    /** Whether a saved copy is still where it was put — moved, renamed, or
+     * deleted outside this app, or by its own expiry, are all real. */
+    exists: (path: string) => call<boolean>('files_exists', { path }),
   },
   /** The popup in the corner of the screen. Desktop only; a no-op elsewhere. */
   hud: {

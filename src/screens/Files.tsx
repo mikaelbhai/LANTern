@@ -50,7 +50,7 @@ import {
   mimeKind,
   relativeTime,
 } from '../lib/utils';
-import { useNow } from '../lib/hooks';
+import { useFileExists, useNow } from '../lib/hooks';
 import type { StagedEntry, Transfer } from '../lib/types';
 import { readText } from '../lib/clipboard';
 import { pickFolder } from '../lib/picker';
@@ -412,6 +412,11 @@ function TransferRow({
   const peer = useStore((s) => s.peers[t.peerId]);
   const now = useNow();
   const done = t.state === 'done';
+  // Undefined while the check is in flight, so the buttons wait rather than
+  // flash on then off. `t.localPath` alone was not enough to promise the
+  // file is still there — moved, renamed, deleted by hand, or by its own
+  // expiry are all things that happen outside this app's notice.
+  const stillThere = useFileExists(done ? t.localPath : undefined);
 
   return (
     <li className="group flex items-center gap-3 px-4 h-14 hover:bg-raised/40 transition-colors">
@@ -449,21 +454,28 @@ function TransferRow({
       </div>
 
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        {mimeKind(t.mime, t.name) === 'image' && (
-          <Button size="xs" variant="ghost" onClick={onPreview}>
-            Preview
-          </Button>
+        {done && t.localPath && stillThere !== false && (
+          <>
+            {mimeKind(t.mime, t.name) === 'image' && (
+              <Button size="xs" variant="ghost" onClick={onPreview}>
+                Preview
+              </Button>
+            )}
+            <Button size="xs" variant="ghost" onClick={() => void api.files.open(t.localPath!)}>
+              Open
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void api.files.reveal(t.localPath!)}
+            >
+              Show in folder
+            </Button>
+          </>
         )}
-        <Button size="xs" variant="ghost" onClick={() => void api.files.open(t.localPath ?? t.name)}>
-          Open
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={() => void api.files.reveal(t.localPath ?? t.name)}
-        >
-          Show in folder
-        </Button>
+        {done && t.localPath && stillThere === false && (
+          <span className="text-2xs text-muted">No longer on disk</span>
+        )}
       </div>
     </li>
   );

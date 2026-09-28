@@ -177,6 +177,7 @@ pub fn run() {
             commands::files_reveal,
             commands::files_open,
             commands::files_save_copy,
+            commands::files_exists,
             commands::host_list,
             commands::host_create,
             commands::host_set_running,
