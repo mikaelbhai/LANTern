@@ -26,7 +26,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
-import { Badge, Button, IconButton, Slider, Tooltip } from '../../components/ui';
+import { Badge, Button, IconButton, Modal, Slider, Tooltip } from '../../components/ui';
 import { useStore } from '../../lib/store';
 import { startHoldTone, startRingback, sfx } from '../../lib/audio';
 import { ring } from '../../lib/ringer';
@@ -105,7 +105,7 @@ export function CallOverlay() {
   const [handUp, setHandUp] = React.useState(false);
   const [chatOpen, setChatOpen] = React.useState(false);
   const [mixerOpen, setMixerOpen] = React.useState(false);
-  const [reactionsOpen, setReactionsOpen] = React.useState(false);
+  const [moreOpen, setMoreOpen] = React.useState(false);
   const [sourcePicker, setSourcePicker] = React.useState(false);
   const [floatReactions, setFloatReactions] = React.useState<
     { id: number; emoji: string; peerId: string }[]
@@ -236,7 +236,6 @@ export function CallOverlay() {
     const id = Date.now() + Math.random();
     setFloatReactions((r) => [...r, { id, emoji, peerId: profile.id }]);
     setTimeout(() => setFloatReactions((r) => r.filter((x) => x.id !== id)), 2300);
-    setReactionsOpen(false);
   };
 
   /**
@@ -282,44 +281,79 @@ export function CallOverlay() {
     // The live entry when we have it, the name we recorded when we do not.
     const fromName = from?.name ?? other?.name ?? 'Unknown peer';
     return (
-      <div className="fixed inset-0 z-[95] scrim grid place-items-center">
-        <motion.div
-          initial={{ scale: 0.94, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="panel p-8 flex flex-col items-center gap-4 w-[300px]"
-        >
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="fixed inset-0 z-[95] flex flex-col safe-t"
+        style={{
+          // The caller's own colour, full-bleed and dim rather than the
+          // flat scrim every other layer in this app uses — a call is the
+          // one moment this application asks for the whole screen, the
+          // same way the person it is from gets the whole screen on a
+          // phone call.
+          background: from?.color
+            ? `radial-gradient(circle at 50% 15%, color-mix(in srgb, ${from.color} 35%, #0a0a0c) 0%, #0a0a0c 70%)`
+            : '#0a0a0c',
+        }}
+      >
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6">
           <div className="relative">
-            <span className="absolute inset-0 rounded-full animate-ring-out border border-gold" />
+            <span className="absolute inset-0 rounded-full animate-ring-out border-2 border-white/40" />
             <span
-              className="absolute inset-0 rounded-full animate-ring-out border border-gold"
+              className="absolute inset-0 rounded-full animate-ring-out border-2 border-white/40"
               style={{ animationDelay: '0.6s' }}
             />
-            <Avatar
-              name={fromName}
-              color={from?.color}
-              emoji={from?.emoji}
-              size={72}
-            />
+            <Avatar name={fromName} color={from?.color} emoji={from?.emoji} size={132} />
           </div>
           <div className="text-center">
-            <div className="text-base font-medium">{fromName}</div>
-            <div className="text-xs text-dim mt-0.5">
-              {call.incomingFrom ? `Incoming ${call.kind} call` : `Calling…`}
+            <div className="text-[28px] font-semibold text-white leading-tight">{fromName}</div>
+            <div className="text-sm text-white/60 mt-1.5">
+              {call.incomingFrom
+                ? `Incoming ${call.kind} call…`
+                : `Calling ${call.kind === 'video' ? 'video' : 'voice'}…`}
             </div>
           </div>
-          <div className="flex gap-3 mt-2">
-            <Button variant="danger" size="lg" onClick={endCall} icon={<PhoneOff size={16} />}>
+        </div>
+
+        {/*
+          Bottom row, WhatsApp's own shape for it: two large circles, red on
+          the left, the answer colour on the right, nothing between them
+          that needs reading under pressure — a call ringing is not the
+          moment for a menu.
+        */}
+        <div
+          className={cn(
+            'shrink-0 flex items-center justify-center gap-16 pb-10 px-6',
+            '[padding-bottom:max(2.5rem,env(safe-area-inset-bottom))]',
+          )}
+        >
+          <div className="flex flex-col items-center gap-2.5">
+            <button
+              onClick={endCall}
+              aria-label={call.incomingFrom ? 'Decline' : 'Cancel'}
+              className="h-16 w-16 rounded-full grid place-items-center bg-danger text-white shadow-xl active:scale-95 transition-transform"
+            >
+              <PhoneOff size={26} />
+            </button>
+            <span className="text-2xs text-white/70">
               {call.incomingFrom ? 'Decline' : 'Cancel'}
-            </Button>
-            {/* Only the side being called has anything to answer. */}
-            {call.incomingFrom && (
-              <Button variant="cyan" size="lg" onClick={answerCall} icon={<Radio size={16} />}>
-                Answer
-              </Button>
-            )}
+            </span>
           </div>
-        </motion.div>
-      </div>
+          {/* Only the side being called has anything to answer. */}
+          {call.incomingFrom && (
+            <div className="flex flex-col items-center gap-2.5">
+              <button
+                onClick={answerCall}
+                aria-label="Answer"
+                className="h-16 w-16 rounded-full grid place-items-center bg-cyan text-[#04211e] shadow-xl active:scale-95 transition-transform animate-pulse"
+              >
+                <Radio size={26} />
+              </button>
+              <span className="text-2xs text-white/70">Answer</span>
+            </div>
+          )}
+        </div>
+      </motion.div>
     );
   }
 
@@ -599,17 +633,22 @@ export function CallOverlay() {
         </div>
       )}
 
-      {/* controls */}
+      {/*
+        controls
+
+        WhatsApp's own in-call bar is four or five circles and nothing
+        else - mute, video, speaker, more, hang up - because a call is
+        answered by a thumb that already knows where those are, not read.
+        Everything this app can do that WhatsApp's cannot (screen share,
+        reactions, a hand raised, the volume mixer, hold, local recording)
+        still lives one tap away, in the sheet the "More" circle opens,
+        rather than crowded into the row every call shows whether or not
+        it is ever used.
+      */}
       <footer
         className={cn(
-          'shrink-0 border-t border-edge bg-surface px-4 pt-2.5 flex items-center justify-center gap-1.5 flex-wrap',
-          // `py-2.5 safe-b` on one element let two rules fight over the same
-          // padding-bottom property, with no guarantee which one the build
-          // keeps — the call controls could end up flush against the
-          // gesture-nav strip depending on class order alone. Self-contained
-          // instead: at least the usual gap, or the real inset, never both
-          // silently discarded for the other.
-          '[padding-bottom:max(0.625rem,env(safe-area-inset-bottom))]',
+          'shrink-0 border-t border-edge bg-surface px-4 pt-3 flex items-center justify-center gap-3',
+          '[padding-bottom:max(0.75rem,env(safe-area-inset-bottom))]',
         )}
       >
         <ControlButton
@@ -617,7 +656,8 @@ export function CallOverlay() {
           active={!selfMuted}
           danger={selfMuted}
           onClick={() => setSelfMuted(!selfMuted)}
-          icon={selfMuted ? <MicOff size={16} /> : <Mic size={16} />}
+          icon={selfMuted ? <MicOff size={20} /> : <Mic size={20} />}
+          big
         />
 
         {/*
@@ -632,115 +672,127 @@ export function CallOverlay() {
           active={selfCam}
           danger={!selfCam}
           onClick={() => void toggleCamera()}
-          icon={selfCam ? <Video size={16} /> : <VideoOff size={16} />}
+          icon={selfCam ? <Video size={20} /> : <VideoOff size={20} />}
+          big
         />
-
-        {selfCam && multiCam && (
-          <ControlButton
-            label="Flip camera"
-            onClick={() => void rtc.switchCamera()}
-            icon={<SwitchCamera size={16} />}
-          />
-        )}
 
         {hasEarpiece && (
           <ControlButton
             label={speakerOn ? 'Switch to earpiece' : 'Switch to speaker'}
             active={speakerOn}
             onClick={() => setSpeakerOverride(!speakerOn)}
-            icon={speakerOn ? <Volume2 size={16} /> : <Ear size={16} />}
+            icon={speakerOn ? <Volume2 size={20} /> : <Ear size={20} />}
+            big
           />
         )}
 
         <ControlButton
-          label={call.screenShare ? 'Stop sharing' : 'Share screen'}
-          active={!!call.screenShare}
-          onClick={toggleShare}
-          icon={<MonitorUp size={16} />}
+          label="More"
+          active={moreOpen}
+          onClick={() => setMoreOpen(true)}
+          icon={<Grid2X2 size={20} />}
+          big
         />
 
-        <ControlButton
-          label={handUp ? 'Lower hand' : 'Raise hand'}
-          active={handUp}
-          onClick={() => {
-            setHandUp(!handUp);
-            sfx.click();
-          }}
-          icon={<Hand size={16} />}
-        />
-
-        <div className="relative">
-          <ControlButton
-            label="React"
-            active={reactionsOpen}
-            onClick={() => setReactionsOpen(!reactionsOpen)}
-            icon={<Smile size={16} />}
-          />
-          <AnimatePresence>
-            {reactionsOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: 6, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 6, scale: 0.95 }}
-                className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 glass border border-edge rounded-pill px-2 py-1.5 flex gap-1 shadow-xl"
-              >
-                {REACTIONS.map((e) => (
-                  <button
-                    key={e}
-                    onClick={() => react(e)}
-                    className="h-8 w-8 grid place-items-center text-lg rounded-full hover:bg-raised hover:scale-110 transition-transform"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        <ControlButton
-          label="In-call chat"
-          active={chatOpen}
-          onClick={() => {
-            setChatOpen(!chatOpen);
-            setMixerOpen(false);
-          }}
-          icon={<MessageSquare size={16} />}
-        />
-
-        <ControlButton
-          label="Volume mixer"
-          active={mixerOpen}
-          onClick={() => {
-            setMixerOpen(!mixerOpen);
-            setChatOpen(false);
-          }}
-          icon={<Sliders size={16} />}
-        />
-
-        <ControlButton
-          label={call.state === 'held' ? 'Resume' : 'Hold'}
-          active={call.state === 'held'}
-          onClick={() =>
-            updateCall((c) => ({ ...c, state: c.state === 'held' ? 'active' : 'held' }))
-          }
-          icon={call.state === 'held' ? <Play size={16} /> : <Pause size={16} />}
-        />
-
-        <ControlButton
-          label={call.recording ? 'Stop recording' : 'Record locally'}
-          active={call.recording}
-          danger={call.recording}
-          onClick={() => updateCall((c) => ({ ...c, recording: !c.recording }))}
-          icon={<span className="h-3 w-3 rounded-full border-2 border-current" />}
-        />
-
-        <div className="w-px h-7 bg-edge mx-1" />
-
-        <Button variant="danger" size="md" icon={<PhoneOff size={15} />} onClick={endCall}>
-          Leave
-        </Button>
+        {/* The one WhatsApp draws bigger than the rest, and the one reason
+            nobody has to go looking for it: it is always in the same place,
+            plain red, no label, exactly where a thumb expects a call to
+            end. */}
+        <button
+          onClick={endCall}
+          aria-label="Leave"
+          className="h-14 w-14 rounded-full grid place-items-center bg-danger text-white shadow-lg active:scale-95 transition-transform"
+        >
+          <PhoneOff size={22} />
+        </button>
       </footer>
+
+      <Modal open={moreOpen} onClose={() => setMoreOpen(false)} title="Call options" width="max-w-sm">
+        <div className="flex gap-1.5 justify-center pb-3 mb-1 border-b border-edge">
+          {REACTIONS.map((e) => (
+            <button
+              key={e}
+              onClick={() => {
+                react(e);
+                setMoreOpen(false);
+              }}
+              className="h-9 w-9 grid place-items-center text-lg rounded-full hover:bg-raised hover:scale-110 transition-transform"
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-4 gap-1">
+          {selfCam && multiCam && (
+            <MoreTile
+              label="Flip camera"
+              icon={<SwitchCamera size={18} />}
+              onClick={() => {
+                void rtc.switchCamera();
+                setMoreOpen(false);
+              }}
+            />
+          )}
+          <MoreTile
+            label={call.screenShare ? 'Stop sharing' : 'Share screen'}
+            icon={<MonitorUp size={18} />}
+            active={!!call.screenShare}
+            onClick={() => {
+              toggleShare();
+              setMoreOpen(false);
+            }}
+          />
+          <MoreTile
+            label={handUp ? 'Lower hand' : 'Raise hand'}
+            icon={<Hand size={18} />}
+            active={handUp}
+            onClick={() => {
+              setHandUp(!handUp);
+              sfx.click();
+              setMoreOpen(false);
+            }}
+          />
+          <MoreTile
+            label="In-call chat"
+            icon={<MessageSquare size={18} />}
+            active={chatOpen}
+            onClick={() => {
+              setChatOpen(!chatOpen);
+              setMixerOpen(false);
+              setMoreOpen(false);
+            }}
+          />
+          <MoreTile
+            label="Volume mixer"
+            icon={<Sliders size={18} />}
+            active={mixerOpen}
+            onClick={() => {
+              setMixerOpen(!mixerOpen);
+              setChatOpen(false);
+              setMoreOpen(false);
+            }}
+          />
+          <MoreTile
+            label={call.state === 'held' ? 'Resume' : 'Hold'}
+            icon={call.state === 'held' ? <Play size={18} /> : <Pause size={18} />}
+            active={call.state === 'held'}
+            onClick={() => {
+              updateCall((c) => ({ ...c, state: c.state === 'held' ? 'active' : 'held' }));
+              setMoreOpen(false);
+            }}
+          />
+          <MoreTile
+            label={call.recording ? 'Stop recording' : 'Record locally'}
+            icon={<span className="h-3 w-3 rounded-full border-2 border-current" />}
+            active={call.recording}
+            danger={call.recording}
+            onClick={() => {
+              updateCall((c) => ({ ...c, recording: !c.recording }));
+              setMoreOpen(false);
+            }}
+          />
+        </div>
+      </Modal>
 
       <ShareSourcePicker open={sourcePicker} onClose={() => setSourcePicker(false)} />
     </div>
@@ -748,6 +800,47 @@ export function CallOverlay() {
 }
 
 function ControlButton({
+  label,
+  icon,
+  onClick,
+  active,
+  danger,
+  big,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+  danger?: boolean;
+  /** The primary bar's own size — WhatsApp's four circles read as buttons
+      from across the room; the old 40px size was sized for a row of ten. */
+  big?: boolean;
+}) {
+  return (
+    <Tooltip content={label}>
+      <button
+        onClick={onClick}
+        aria-label={label}
+        className={cn(
+          'rounded-full grid place-items-center transition-all border active:scale-95',
+          big ? 'h-14 w-14' : 'h-10 w-10',
+          danger
+            ? 'bg-danger/15 border-danger/50 text-danger'
+            : active
+              ? 'bg-gold/15 border-gold/50 text-gold shadow-glow'
+              : 'bg-raised border-edge text-dim hover:text-txt hover:border-edge-strong',
+        )}
+      >
+        {icon}
+      </button>
+    </Tooltip>
+  );
+}
+
+/** One tile in the "More" sheet — icon over label, the same shape a phone's
+    own share-sheet grid uses, because that is the gesture this is standing
+    in for: everything a call can do that does not fit four circles. */
+function MoreTile({
   label,
   icon,
   onClick,
@@ -761,22 +854,24 @@ function ControlButton({
   danger?: boolean;
 }) {
   return (
-    <Tooltip content={label}>
-      <button
-        onClick={onClick}
-        aria-label={label}
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center gap-1.5 p-2.5 rounded-input hover:bg-raised transition-colors"
+    >
+      <span
         className={cn(
-          'h-10 w-10 rounded-full grid place-items-center transition-all border active:scale-95',
+          'h-11 w-11 rounded-full grid place-items-center border',
           danger
             ? 'bg-danger/15 border-danger/50 text-danger'
             : active
-              ? 'bg-gold/15 border-gold/50 text-gold shadow-glow'
-              : 'bg-raised border-edge text-dim hover:text-txt hover:border-edge-strong',
+              ? 'bg-gold/15 border-gold/50 text-gold'
+              : 'bg-raised border-edge text-dim',
         )}
       >
         {icon}
-      </button>
-    </Tooltip>
+      </span>
+      <span className="text-2xs text-dim text-center leading-tight">{label}</span>
+    </button>
   );
 }
 
