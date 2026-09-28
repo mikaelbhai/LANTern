@@ -475,7 +475,14 @@ async fn stream_to_file(
         .await?;
 
     let mut written = from;
-    let mut buf = vec![0u8; 64 * 1024];
+    // Matches the sender's own chunk size (see send_open_file's identical
+    // comment) for the identical reason, and for a second one specific to
+    // this loop: every chunk also takes the state lock once to check for a
+    // pause, and 512KB steps mean an eighth as many of those per megabyte
+    // moved. On a fast LAN this loop was spending more time on syscalls and
+    // lock contention than on the network - reported as a gigabit uplink
+    // and a 400Mbps phone topping out around 40Mbps.
+    let mut buf = vec![0u8; 512 * 1024];
     let started = std::time::Instant::now();
     let mut last_emit = std::time::Instant::now();
 
