@@ -85,13 +85,14 @@
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
     /*
-     * Kills the 300ms wait a mobile browser spends deciding whether a tap was
-     * the first half of a double-tap zoom. Every button in the app felt
-     * fractionally late because of it, and it is also what lets the viewport
-     * meta tag stop disabling pinch-zoom: double-tap zoom is what that was
-     * turning off, and this turns off only that.
+     * `pan-x pan-y` rather than `manipulation`: scrolling stays, pinch-zoom
+     * does not - the touch-level backstop for the viewport meta tag's own
+     * `user-scalable=no`, since a browser is not required to honour that on
+     * its own. Still kills the 300ms tap-delay `manipulation` did, for the
+     * same reason it always did: neither gesture in this list includes
+     * double-tap-to-zoom.
      */
-    touch-action: manipulation;
+    touch-action: pan-x pan-y;
   }
 
   button {

@@ -24,7 +24,8 @@
         "center": true,
         "decorations": true,
         "theme": "Dark",
-        "backgroundColor": "#0C0F14"
+        "backgroundColor": "#0C0F14",
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {

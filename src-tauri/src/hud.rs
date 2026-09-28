@@ -51,6 +51,9 @@ fn ensure<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<tauri::WebviewWindow<
         .visible(false)
         // It is not a place you alt-tab to; it belongs to the app in the tray.
         .skip_taskbar(true)
+        // A 340px popup that zooms with the same hotkey as the main window
+        // is a popup that stops fitting its own corner.
+        .zoom_hotkeys_enabled(false)
         .build()
 }
 
