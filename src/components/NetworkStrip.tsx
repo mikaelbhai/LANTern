@@ -78,7 +78,7 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
     const load = () => {
       void api.net
         .connectionProfiles()
-        .then((p) => live && setProfiles(p))
+        .then((p) => live && setProfiles(p ?? []))
         .catch(() => live && setProfiles([]));
     };
     load();

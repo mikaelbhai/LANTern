@@ -37,12 +37,22 @@ export interface Overrides {
   titles: Record<string, string>;
   /** Item ids the user explicitly pulled out of any collection. */
   detached: string[];
+  /**
+   * Collection keys, in the order a drag put them in.
+   *
+   * Only the keys someone has actually dragged are here - a fresh grouping
+   * pass can produce a collection this list has never heard of (a new show
+   * just added), and that one falls in at the end, alphabetically among any
+   * other newcomers, rather than needing an entry it has no way to have.
+   */
+  order: string[];
 }
 
 export const emptyOverrides = (): Overrides => ({
   itemToKey: {},
   titles: {},
   detached: [],
+  order: [],
 });
 
 const ROMAN: Record<string, number> = {
@@ -181,7 +191,23 @@ export function groupLibrary(items: MediaItem[], overrides: Overrides): Grouping
     else singles.push(...c.items);
   }
 
+  // Alphabetical first, so anything nobody has dragged yet lands in a stable,
+  // predictable spot; the saved order then overrides positions for the keys
+  // it actually names, in place, leaving newcomers exactly where the
+  // alphabetical pass put them relative to each other.
   kept.sort((a, b) => a.title.localeCompare(b.title));
+  const order = overrides.order ?? [];
+  if (order.length) {
+    const rank = new Map(order.map((key, i) => [key, i]));
+    kept.sort((a, b) => {
+      const ra = rank.get(a.key);
+      const rb = rank.get(b.key);
+      if (ra !== undefined && rb !== undefined) return ra - rb;
+      if (ra !== undefined) return -1;
+      if (rb !== undefined) return 1;
+      return 0;
+    });
+  }
   singles.sort((a, b) => b.addedAt - a.addedAt);
 
   return { collections: kept, singles };

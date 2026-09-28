@@ -33,7 +33,7 @@ export function NetworkPrivacy() {
   const load = React.useCallback(() => {
     void api.net
       .connectionProfiles()
-      .then(setProfiles)
+      .then((p) => setProfiles(p ?? []))
       .catch(() => setProfiles([]));
   }, []);
 

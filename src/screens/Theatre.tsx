@@ -1,5 +1,5 @@
 import React from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, Reorder, motion } from 'framer-motion';
 import {
   ChevronLeft,
   ChevronRight,
@@ -376,6 +376,11 @@ export function Theatre() {
                   onPlay={play}
                   onInfo={setDetail}
                   onOpenCollection={setCollection}
+                  onReorder={
+                    row.label === 'Series & collections'
+                      ? (keys) => setOverrides({ ...overrides, order: keys })
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -684,6 +689,7 @@ function Row({
   onPlay,
   onInfo,
   onOpenCollection,
+  onReorder,
 }: {
   label: string;
   entries: RowEntry[];
@@ -691,6 +697,14 @@ function Row({
   onPlay: (i: MediaItem) => void;
   onInfo: (i: MediaItem) => void;
   onOpenCollection: (c: Collection) => void;
+  /**
+   * Present only on the collections shelf. Drag order is meaningful there —
+   * it is how you put the show you actually watch above forty others
+   * fetched once and never opened again — and meaningless everywhere else,
+   * where the row is already ordered by something with its own logic
+   * (progress, recency, the device it came from).
+   */
+  onReorder?: (keys: string[]) => void;
 }) {
   const scroller = React.useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = React.useState(false);
@@ -741,31 +755,59 @@ function Row({
           </button>
         )}
 
-        <div
-          ref={scroller}
-          onScroll={measure}
-          className="flex gap-3 overflow-x-auto no-scrollbar px-6 pb-2"
-        >
-          {entries.map((entry) =>
-            entry.type === 'item' ? (
-              <div key={entry.item.id} className="w-52 shrink-0">
-                <Card
-                  item={entry.item}
-                  owner={ownerName(entry.item)}
-                  onPlay={() => onPlay(entry.item)}
-                  onInfo={() => onInfo(entry.item)}
-                />
-              </div>
-            ) : (
-              <div key={entry.collection.key} className="w-52 shrink-0">
-                <CollectionCard
-                  collection={entry.collection}
-                  onOpen={() => onOpenCollection(entry.collection)}
-                />
-              </div>
-            ),
-          )}
-        </div>
+        {onReorder ? (
+          <Reorder.Group
+            as="div"
+            axis="x"
+            ref={scroller}
+            onScroll={measure}
+            values={entries.map((e) => (e.type === 'collection' ? e.collection.key : ''))}
+            onReorder={onReorder}
+            className="flex gap-3 overflow-x-auto no-scrollbar px-6 pb-2"
+          >
+            {entries.map((entry) =>
+              entry.type === 'collection' ? (
+                <Reorder.Item
+                  key={entry.collection.key}
+                  value={entry.collection.key}
+                  className="w-52 shrink-0 cursor-grab active:cursor-grabbing"
+                  whileDrag={{ scale: 1.04, zIndex: 10 }}
+                >
+                  <CollectionCard
+                    collection={entry.collection}
+                    onOpen={() => onOpenCollection(entry.collection)}
+                  />
+                </Reorder.Item>
+              ) : null,
+            )}
+          </Reorder.Group>
+        ) : (
+          <div
+            ref={scroller}
+            onScroll={measure}
+            className="flex gap-3 overflow-x-auto no-scrollbar px-6 pb-2"
+          >
+            {entries.map((entry) =>
+              entry.type === 'item' ? (
+                <div key={entry.item.id} className="w-52 shrink-0">
+                  <Card
+                    item={entry.item}
+                    owner={ownerName(entry.item)}
+                    onPlay={() => onPlay(entry.item)}
+                    onInfo={() => onInfo(entry.item)}
+                  />
+                </div>
+              ) : (
+                <div key={entry.collection.key} className="w-52 shrink-0">
+                  <CollectionCard
+                    collection={entry.collection}
+                    onOpen={() => onOpenCollection(entry.collection)}
+                  />
+                </div>
+              ),
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

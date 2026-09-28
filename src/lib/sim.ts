@@ -339,6 +339,23 @@ export async function handle(cmd: string, args: any): Promise<any> {
       emit('net:changed', net);
       return null;
 
+    // Falling through to the switch's `default: return null` here is what
+    // the browser sim used to do — silently, since nothing else in this
+    // file names the command. NetworkStrip and NetworkPrivacy both then
+    // handed that null straight to a `.filter`/`.map` with no guard,
+    // which is a real crash in the shipped Rust command too if it ever
+    // errors past its own `.catch`, but showed up first here because this
+    // was the one path with no fallback profile at all.
+    case 'net_connection_profiles':
+      return net.interfaces.map((i) => ({
+        alias: i.name,
+        category: 'private',
+        blocksPeers: false,
+      }));
+
+    case 'net_set_private':
+      return null;
+
     case 'net_add_manual_peer': {
       const p = makePeer({
         name: `${args.ip}`,
