@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Bell,
+  Camera,
   FolderOpen,
   Info,
   Lock,
@@ -38,7 +39,7 @@ import { useLocalStorage } from '../lib/hooks';
 import { api, on } from '../lib/bridge';
 import { clearUpdateProgress, showUpdateProgress } from '../lib/updateAlerts';
 import { pickFolder } from '../lib/picker';
-import { cn, formatBytes } from '../lib/utils';
+import { cn, formatBytes, squareImageDataUrl } from '../lib/utils';
 import { sfx } from '../lib/audio';
 import { copyText } from '../lib/clipboard';
 import type { ControlStatus, RatingsStatus, WifiStatus } from '../lib/types';
@@ -159,13 +160,73 @@ function Row({
 function ProfileTab() {
   const profile = useStore((s) => s.profile);
   const setProfile = useStore((s) => s.setProfile);
+  const toast = useStore((s) => s.toast);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [working, setWorking] = React.useState(false);
+
+  const pickPhoto = () => fileRef.current?.click();
+
+  const onPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setWorking(true);
+    try {
+      const dataUrl = await squareImageDataUrl(file, 128);
+      // The same 96KB a peer would refuse it at (see profile_send's own
+      // backstop) - caught here so a noisy photo fails with something
+      // useful rather than a silent send error the next time it's shared.
+      if (dataUrl.length > 96 * 1024) {
+        toast({
+          kind: 'error',
+          title: "That picture didn't compress small enough",
+          body: 'Try a simpler or less detailed photo.',
+        });
+        return;
+      }
+      setProfile({ avatar: dataUrl });
+    } catch {
+      toast({ kind: 'error', title: 'Could not use that picture', body: 'Try a different file.' });
+    } finally {
+      setWorking(false);
+    }
+  };
 
   return (
     <>
       <Group title="Identity">
         <div className="flex items-center gap-4">
-          <Avatar name={profile.name} color={profile.color} emoji={profile.emoji} src={profile.avatar} size={52} />
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(e) => void onPhoto(e)}
+          />
+          <button
+            type="button"
+            onClick={pickPhoto}
+            disabled={working}
+            aria-label={profile.avatar ? 'Change profile picture' : 'Add a profile picture'}
+            className="relative shrink-0 rounded-full active:scale-95 transition-transform"
+          >
+            <Avatar name={profile.name} color={profile.color} emoji={profile.emoji} src={profile.avatar} size={52} />
+            {/* Always visible, not just on hover — the phone this most needed
+                to work on has no hover to reveal it with. */}
+            <span className="absolute -bottom-0.5 -right-0.5 h-5 w-5 rounded-full bg-gold text-on-gold grid place-items-center border-2 border-surface">
+              <Camera size={11} />
+            </span>
+          </button>
           <div className="flex-1 space-y-2">
+            {profile.avatar && (
+              <button
+                type="button"
+                onClick={() => setProfile({ avatar: undefined })}
+                className="text-2xs text-muted hover:text-danger"
+              >
+                Remove photo
+              </button>
+            )}
             <Input
               value={profile.name}
               onChange={(e) => setProfile({ name: e.target.value })}

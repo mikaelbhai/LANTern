@@ -187,3 +187,40 @@ export async function fileToDataUrl(file: File | Blob): Promise<string> {
     r.readAsDataURL(file);
   });
 }
+
+/**
+ * A picture, cropped to a square and scaled down, as a PNG data URL.
+ *
+ * For a profile picture: it travels inline in the profile-info envelope sent
+ * to every peer (see `profile_send`'s own `MAX_AVATAR_BYTES` backstop in
+ * commands.rs, which this is the frontend half of), on the same link as
+ * chat and call signalling — a multi-megabyte phone photo sent as-is would
+ * stall every message behind it. Cropped to the centre square rather than
+ * squashed, so a portrait photo does not come out looking stretched.
+ */
+export async function squareImageDataUrl(file: File | Blob, size = 128): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('could not read that image'));
+      el.src = url;
+    });
+
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const sx = (img.naturalWidth - side) / 2;
+    const sy = (img.naturalHeight - side) / 2;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('could not resize that image');
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+
+    return canvas.toDataURL('image/png');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
