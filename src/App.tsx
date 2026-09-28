@@ -342,7 +342,14 @@ export default function App() {
           </div>
         </main>
 
-        {isMobile && <MobileTabBar screen={screen} onNavigate={go} />}
+        {/* Same room-open exception as the header above: a conversation
+            already has a back arrow of its own, and the tab bar below it was
+            costing the same "four messages of room" the header comment
+            describes - just at the other edge of the screen instead of the
+            top. */}
+        {isMobile && !(screen === 'chats' && activeRoomId) && (
+          <MobileTabBar screen={screen} onNavigate={go} />
+        )}
 
       {/* Follows you across screens: a file offer should not wait behind one. */}
       <IncomingFile />
