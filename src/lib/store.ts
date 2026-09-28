@@ -171,7 +171,13 @@ const defaultSettings: Settings = {
   },
   files: {
     downloadDir: '',
-    autoAcceptTrusted: true,
+    // Writing a file to disk before anyone chose to is the one thing this
+    // app promises never to do - "trusted" is a call permission, granted per
+    // peer for a reason that has nothing to do with files, and a fresh
+    // install must not turn it into a standing yes to every transfer that
+    // peer ever sends. Opt-in only, from Settings, in plain sight of what it
+    // means.
+    autoAcceptTrusted: false,
     defaultExpiry: 'never',
     zipFolders: true,
   },
@@ -396,7 +402,18 @@ const OLD_DEFAULT_ACCENT = '#F5A623';
  */
 function migrateSettings(settings: Settings): Settings {
   if (settings.accent === OLD_DEFAULT_ACCENT) {
-    return { ...settings, accent: defaultSettings.accent };
+    settings = { ...settings, accent: defaultSettings.accent };
+  }
+  // Every existing install has this sitting on `true`, because that used to
+  // be the default rather than anything picked - "auto-accept from trusted
+  // peers" was silently saving whatever a trusted peer sent, with no per-file
+  // ask, which is the one promise this app makes not to break. Indistinguishable
+  // from someone who deliberately turned it on, the same way the old accent
+  // was indistinguishable from gold chosen on purpose - and the same call:
+  // move it, because staying silently on the wrong side of consent is worse
+  // than asking someone who wanted it back to flip one switch.
+  if (settings.files?.autoAcceptTrusted === true) {
+    settings = { ...settings, files: { ...settings.files, autoAcceptTrusted: false } };
   }
   return settings;
 }

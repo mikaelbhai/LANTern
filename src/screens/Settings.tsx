@@ -534,7 +534,10 @@ function FilesTab() {
           </IconButton>
         </div>
       </Row>
-      <Row label="Auto-accept from trusted peers">
+      <Row
+        label="Auto-accept from trusted peers"
+        hint="Saves what they send straight to disk, with no per-file ask. Off by default."
+      >
         <Toggle
           checked={s.autoAcceptTrusted}
           onChange={(v) => upd({ autoAcceptTrusted: v })}
