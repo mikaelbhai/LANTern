@@ -1,13 +1,18 @@
 package app.lantern.desktop
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.RemoteAction
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.RingtoneManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -256,6 +261,119 @@ class MainActivity : TauriActivity() {
     @JvmStatic
     fun setMediaPlaying(playing: Boolean) {
       mediaPlaying = playing
+    }
+
+    private const val CALL_CHANNEL_ID = "lantern-incoming-call"
+    private const val CALL_NOTIFICATION_ID = 2
+
+    /**
+     * Rings, full screen, over whatever is already on the glass.
+     *
+     * Called from incomingcall.rs the moment a call offer arrives over the
+     * signalling link - native, so it runs whether or not the WebView's own
+     * JS is currently being let run at all. `setFullScreenIntent` is what
+     * does the actual taking-over: with the screen off or locked Android
+     * launches it directly, full screen, the way a real phone call does:
+     * with the screen already on and something else in front, Android
+     * turns it into a heads-up banner with these same two actions instead,
+     * rather than yanking a different app away from whoever is using it.
+     * Either way this is the one alerting path in this app that does not
+     * depend on a single line of JS having executed.
+     */
+    @JvmStatic
+    fun showIncomingCall(from: String, callId: String, caller: String, video: Boolean) {
+      val ctx = appContext ?: return
+      runCatching {
+        val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+          manager.getNotificationChannel(CALL_CHANNEL_ID) == null
+        ) {
+          val channel = NotificationChannel(
+            CALL_CHANNEL_ID,
+            "Incoming calls",
+            NotificationManager.IMPORTANCE_HIGH,
+          ).apply {
+            description = "Rings full-screen for a voice or video call from the network."
+            enableVibration(true)
+            setSound(
+              RingtoneManager.getActualDefaultRingtoneUri(ctx, RingtoneManager.TYPE_RINGTONE),
+              AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build(),
+            )
+          }
+          manager.createNotificationChannel(channel)
+        }
+
+        // Same target either way - answering and just opening the app both
+        // land on the ringing screen the frontend is already showing from
+        // its own `call:state` event, so there is nothing separate for
+        // "Answer" to do beyond getting the window in front of the person.
+        val open = PendingIntent.getActivity(
+          ctx,
+          callId.hashCode(),
+          Intent(ctx, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+          },
+          PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val decline = PendingIntent.getBroadcast(
+          ctx,
+          callId.hashCode(),
+          Intent(ctx, CallDeclineReceiver::class.java).apply {
+            putExtra("from", from)
+            putExtra("callId", callId)
+          },
+          PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          Notification.Builder(ctx, CALL_CHANNEL_ID)
+        } else {
+          @Suppress("DEPRECATION")
+          Notification.Builder(ctx)
+        }
+
+        @Suppress("DEPRECATION") // pre-O has no channel to carry priority instead
+        val notification = builder
+          .setContentTitle(caller)
+          .setContentText(if (video) "Incoming video call" else "Incoming voice call")
+          .setSmallIcon(android.R.drawable.sym_call_incoming)
+          .setCategory(Notification.CATEGORY_CALL)
+          .setPriority(Notification.PRIORITY_MAX)
+          .setFullScreenIntent(open, true)
+          .setContentIntent(open)
+          .setOngoing(true)
+          .setAutoCancel(false)
+          .addAction(Notification.Action.Builder(null, "Decline", decline).build())
+          .addAction(Notification.Action.Builder(null, "Answer", open).build())
+          .build()
+
+        manager.notify(CALL_NOTIFICATION_ID, notification)
+      }.exceptionOrNull()?.let { Log.w("LANTern", "incoming call notification", it) }
+    }
+
+    /**
+     * The call ended before it was answered - hung up, declined from the
+     * far end, or picked up on a different device. Clears the notification
+     * so a call that is over does not keep ringing.
+     *
+     * Takes the call id even though only one incoming-call notification
+     * exists at a time and there is nothing to disambiguate yet - matching
+     * showIncomingCall's signature is what keeps a second concurrent call
+     * from being a signature change on both sides of the JNI boundary
+     * later, rather than a one-line diff.
+     */
+    @JvmStatic
+    fun cancelIncomingCall(@Suppress("UNUSED_PARAMETER") callId: String) {
+      val ctx = appContext ?: return
+      runCatching {
+        (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+          .cancel(CALL_NOTIFICATION_ID)
+      }
     }
 
     /**

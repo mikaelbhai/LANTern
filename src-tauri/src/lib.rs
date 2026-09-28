@@ -12,6 +12,7 @@ mod apkinstall;
 mod audiotrack;
 mod battery;
 mod callaudio;
+mod incomingcall;
 #[cfg(target_os = "windows")]
 pub mod autoshare;
 mod commands;
@@ -281,6 +282,10 @@ pub fn run() {
             // `pip::stash_app_handle`.
             #[cfg(target_os = "android")]
             pip::stash_app_handle(app.handle().clone());
+            // Same reason, for the notification's own Decline action - see
+            // `incomingcall::stash_app_handle`.
+            #[cfg(target_os = "android")]
+            incomingcall::stash_app_handle(app.handle().clone());
 
             #[cfg(desktop)]
             if tray::TRAY_IS_NATIVE {

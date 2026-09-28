@@ -360,6 +360,48 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 continue;
             }
 
+            /*
+             * A call offer, or the end of one - recognised here rather than
+             * left to the frontend alone.
+             *
+             * `ringer.ts` already raises a notification for an incoming
+             * call, but that is JS, and JS is exactly what Android is free
+             * to throttle the moment another app is in front - the reason
+             * this device answers at all while backgrounded is the
+             * foreground service, which is native. A call that only rings
+             * when LANTern already happened to be on screen is not "rings
+             * no matter what app it's on"; this is the native fallback,
+             * answered the same way a real phone call is: full-screen,
+             * over whatever was already showing. Still delivered to the
+             * frontend afterward exactly as before - this only adds to
+             * that, for the moment nothing is there to receive it yet.
+             */
+            if envelope.kind == "signal" {
+                match envelope.payload.get("type").and_then(|v| v.as_str()) {
+                    Some("offer") => {
+                        let video =
+                            envelope.payload.get("kind").and_then(|v| v.as_str()) == Some("video");
+                        let call_id = envelope
+                            .payload
+                            .get("callId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        let caller = state
+                            .with(|s| s.peers.get(&envelope.from).map(|p| p.name.clone()))
+                            .unwrap_or_else(|| "Someone".into());
+                        crate::incomingcall::notify(&envelope.from, call_id, &caller, video);
+                    }
+                    Some("hangup") | Some("decline") => {
+                        if let Some(call_id) =
+                            envelope.payload.get("callId").and_then(|v| v.as_str())
+                        {
+                            crate::incomingcall::cancel(call_id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             if envelope.kind == "upstream" {
                 let address = envelope
                     .payload

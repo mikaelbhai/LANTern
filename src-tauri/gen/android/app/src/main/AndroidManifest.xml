@@ -29,6 +29,14 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- What makes an incoming call take over the screen instead of sitting
+         as a heads-up banner a backgrounded app's notification would
+         otherwise be. Granted automatically at install on every version
+         this app targets; Android only asks separately for it from an app
+         the Play Store already knows uses it a lot, which a sideloaded LAN
+         app is not going through. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- The foreground service above keeps LANTern reachable while
          backgrounded, but Android's battery optimizer can still doze the
          process and drop it off the network between wakeups. This permission
@@ -67,6 +75,15 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The incoming-call notification's own Decline button. Not
+             exported: a PendingIntent this app minted is the only way in,
+             the same way the notification's tap-to-open half already
+             reaches MainActivity through a PendingIntent only this app
+             holds. -->
+        <receiver
+            android:name=".CallDeclineReceiver"
+            android:exported="false" />
 
         <service
             android:name=".LanternService"
