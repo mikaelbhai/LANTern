@@ -57,6 +57,7 @@ export default function App() {
   const activeRoomId = useStore((s) => s.activeRoomId);
   const navigate = useStore((s) => s.navigate);
   const goBack = useStore((s) => s.goBack);
+  const openRoom = useStore((s) => s.openRoom);
 
   /**
    * Television mode.
@@ -191,6 +192,17 @@ export default function App() {
     }
   }, [depth]);
   useBackDismiss(drawerOpen, () => setDrawerOpen(false));
+  /*
+   * A room open inside Chats is its own step, on top of the trail above -
+   * opening one never changes `screen` (still "chats"), so the trail-depth
+   * layers above have no idea a room is open at all. Registered after them
+   * so it pushes on top and is popped first: back closes the room and
+   * lands on the room list, the same list a second press would have to
+   * walk through anyway, before a third press leaves Chats. Without this a
+   * single press skipped straight from an open conversation to Home,
+   * verified live on a phone - the room list never appeared in between.
+   */
+  useBackDismiss(isMobile && screen === 'chats' && !!activeRoomId, () => openRoom(null));
 
   const go = React.useCallback(
     (s: Screen) => {
