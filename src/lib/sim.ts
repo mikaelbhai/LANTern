@@ -663,7 +663,10 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'media_set_progress': {
       const item = media.find((m) => m.id === args.id);
-      if (item) item.progressSec = args.progressSec;
+      if (item) {
+        item.progressSec = args.progressSec;
+        item.watchedAt = Date.now();
+      }
       emit('media:changed', media.map((m) => ({ ...m })));
       return null;
     }
@@ -859,6 +862,9 @@ function buildLibrary(): MediaItem[] {
       addedAt: Date.now() - i * 86_400_000,
       // A couple of part-watched titles so Continue watching is populated.
       progressSec: i === 1 ? 2140 : i === 3 ? 900 : 0,
+      // i === 3 watched longer ago than i === 1, so "latest watched" sorting
+      // has something other than insertion order to prove it works.
+      watchedAt: i === 1 ? Date.now() - 3_600_000 : i === 3 ? Date.now() - 172_800_000 : undefined,
     };
   });
 }

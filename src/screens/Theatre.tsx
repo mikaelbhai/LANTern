@@ -86,6 +86,7 @@ export function Theatre() {
     'lantern.theatre.grouping',
     emptyOverrides(),
   );
+  const [filmSort, setFilmSort] = useLocalStorage<FilmSort>('lantern.theatre.filmSort', 'watched');
 
   const load = React.useCallback(async () => {
     setItems(await api.media.list());
@@ -125,8 +126,8 @@ export function Theatre() {
     [items, overrides],
   );
   const rows = React.useMemo(
-    () => buildRows(items, grouping, ownerName),
-    [items, grouping, ownerName],
+    () => buildRows(items, grouping, ownerName, filmSort),
+    [items, grouping, ownerName, filmSort],
   );
 
   // Keep an open collection in step with regrouping.
@@ -381,6 +382,16 @@ export function Theatre() {
                       ? (keys) => setOverrides({ ...overrides, order: keys })
                       : undefined
                   }
+                  sortControl={
+                    row.label === 'Films' ? (
+                      <Select
+                        value={filmSort}
+                        onChange={setFilmSort}
+                        options={FILM_SORTS}
+                        className="w-40 shrink-0"
+                      />
+                    ) : undefined
+                  }
                 />
               ))}
             </div>
@@ -525,10 +536,42 @@ export type RowEntry =
  * where the specific episode someone is partway through is the useful thing to
  * show.
  */
+export type FilmSort = 'watched' | 'added' | 'title' | 'year';
+
+export const FILM_SORTS: { value: FilmSort; label: string }[] = [
+  { value: 'watched', label: 'Latest watched' },
+  { value: 'added', label: 'Recently added' },
+  { value: 'title', label: 'Title A–Z' },
+  { value: 'year', label: 'Newest release' },
+];
+
+function sortFilms(films: MediaItem[], sort: FilmSort): MediaItem[] {
+  const sorted = [...films];
+  switch (sort) {
+    case 'watched':
+      // Never-watched titles have nothing to sort by here and fall back to
+      // recently-added, after every title that has actually been watched -
+      // "latest watched" putting untouched titles first would be backwards.
+      return sorted.sort((a, b) => {
+        if (a.watchedAt && b.watchedAt) return b.watchedAt - a.watchedAt;
+        if (a.watchedAt) return -1;
+        if (b.watchedAt) return 1;
+        return b.addedAt - a.addedAt;
+      });
+    case 'added':
+      return sorted.sort((a, b) => b.addedAt - a.addedAt);
+    case 'title':
+      return sorted.sort((a, b) => a.title.localeCompare(b.title));
+    case 'year':
+      return sorted.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+  }
+}
+
 function buildRows(
   items: MediaItem[],
   grouping: { collections: Collection[]; singles: MediaItem[] },
   ownerName: (i: MediaItem) => string,
+  filmSort: FilmSort,
 ): { label: string; entries: RowEntry[] }[] {
   if (!items.length) return [];
   const rows: { label: string; entries: RowEntry[] }[] = [];
@@ -539,9 +582,15 @@ function buildRows(
     collection,
   });
 
+  // Most recently watched first. `watchedAt` is the actual answer; a title
+  // saved before this field existed falls back to how far into it someone
+  // got, which is a guess but a better one than the order it happened to be
+  // added in.
   const continued = oneEpisodePerSeries(
     items.filter((i) => i.progressSec > 30 && i.progressSec < i.durationSec * 0.95),
-  ).sort((a, b) => b.progressSec / b.durationSec - a.progressSec / a.durationSec);
+  ).sort(
+    (a, b) => (b.watchedAt ?? b.progressSec / b.durationSec) - (a.watchedAt ?? a.progressSec / a.durationSec),
+  );
   if (continued.length) {
     rows.push({ label: 'Continue watching', entries: continued.map(asItem) });
   }
@@ -567,7 +616,9 @@ function buildRows(
   if (recent.length) rows.push({ label: 'Recently added', entries: recent });
 
   const films = grouping.singles.filter((i) => i.kind === 'film');
-  if (films.length) rows.push({ label: 'Films', entries: films.map(asItem) });
+  if (films.length) {
+    rows.push({ label: 'Films', entries: sortFilms(films, filmSort).map(asItem) });
+  }
 
   // One row per device, so it is obvious where a title is coming from.
   const byOwner = new Map<string, MediaItem[]>();
@@ -690,6 +741,7 @@ function Row({
   onInfo,
   onOpenCollection,
   onReorder,
+  sortControl,
 }: {
   label: string;
   entries: RowEntry[];
@@ -705,6 +757,8 @@ function Row({
    * (progress, recency, the device it came from).
    */
   onReorder?: (keys: string[]) => void;
+  /** Present only on the Films row, the one shelf with no order of its own. */
+  sortControl?: React.ReactNode;
 }) {
   const scroller = React.useRef<HTMLDivElement>(null);
   const [canLeft, setCanLeft] = React.useState(false);
@@ -734,7 +788,10 @@ function Row({
 
   return (
     <section className="mt-6 group/row">
-      <h2 className="text-sm font-semibold px-6 mb-2 text-white/90">{label}</h2>
+      <div className="flex items-center justify-between px-6 mb-2">
+        <h2 className="text-sm font-semibold text-white/90">{label}</h2>
+        {sortControl}
+      </div>
       <div className="relative">
         {canLeft && (
           <button

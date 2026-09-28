@@ -391,6 +391,8 @@ export interface MediaItem {
   addedAt: number;
   /** Playback position in seconds; drives Continue watching. */
   progressSec: number;
+  /** When progress was last saved for this title. Absent if never watched. */
+  watchedAt?: number;
   /** Direct URL on the publishing device's host server. */
   streamUrl: string;
   /**

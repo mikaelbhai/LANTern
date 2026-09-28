@@ -240,6 +240,9 @@ pub struct Resume {
     pub progress_sec: f64,
     pub audio_lang: Option<String>,
     pub subtitle_lang: Option<String>,
+    /// When this row last changed — a proxy for "last watched," since that is
+    /// the only moment anything here is written. Drives sorting by recency.
+    pub watched_at: i64,
 }
 
 /// Reads every stored playback position.
@@ -250,8 +253,8 @@ pub fn stored_progress(state: &AppState) -> std::collections::HashMap<String, Re
     state.with(|s| {
         let mut out = std::collections::HashMap::new();
         let Some(db) = s.db.as_ref() else { return out };
-        let Ok(mut stmt) =
-            db.prepare("SELECT id, progress_sec, audio_lang, subtitle_lang FROM progress")
+        let Ok(mut stmt) = db
+            .prepare("SELECT id, progress_sec, audio_lang, subtitle_lang, updated_at FROM progress")
         else {
             return out;
         };
@@ -262,6 +265,7 @@ pub fn stored_progress(state: &AppState) -> std::collections::HashMap<String, Re
                     progress_sec: r.get::<_, f64>(1)?,
                     audio_lang: r.get::<_, Option<String>>(2).unwrap_or(None),
                     subtitle_lang: r.get::<_, Option<String>>(3).unwrap_or(None),
+                    watched_at: r.get::<_, i64>(4).unwrap_or(0),
                 },
             ))
         }) {
@@ -354,6 +358,9 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
                 "progressSec".into(),
                 serde_json::Value::from(resume.progress_sec),
             );
+            if resume.watched_at > 0 {
+                obj.insert("watchedAt".into(), serde_json::Value::from(resume.watched_at));
+            }
         }
 
         // This title's own choice if it has one, otherwise the last choice
@@ -386,7 +393,7 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
                 if let Some(progress) = previous.get("progressSec").cloned() {
                     item.as_object_mut().unwrap().insert("progressSec".into(), progress);
                 }
-                for key in ["audioLang", "subtitleLang"] {
+                for key in ["audioLang", "subtitleLang", "watchedAt"] {
                     if let Some(lang) = previous.get(key).cloned() {
                         item.as_object_mut().unwrap().insert(key.into(), lang);
                     }
