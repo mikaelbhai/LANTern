@@ -721,6 +721,29 @@ export async function handle(cmd: string, args: any): Promise<any> {
       return had;
     }
 
+    /* --------------------------------------------------------- audience */
+    //
+    // Unhandled here, each of these resolved as `null` — which is what a
+    // real backend never sends, but is exactly what this switch's own
+    // `default` falls back to. Audience.tsx treats every one of them as an
+    // array or an object the moment it stops loading, with nothing here to
+    // ever tell it loading had finished a different way: `npm run dev`
+    // crashed solid, every time, on Settings > Privacy or a share's
+    // audience panel, which is the one thing this fallback promises not to
+    // do — "the whole UI is exercisable without the Rust toolchain."
+
+    case 'peers_trusted':
+      return [];
+
+    case 'peers_blocked':
+      return [];
+
+    case 'rating_pins':
+      return [];
+
+    case 'ratings_approvals':
+      return [];
+
     /* ------------------------------------------------------- hosting */
 
     case 'host_list':
