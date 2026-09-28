@@ -230,13 +230,15 @@ pub fn items_for_share(
             // the author intended, and a downloaded .srt is the fallback.
             let mut all = embedded;
             all.extend(sidecars.iter().map(|sub| {
+                // `sub.file` may itself be a path ("Subs/Film.en.srt") when
+                // the subtitle came from a subfolder — encoded segment by
+                // segment like the video's own `url_path`, or the `/` that
+                // separates them would be escaped into `%2F` and broken.
+                let sub_path = sub.file.split('/').map(percent_encode).collect::<Vec<_>>().join("/");
                 serde_json::json!({
                     "label": sub.label,
                     "lang": sub.lang,
-                    "url": format!(
-                        "http://{authority}/{slug}/{dir_prefix}{}",
-                        percent_encode(&sub.file)
-                    ),
+                    "url": format!("http://{authority}/{slug}/{dir_prefix}{sub_path}"),
                 })
             }));
             if !all.is_empty() {
