@@ -16,12 +16,18 @@ export function MessageList({
   onReply,
   onOpenThread,
   onDropFiles,
+  selectMode,
+  selectedIds,
+  onToggleSelect,
 }: {
   room: Room;
   highlight?: string;
   onReply: (m: Message) => void;
   onOpenThread: (m: Message) => void;
   onDropFiles: (files: File[]) => void;
+  selectMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }) {
   const all = useStore((s) => s.messages[room.id] ?? []);
   const typing = useStore((s) => s.typing[room.id]);
@@ -113,6 +119,9 @@ export function MessageList({
                 threadCount={threadCounts[m.id] ?? 0}
                 onReply={() => onReply(m)}
                 onOpenThread={() => onOpenThread(m)}
+                selectMode={selectMode}
+                selected={selectedIds?.has(m.id)}
+                onToggleSelect={() => onToggleSelect?.(m.id)}
               />
             </React.Fragment>
           );

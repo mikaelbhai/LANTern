@@ -52,6 +52,9 @@ export function MessageItem({
   onReply,
   onOpenThread,
   threadCount,
+  selectMode,
+  selected,
+  onToggleSelect,
 }: {
   message: Message;
   grouped: boolean;
@@ -60,6 +63,10 @@ export function MessageItem({
   onReply: () => void;
   onOpenThread: () => void;
   threadCount: number;
+  /** True while the room is choosing messages to act on in bulk. */
+  selectMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const profile = useStore((s) => s.profile);
   const peers = useStore((s) => s.peers);
@@ -156,7 +163,7 @@ export function MessageItem({
         if (!menuOpen && !pickerOpen) setPickerOpen(false);
       }}
       id={`msg-${m.id}`}
-      onClick={() => setFocused((f) => !f)}
+      onClick={() => (selectMode ? onToggleSelect?.() : setFocused((f) => !f))}
       className={cn(
         'group relative flex gap-2.5 px-4 transition-colors selectable',
         pad,
@@ -166,8 +173,22 @@ export function MessageItem({
         // hover, so without this there is no way to say "this one".
         focused && !mentionsMe && 'bg-gold/[0.08] ring-1 ring-inset ring-gold/25',
         hovered && !focused && !mentionsMe && 'bg-raised/40',
+        selected && 'bg-gold/[0.10] ring-1 ring-inset ring-gold/30',
+        selectMode && 'cursor-pointer',
       )}
     >
+      {selectMode && (
+        <div className="w-5 shrink-0 pt-1.5">
+          <span
+            className={cn(
+              'block h-4 w-4 rounded-full border grid place-items-center',
+              selected ? 'bg-gold border-gold text-on-gold' : 'border-edge-strong',
+            )}
+          >
+            {selected && <Check size={10} strokeWidth={3} />}
+          </span>
+        </div>
+      )}
       <div className="w-8 shrink-0 pt-0.5">
         {grouped ? (
           <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 block text-right pr-1 pt-1">
@@ -316,7 +337,7 @@ export function MessageItem({
 
       {/* hover action bar */}
       <AnimatePresence>
-        {(hovered || menuOpen || pickerOpen) && !m.deleted && (
+        {(hovered || menuOpen || pickerOpen) && !m.deleted && !selectMode && (
           <motion.div
             initial={{ opacity: 0, y: -3 }}
             animate={{ opacity: 1, y: 0 }}

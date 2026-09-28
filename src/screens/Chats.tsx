@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowLeft,
   Bookmark,
+  CheckSquare,
+  Copy,
   Download,
   Hash,
   Images,
@@ -38,6 +40,7 @@ import { useClickOutside } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { useIsMobile } from '../lib/hooks';
 import { attachmentFromFile } from '../lib/actions';
+import { copyText } from '../lib/clipboard';
 import {
   clockTime,
   cn,
@@ -61,6 +64,10 @@ export function Chats() {
   const [pinnedOpen, setPinnedOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
+  // Picking several messages out to act on together, rather than one at a
+  // time through each row's own hover menu.
+  const [selectMode, setSelectMode] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
 
   const room = activeRoomId ? rooms[activeRoomId] : null;
 
@@ -68,7 +75,22 @@ export function Chats() {
     setReplyTo(null);
     setPinnedOpen(false);
     setSearchTerm('');
+    setSelectMode(false);
+    setSelectedIds(new Set());
   }, [activeRoomId]);
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
 
   const showList = !isMobile || !room;
   const showRoom = !isMobile || !!room;
@@ -95,6 +117,10 @@ export function Chats() {
                 pinnedOpen={pinnedOpen}
                 searchTerm={searchTerm}
                 onSearch={setSearchTerm}
+                selectMode={selectMode}
+                selectedIds={selectedIds}
+                onEnterSelectMode={() => setSelectMode(true)}
+                onExitSelectMode={exitSelectMode}
               />
 
               <AnimatePresence>
@@ -107,6 +133,9 @@ export function Chats() {
                 onReply={setReplyTo}
                 onOpenThread={(m) => useStore.getState().openThread(m.id)}
                 onDropFiles={(files) => void attachAndSend(room.id, files)}
+                selectMode={selectMode}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
               />
 
               <Composer
@@ -351,6 +380,10 @@ function RoomHeader({
   pinnedOpen,
   searchTerm,
   onSearch,
+  selectMode,
+  selectedIds,
+  onEnterSelectMode,
+  onExitSelectMode,
 }: {
   room: Room;
   onBack?: () => void;
@@ -360,14 +393,39 @@ function RoomHeader({
   pinnedOpen: boolean;
   searchTerm: string;
   onSearch: (v: string) => void;
+  selectMode: boolean;
+  selectedIds: Set<string>;
+  onEnterSelectMode: () => void;
+  onExitSelectMode: () => void;
 }) {
   const peers = useStore((s) => s.peers);
   const messages = useStore((s) => s.messages[room.id] ?? []);
   const startCall = useStore((s) => s.startCall);
   const deleteRoom = useStore((s) => s.deleteRoom);
+  const deleteMessage = useStore((s) => s.deleteMessage);
   const [searching, setSearching] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [membersOpen, setMembersOpen] = React.useState(false);
+
+  const authorNameFor = (authorId: string) =>
+    authorId === useStore.getState().profile.id
+      ? useStore.getState().profile.name || 'You'
+      : (peers[authorId]?.name ?? 'Unknown');
+
+  const copySelected = async () => {
+    const text = messages
+      .filter((m) => selectedIds.has(m.id))
+      .sort((a, b) => a.ts - b.ts)
+      .map((m) => `[${clockTime(m.ts)}] ${authorNameFor(m.authorId)}: ${m.deleted ? '(deleted)' : m.body || '(attachment)'}`)
+      .join('\n');
+    await copyText(text);
+    onExitSelectMode();
+  };
+
+  const deleteSelected = () => {
+    for (const id of selectedIds) deleteMessage(id);
+    onExitSelectMode();
+  };
 
   const dmPeer = room.kind === 'dm' ? peers[room.members[0]] : null;
   const online = room.members.filter((id) => peers[id]).length;
@@ -411,6 +469,30 @@ function RoomHeader({
         inset adds to the top of the box instead of subtracting from what
         was already inside it.
       */}
+      {selectMode ? (
+        <div className="flex items-center px-2 gap-2 h-14 md:h-11 md:px-3">
+          <IconButton label="Cancel" onClick={onExitSelectMode}>
+            <X size={18} />
+          </IconButton>
+          <div className="text-sm font-semibold flex-1">
+            {selectedIds.size} selected
+          </div>
+          <IconButton
+            label="Copy selected"
+            disabled={!selectedIds.size}
+            onClick={() => void copySelected()}
+          >
+            <Copy size={15} />
+          </IconButton>
+          <IconButton
+            label="Delete selected"
+            disabled={!selectedIds.size}
+            onClick={deleteSelected}
+          >
+            <Trash2 size={15} />
+          </IconButton>
+        </div>
+      ) : (
       <div className="flex items-center px-2 gap-2 h-14 md:h-11 md:px-3">
       {onBack && (
         <IconButton label="Back" onClick={onBack}>
@@ -542,6 +624,14 @@ function RoomHeader({
         </Tooltip>
 
         <IconButton
+          label="Select messages"
+          className="hidden md:inline-flex"
+          onClick={onEnterSelectMode}
+        >
+          <CheckSquare size={15} />
+        </IconButton>
+
+        <IconButton
           label="Delete room"
           className="hidden md:inline-flex"
           onClick={() => setConfirmDelete(true)}
@@ -564,6 +654,7 @@ function RoomHeader({
           onGallery={onGallery}
           onMembers={() => setMembersOpen(true)}
           onExport={() => exportRoom('txt')}
+          onSelect={onEnterSelectMode}
           onDelete={() => setConfirmDelete(true)}
         />
       </div>
@@ -602,6 +693,7 @@ function RoomHeader({
       </Modal>
 
       </div>
+      )}
 
       <MembersModal room={room} open={membersOpen} onClose={() => setMembersOpen(false)} />
     </header>
@@ -987,6 +1079,7 @@ function RoomMenu({
   onGallery,
   onMembers,
   onExport,
+  onSelect,
   onDelete,
 }: {
   room: Room;
@@ -996,6 +1089,7 @@ function RoomMenu({
   onGallery: () => void;
   onMembers: () => void;
   onExport: () => void;
+  onSelect: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -1011,6 +1105,7 @@ function RoomMenu({
     ...(room.kind !== 'dm'
       ? [{ label: 'Members', icon: <Users size={14} />, run: onMembers }]
       : []),
+    { label: 'Select messages', icon: <CheckSquare size={14} />, run: onSelect },
     { label: 'Export history', icon: <Download size={14} />, run: onExport },
     { label: 'Delete room', icon: <Trash2 size={14} />, run: onDelete, danger: true },
   ];
