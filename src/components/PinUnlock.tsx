@@ -19,7 +19,8 @@ import { KeyRound, Lock } from 'lucide-react';
 
 import { api, on } from '../lib/bridge';
 import { useStore } from '../lib/store';
-import { Button, IconButton, Input, Modal } from './ui';
+import { Button, IconButton, Modal } from './ui';
+import { PinPad, sanitizePin } from './PinPad';
 
 /** How long to keep listening for hosts to answer after a phrase is sent. */
 const COLLECT_MS = 2500;
@@ -31,7 +32,7 @@ export function LockButton() {
   const [open, setOpen] = React.useState(false);
   return (
     <>
-      <IconButton label="Enter a pass phrase" onClick={() => setOpen(true)}>
+      <IconButton label="Enter a PIN" onClick={() => setOpen(true)}>
         <Lock size={16} />
       </IconButton>
       <PinModal open={open} onClose={() => setOpen(false)} />
@@ -41,7 +42,7 @@ export function LockButton() {
 
 function PinModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const peers = useStore((s) => s.peers);
-  const [phrase, setPhrase] = React.useState('');
+  const [pin, setPin] = React.useState('');
   const [state, setState] = React.useState<'idle' | 'trying' | 'done'>('idle');
   const [opened, setOpened] = React.useState<{ from: string; age: number }[]>([]);
 
@@ -60,61 +61,52 @@ function PinModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   }, [state]);
 
   const submit = async () => {
-    const said = phrase.trim();
-    if (said.length === 0) return;
+    if (pin.length < 4) return;
     setOpened([]);
     setState('trying');
     // Both at once: every linked host, and this device's own rating store,
-    // in case this build is quietly a host too. Neither reveals the phrase
+    // in case this build is quietly a host too. Neither reveals the PIN
     // to anything but the native side checking it.
-    void api.ratings.unlockPeers(said);
+    void api.ratings.unlockPeers(pin);
     try {
-      const age = await api.ratings.unlock(said);
+      const age = await api.ratings.unlock(pin);
       if (age !== null && age !== undefined) {
         setOpened((prev) => [...prev, { from: SELF, age }]);
       }
     } catch {
       // Nothing to do — a host that answered this way just did not
-      // recognise the phrase, same as silence from a peer.
+      // recognise the PIN, same as silence from a peer.
     }
   };
 
   const close = () => {
-    setPhrase('');
+    setPin('');
     setState('idle');
     setOpened([]);
     onClose();
   };
 
   return (
-    <Modal open={open} onClose={close} title="Enter a pass phrase" width="max-w-sm">
-      <div className="space-y-3">
+    <Modal open={open} onClose={close} title="Enter a PIN" width="max-w-sm">
+      <div className="space-y-4">
         <p className="text-2xs text-muted leading-relaxed">
-          A phrase set by whoever hosts what you are trying to watch unlocks that rating on
-          this device. It only ever raises what you can see — never lowers it.
+          A PIN set by whoever hosts what you are trying to watch unlocks that rating on this
+          device. It only ever raises what you can see — never lowers it.
         </p>
 
-        <div className="flex items-center gap-2">
-          <Input
-            autoFocus
-            type="password"
-            value={phrase}
-            onChange={(e) => setPhrase(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && void submit()}
-            placeholder="Pass phrase"
-            disabled={state === 'trying'}
-          />
-          <Button
-            variant="primary"
-            disabled={!phrase.trim() || state === 'trying'}
-            onClick={() => void submit()}
-          >
-            {state === 'trying' ? 'Trying…' : 'Unlock'}
-          </Button>
-        </div>
+        <PinPad value={pin} onChange={(v) => setPin(sanitizePin(v))} />
+
+        <Button
+          variant="primary"
+          full
+          disabled={pin.length < 4 || state === 'trying'}
+          onClick={() => void submit()}
+        >
+          {state === 'trying' ? 'Trying…' : 'Unlock'}
+        </Button>
 
         {state === 'trying' && (
-          <p className="text-2xs text-dim">Asking every device on the network…</p>
+          <p className="text-2xs text-dim text-center">Asking every device on the network…</p>
         )}
 
         {state === 'done' && (
@@ -122,7 +114,7 @@ function PinModal({ open, onClose }: { open: boolean; onClose: () => void }) {
             <KeyRound size={14} className={opened.length ? 'text-gold' : 'text-muted'} />
             <p className="text-2xs text-dim leading-relaxed">
               {opened.length === 0 ? (
-                "That phrase didn't open anything here."
+                "That PIN didn't open anything here."
               ) : (
                 <>
                   Unlocked {opened.map((o) => `${o.age}+`).join(', ')} on{' '}

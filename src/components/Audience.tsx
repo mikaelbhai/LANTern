@@ -21,6 +21,7 @@ import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe, KeyRound, X } from 'l
 import { api } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { Button, Checkbox, IconButton, Input, SectionTitle, Select, Spinner } from './ui';
+import { PinPad, sanitizePin } from './PinPad';
 import type { RatingsStatus, Share } from '../lib/types';
 
 /**
@@ -503,16 +504,22 @@ function allDevices(
 }
 
 /**
- * Pass phrases: the other way past the rating gate.
+ * PINs: the other way past the rating gate.
  *
  * An approval needs the host present, at their own screen, saying yes to a
- * specific device and a specific title. A phrase needs neither — whoever
- * knows it unlocks the tier on whatever they are holding, on this device and
- * on every other device on the network that happens to answer to the same
- * phrase, which is how one parent typing it once can open it for every
+ * specific device and a specific title. A PIN needs neither — whoever knows
+ * it unlocks the tier on whatever they are holding, on this device and on
+ * every other device on the network that happens to answer to the same
+ * PIN, which is how one parent setting it once can open it for every
  * child's tablet in the house without walking to each one.
  *
- * Only the tiers are ever shown, never the phrases. Once set, a phrase is
+ * Numeric and entered on a pad rather than typed as free text: this used to
+ * be a "pass phrase" of any characters at all, which meant hunting across a
+ * full software keyboard on a phone for whatever the phrase demanded next.
+ * Ten keys, all the same size, fixes that on both ends — setting one here
+ * and entering one in PinUnlock.tsx.
+ *
+ * Only the tiers are ever shown, never the PINs. Once set, a PIN is
  * write-only from here — checked against, never displayed — because a
  * settings screen is not a safe place to leave a secret sitting in plain
  * text for whoever looks at it next.
@@ -527,31 +534,31 @@ function RatingPins({
   compact: boolean;
 }) {
   const [editing, setEditing] = React.useState<number | null>(null);
-  const [phrase, setPhrase] = React.useState('');
+  const [pin, setPin] = React.useState('');
   const [busy, setBusy] = React.useState<number | null>(null);
   const [error, setError] = React.useState('');
 
-  // Every tier worth a phrase. Not 0 — that is the floor nobody is unlocking
+  // Every tier worth a PIN. Not 0 — that is the floor nobody is unlocking
   // up into — and not 99, which already means everything and has nothing
-  // left for a phrase to open.
+  // left for a PIN to open.
   const tiers = AGES.filter((a) => a.value !== '0' && a.value !== '99');
 
   const startEditing = (age: number) => {
     setEditing(age);
-    setPhrase('');
+    setPin('');
     setError('');
   };
 
   const save = async (age: number) => {
-    if (phrase.trim().length > 0 && phrase.trim().length < 4) {
-      setError('At least four characters.');
+    if (pin.length > 0 && pin.length < 4) {
+      setError('At least four digits.');
       return;
     }
     setBusy(age);
     try {
-      await api.ratings.pinSet(age, phrase.trim());
+      await api.ratings.pinSet(age, pin);
       setEditing(null);
-      setPhrase('');
+      setPin('');
       onChange();
     } catch (err) {
       setError(String(err ?? 'Could not save that.'));
@@ -572,12 +579,12 @@ function RatingPins({
 
   return (
     <section>
-      <SectionTitle>Pass phrases</SectionTitle>
+      <SectionTitle>PINs</SectionTitle>
       {!compact && (
         <p className="text-2xs text-muted leading-relaxed mb-2">
-          A phrase set here unlocks that tier on any device that types it — this one
+          A PIN set here unlocks that tier on any device that enters it — this one
           included. It only ever raises what a device may watch, never lowers it, and a
-          phrase entered on a device already allowed further does nothing.
+          PIN entered on a device already allowed further does nothing.
         </p>
       )}
       <div className="panel divide-y divide-edge/60">
@@ -591,7 +598,7 @@ function RatingPins({
               <Entry
                 icon={<KeyRound size={13} className={set ? 'text-gold' : 'text-muted'} />}
                 name={tier.label}
-                hint={set ? 'A phrase is set' : undefined}
+                hint={set ? 'A PIN is set' : undefined}
                 busy={busy === age}
                 action={
                   isEditing ? (
@@ -609,27 +616,22 @@ function RatingPins({
                     </div>
                   ) : (
                     <Button size="xs" onClick={() => startEditing(age)}>
-                      Set a phrase…
+                      Set a PIN…
                     </Button>
                   )
                 }
               />
               {isEditing && (
-                <div className="px-3 pb-3 flex items-start gap-2">
-                  <div className="flex-1">
-                    <Input
-                      autoFocus
-                      value={phrase}
-                      onChange={(e) => {
-                        setPhrase(e.target.value);
-                        setError('');
-                      }}
-                      onKeyDown={(e) => e.key === 'Enter' && void save(age)}
-                      placeholder="At least four characters"
-                    />
-                    {error && <p className="text-2xs text-danger mt-1">{error}</p>}
-                  </div>
-                  <Button size="xs" variant="primary" onClick={() => void save(age)}>
+                <div className="px-3 pb-3 space-y-2">
+                  <PinPad
+                    value={pin}
+                    onChange={(v) => {
+                      setPin(sanitizePin(v));
+                      setError('');
+                    }}
+                  />
+                  {error && <p className="text-2xs text-danger text-center">{error}</p>}
+                  <Button size="sm" variant="primary" full onClick={() => void save(age)}>
                     Save
                   </Button>
                 </div>
