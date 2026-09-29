@@ -22,6 +22,7 @@ import {
   Languages,
   Crop,
   Scan,
+  Smartphone,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
 import { api, on } from '../../lib/bridge';
@@ -739,6 +740,29 @@ export function Player({
   };
 
   /**
+   * Whether the file itself is taller than it is wide — a phone-shot clip,
+   * not a film. `false` until the first frame's metadata arrives, which
+   * defaults a title still loading to the landscape behaviour every normal
+   * film wants rather than momentarily refusing to rotate one.
+   */
+  const isPortraitVideo = natural.h > natural.w;
+  // The portrait exception, opted into rather than assumed: forcing every
+  // fullscreen video to landscape used to mean a phone-shot clip played
+  // pillarboxed to a third of the screen with no way to ask for the rest of
+  // it back, copied from VLC's own mobile player - which does not rotate a
+  // portrait video to landscape unless told to either.
+  const [forceLandscape, setForceLandscape] = React.useState(false);
+  React.useEffect(() => setForceLandscape(false), [item.id]);
+
+  const toggleForceLandscape = async () => {
+    const next = !forceLandscape;
+    setForceLandscape(next);
+    if (!fullscreen) return;
+    if (next) await lockLandscape();
+    else releaseOrientation();
+  };
+
+  /**
    * Pops the picture out into a floating window.
    *
    * The film keeps playing above whatever you go to next, which is the one
@@ -806,7 +830,11 @@ export function Player({
       } else if (shellRef.current) {
         await shellRef.current.requestFullscreen();
         setFullscreen(true);
-        await lockLandscape();
+        // A landscape film still rotates automatically - it is the one
+        // shape fullscreen was always for. A portrait clip does not, unless
+        // the person watching has actually asked for that with the button
+        // below; see isPortraitVideo's own comment.
+        if (!isPortraitVideo || forceLandscape) await lockLandscape();
       }
     } catch {
       /* fullscreen refused — controls stay as they are */
@@ -1574,6 +1602,21 @@ export function Player({
                       onClick={() => void togglePip()}
                     >
                       <PictureInPicture2 size={18} />
+                    </IconBtn>
+                  )}
+                  {/* Only a portrait clip has anything to toggle - a
+                      landscape film already rotates on its own, the same
+                      as it always did. */}
+                  {isPortraitVideo && (
+                    <IconBtn
+                      label={forceLandscape ? 'Use portrait' : 'Rotate to landscape'}
+                      onClick={() => void toggleForceLandscape()}
+                    >
+                      {forceLandscape ? (
+                        <Smartphone size={18} />
+                      ) : (
+                        <Smartphone size={18} className="rotate-90" />
+                      )}
                     </IconBtn>
                   )}
                   <IconBtn
