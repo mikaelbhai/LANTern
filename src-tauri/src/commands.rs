@@ -1235,19 +1235,13 @@ pub async fn peers_ping(app: AppHandle, state: State<'_, AppState>, peer_id: Str
     Ok(latency)
 }
 
-#[tauri::command]
-pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, trusted: bool) {
+/// Marks a device trusted or not, durably — on the live peer record where
+/// one exists, and in the `trusted` table either way. Shared by the
+/// explicit `peers_trust` command and by a pairing PIN's own native
+/// acceptance path (`signaling.rs`), so both write the one true record
+/// rather than two copies that could drift.
+pub(crate) fn set_trusted(state: &AppState, device_id: &str, trusted: bool) {
     state.with(|s| {
-        // `peer_id` is a device id everywhere this is called from, but the
-        // peer map is keyed by peer id and the two only usually coincide. Set
-        // the flag on whichever record answers to it, and keep the durable
-        // record under the device id either way.
-        let device_id = s
-            .peers
-            .values()
-            .find(|p| p.device_id == peer_id || p.id == peer_id)
-            .map(|p| p.device_id.clone())
-            .unwrap_or_else(|| peer_id.clone());
         let name = s
             .peers
             .values()
@@ -1262,9 +1256,9 @@ pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, 
         }
 
         if trusted {
-            s.trusted.insert(device_id.clone());
+            s.trusted.insert(device_id.to_string());
         } else {
-            s.trusted.remove(&device_id);
+            s.trusted.remove(device_id);
         }
 
         // On disk as well as in memory. This used to live only on the peer
@@ -1286,9 +1280,66 @@ pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, 
             }
         }
     });
+}
+
+#[tauri::command]
+pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, trusted: bool) {
+    // `peer_id` is a device id everywhere this is called from, but the
+    // peer map is keyed by peer id and the two only usually coincide. Set
+    // the flag on whichever record answers to it, and keep the durable
+    // record under the device id either way.
+    let device_id = state.with(|s| {
+        s.peers
+            .values()
+            .find(|p| p.device_id == peer_id || p.id == peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone())
+    });
+    set_trusted(&state, &device_id, trusted);
 
     let peers: Vec<Peer> = state.with(|s| s.peers.values().cloned().collect());
     let _ = app.emit("peers:changed", &peers);
+}
+
+/// Shows a PIN for someone else to type in, confirming this device is the
+/// one meant. Cleared by the first match, or after `PAIR_TTL_MS` — a
+/// standing PIN nobody has typed yet is a standing offer, and pairing is
+/// meant to be looked at and typed by a person at both screens, not that.
+const PAIR_TTL_MS: u64 = 3 * 60 * 1000;
+
+#[tauri::command]
+pub fn peers_pair_start(state: State<'_, AppState>) -> String {
+    // A UUID's own randomness, reduced to six digits rather than pulling in
+    // a `rand` dependency this codebase otherwise has no use for - `uuid`
+    // is already here for every token this application hands out.
+    let bytes = uuid::Uuid::new_v4().into_bytes();
+    let n = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % 1_000_000;
+    let pin = format!("{n:06}");
+    state.with(|s| {
+        s.pending_pair = Some((pin.clone(), crate::model::now_ms() + PAIR_TTL_MS));
+    });
+    pin
+}
+
+#[tauri::command]
+pub fn peers_pair_cancel(state: State<'_, AppState>) {
+    state.with(|s| s.pending_pair = None);
+}
+
+/// The other side of pairing: broadcasts a PIN someone just typed to every
+/// linked peer at once, the same shape `rating_unlock_peers` already uses
+/// for the same reason — the PIN does not say which device is showing it,
+/// only one (if any) will actually be. Silence otherwise; see
+/// `signaling.rs`'s native handling of `pairconfirm` for what happens next.
+#[tauri::command]
+pub fn peers_pair_confirm(state: State<'_, AppState>, pin: String) -> usize {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.broadcast(&Envelope {
+        v: 1,
+        from: me,
+        kind: "pairconfirm".into(),
+        payload: serde_json::json!({ "pin": pin }),
+    })
 }
 
 /// Every device the host has vouched for, for the list beside the blocked one.

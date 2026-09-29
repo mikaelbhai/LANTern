@@ -18,9 +18,9 @@
 import React from 'react';
 import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe, KeyRound, X } from 'lucide-react';
 
-import { api } from '../lib/bridge';
+import { api, on } from '../lib/bridge';
 import { useStore } from '../lib/store';
-import { Button, Checkbox, IconButton, Input, SectionTitle, Select, Spinner } from './ui';
+import { Button, Checkbox, IconButton, Input, Modal, SectionTitle, Select, Spinner } from './ui';
 import { PinPad, sanitizePin } from './PinPad';
 import type { RatingsStatus, Share } from '../lib/types';
 
@@ -127,6 +127,11 @@ export function Audience({ compact = false }: { compact?: boolean }) {
   /** Which folder's device list is open. One at a time; they get long. */
   const [opened, setOpened] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
+  /** A device this end just asked to show a PIN for, or null. */
+  const [pairingWith, setPairingWith] = React.useState<{ deviceId: string; name: string } | null>(
+    null,
+  );
+  const [enteringPin, setEnteringPin] = React.useState(false);
 
   const load = React.useCallback(() => {
     void api.peers.trusted().then(setTrusted).catch(() => setTrusted([]));
@@ -163,7 +168,15 @@ export function Audience({ compact = false }: { compact?: boolean }) {
   return (
     <div className="space-y-6">
       <section>
-        <SectionTitle>Allowed</SectionTitle>
+        <SectionTitle
+          right={
+            <Button size="xs" variant="ghost" icon={<KeyRound size={12} />} onClick={() => setEnteringPin(true)}>
+              Enter a PIN
+            </Button>
+          }
+        >
+          Allowed
+        </SectionTitle>
         {!compact && (
           <p className="text-2xs text-muted leading-relaxed mb-2">
             Devices you have vouched for. Files from these arrive without being
@@ -285,9 +298,9 @@ export function Audience({ compact = false }: { compact?: boolean }) {
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
-                      onClick={() => act(p.deviceId, () => api.peers.trust(p.deviceId, true))}
+                      onClick={() => setPairingWith({ deviceId: p.deviceId, name: p.name })}
                     >
-                      Allow
+                      Pair
                     </Button>
                     <Button
                       size="sm"
@@ -462,7 +475,160 @@ export function Audience({ compact = false }: { compact?: boolean }) {
           </div>
         </section>
       )}
+
+      {pairingWith && (
+        <PairShowModal
+          device={pairingWith}
+          onClose={() => setPairingWith(null)}
+          onPaired={() => {
+            setPairingWith(null);
+            load();
+          }}
+        />
+      )}
+      {enteringPin && (
+        <PairEnterModal
+          onClose={() => setEnteringPin(false)}
+          onPaired={() => {
+            setEnteringPin(false);
+            load();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Showing a PIN, for somebody else to type.
+ *
+ * The single unconfirmed tap "Allow" used to be — this asks the person to
+ * actually look at both screens instead. The PIN travels to every linked
+ * peer at once the moment somebody types it (see `pairConfirm`'s own
+ * comment for why); this device just waits to hear whether its own PIN was
+ * the one that matched.
+ */
+function PairShowModal({
+  device,
+  onClose,
+  onPaired,
+}: {
+  device: { deviceId: string; name: string };
+  onClose: () => void;
+  onPaired: () => void;
+}) {
+  const [pin, setPin] = React.useState<string | null>(null);
+  const [matched, setMatched] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void api.peers.pairStart().then((p) => {
+      if (!cancelled) setPin(p);
+    });
+    return () => {
+      cancelled = true;
+      void api.peers.pairCancel();
+    };
+  }, []);
+
+  React.useEffect(() => {
+    return on('pair:accepted', (r: { deviceId: string }) => {
+      if (r.deviceId !== device.deviceId) return;
+      setMatched(true);
+      setTimeout(onPaired, 900);
+    });
+  }, [device.deviceId, onPaired]);
+
+  return (
+    <Modal open onClose={onClose} title={`Pair with ${device.name || 'this device'}`} width="max-w-sm">
+      <div className="space-y-4 text-center">
+        {matched ? (
+          <div className="py-4">
+            <ShieldCheck size={28} className="mx-auto text-emerald-400 mb-2" />
+            <p className="text-sm font-medium">Paired.</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-2xs text-muted leading-relaxed">
+              Read this out, or show the screen, to whoever is at{' '}
+              {device.name || 'that device'} — they type it in over there.
+            </p>
+            <div className="text-4xl font-mono font-bold tracking-[0.15em] py-3">
+              {pin ? pin.match(/.{1,3}/g)?.join(' ') : '· · · · · ·'}
+            </div>
+            <p className="text-2xs text-dim">Waiting for them to enter it…</p>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Entering a PIN somebody else's screen is showing.
+ *
+ * Broadcasts to every linked peer at once — this device has no way to know
+ * in advance which one is showing a PIN, only that at most one of them
+ * should be. A silent non-match times out the same way a wrong rating PIN
+ * does.
+ */
+const PAIR_CONFIRM_TIMEOUT_MS = 8000;
+
+function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: () => void }) {
+  const [pin, setPin] = React.useState('');
+  const [state, setState] = React.useState<'idle' | 'trying' | 'failed'>('idle');
+  const [matchedName, setMatchedName] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (state !== 'trying') return;
+    const off = on('pair:result', () => {
+      setMatchedName('that device');
+      setTimeout(onPaired, 900);
+    });
+    const timer = setTimeout(() => setState('failed'), PAIR_CONFIRM_TIMEOUT_MS);
+    return () => {
+      off();
+      clearTimeout(timer);
+    };
+  }, [state, onPaired]);
+
+  const submit = async () => {
+    if (pin.length < 4) return;
+    setState('trying');
+    await api.peers.pairConfirm(pin);
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Enter a pairing PIN" width="max-w-sm">
+      <div className="space-y-4">
+        {matchedName ? (
+          <div className="py-4 text-center">
+            <ShieldCheck size={28} className="mx-auto text-emerald-400 mb-2" />
+            <p className="text-sm font-medium">Paired.</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-2xs text-muted leading-relaxed">
+              Type the PIN showing on the other device.
+            </p>
+            <PinPad value={pin} onChange={(v) => setPin(sanitizePin(v))} />
+            <Button
+              variant="primary"
+              full
+              disabled={pin.length < 4 || state === 'trying'}
+              onClick={() => void submit()}
+            >
+              {state === 'trying' ? 'Checking…' : 'Pair'}
+            </Button>
+            {state === 'failed' && (
+              <p className="text-2xs text-danger text-center">
+                Nothing answered to that PIN. Check it's still showing on the other screen.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 

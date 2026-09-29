@@ -203,6 +203,20 @@ export const api = {
     /** Everyone vouched for, whether or not they are on the network now. */
     trusted: () =>
       call<{ deviceId: string; name: string; trustedAt: number }[]>('peers_trusted'),
+    /**
+     * Pairing: a PIN confirmation in place of a single unconfirmed tap.
+     *
+     * `pairStart` shows a PIN on this device for someone to read and type
+     * elsewhere; `pairConfirm` is the other half, broadcasting a PIN someone
+     * just typed to every linked peer at once — mirrors `ratings.unlockPeers`
+     * for the same reason, since the PIN itself does not say which device is
+     * showing it. Trust, on both ends, is applied natively the moment they
+     * match; see `pair:accepted` (the showing side) and `pair:result` (the
+     * entering side) for how each finds out.
+     */
+    pairStart: () => call<string>('peers_pair_start'),
+    pairCancel: () => call<void>('peers_pair_cancel'),
+    pairConfirm: (pin: string) => call<number>('peers_pair_confirm', { pin }),
   },
   chat: {
     /** `memberIds` are peer device ids; empty means broadcast to the network. */

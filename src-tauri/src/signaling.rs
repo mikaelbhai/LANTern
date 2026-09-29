@@ -361,6 +361,78 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             }
 
             /*
+             * Pairing: the PIN half of a trust that used to be one
+             * unconfirmed tap.
+             *
+             * A PIN typed on one device is broadcast to every linked peer at
+             * once, the same shape `pinunlock` already uses for the same
+             * reason — it does not say which device is showing it, only one
+             * (if any) will actually be. Checked natively, against whatever
+             * this device is currently showing on its own Settings screen;
+             * a mismatch, or nothing being shown at all, is silent, same as
+             * a wrong rating PIN guess. A match trusts the sender on this
+             * end immediately and answers `pairresult` so the far end trusts
+             * back — mutual, never one-sided.
+             */
+            if envelope.kind == "pairconfirm" {
+                let pin = envelope
+                    .payload
+                    .get("pin")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let matched = state.with(|s| match &s.pending_pair {
+                    Some((expected, expires_at)) => {
+                        expected == pin && *expires_at > crate::model::now_ms()
+                    }
+                    None => false,
+                });
+                if matched {
+                    crate::commands::set_trusted(&state, &envelope.from, true);
+                    state.with(|s| s.pending_pair = None);
+
+                    let name =
+                        state.with(|s| s.peers.get(&envelope.from).map(|p| p.name.clone()));
+                    let peers: Vec<_> = state.with(|s| s.peers.values().cloned().collect());
+                    let _ = app.emit("peers:changed", &peers);
+                    let _ = app.emit(
+                        "pair:accepted",
+                        &serde_json::json!({ "deviceId": envelope.from, "name": name }),
+                    );
+
+                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    links.send(
+                        &envelope.from,
+                        &Envelope {
+                            v: 1,
+                            from: me,
+                            kind: "pairresult".into(),
+                            payload: serde_json::json!({ "accepted": true }),
+                        },
+                    );
+                }
+                continue;
+            }
+
+            // The far end confirming a PIN this device sent out — trust it
+            // back, natively, before the frontend ever sees it: pairing is
+            // meant to be mutual the moment it succeeds, not one-sided until
+            // somebody happens to open the audience screen.
+            if envelope.kind == "pairresult" {
+                let accepted = envelope
+                    .payload
+                    .get("accepted")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if accepted {
+                    crate::commands::set_trusted(&state, &envelope.from, true);
+                    let peers: Vec<_> = state.with(|s| s.peers.values().cloned().collect());
+                    let _ = app.emit("peers:changed", &peers);
+                }
+                deliver(&app, &envelope);
+                continue;
+            }
+
+            /*
              * A call offer, or the end of one - recognised here rather than
              * left to the frontend alone.
              *
@@ -957,6 +1029,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // it is linked to. See the native handling above — this is only
         // ever the reply, never the phrase itself.
         "pinresult" => "rating:unlocked",
+        // The far end confirming a pairing PIN this device sent out. Trust
+        // is already applied natively by the time this arrives (above) —
+        // this is only the UI's cue that it happened.
+        "pairresult" => "pair:result",
         "signal" => "call:state",
         _ => return,
     };

@@ -73,6 +73,13 @@ pub struct Inner {
     /// Devices the host has vouched for. The other half of `blocked`, and
     /// what "auto-accept from trusted peers" actually reads.
     pub trusted: std::collections::HashSet<String>,
+    /// The PIN this device is currently showing for someone to pair with,
+    /// and when it stops being valid.
+    ///
+    /// One at a time, cleared on the first match: pairing is meant to be
+    /// looked at and typed by a person standing at both screens, not a
+    /// standing offer anyone on the network can try against indefinitely.
+    pub pending_pair: Option<(String, u64)>,
     /// One-off permission to watch past a rating: (device, path) -> when it
     /// lapses, where 0 never does and a path of `*` covers everything.
     pub approvals: std::collections::HashMap<(String, String), u64>,
@@ -194,6 +201,7 @@ impl AppState {
             issued_keys: std::collections::HashMap::new(),
             held_keys: std::collections::HashMap::new(),
             trusted: std::collections::HashSet::new(),
+            pending_pair: None,
             approvals: std::collections::HashMap::new(),
             trust_local_requests: true,
             device_ages: std::collections::HashMap::new(),
