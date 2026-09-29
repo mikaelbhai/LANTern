@@ -644,6 +644,16 @@ function buildRows(
     });
   }
 
+  // Host-only, by construction: `!peerId` is this device's own library, and
+  // a peer's Theatre never sees a row built from someone else's. A guessed
+  // rating from the filename does not count here - a guess is exactly the
+  // thing this row exists to get confirmed or corrected, not something that
+  // quietly stands in for a real answer.
+  const unrated = items.filter((i) => !i.peerId && !i.ratedByHost);
+  if (unrated.length) {
+    rows.push({ label: 'Unrated', entries: unrated.map(asItem) });
+  }
+
   // Newest first, with a collection dated by its most recent member.
   const recent: RowEntry[] = [
     ...grouping.collections.map((c) => ({
@@ -830,8 +840,17 @@ function Row({
 
   return (
     <section className="mt-6 group/row">
-      <div className="flex items-center justify-between px-6 mb-2">
-        <h2 className="text-sm font-semibold text-white/90">{label}</h2>
+      <div className="flex items-center gap-2 justify-between px-6 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className={cn('text-sm font-semibold', label === 'Unrated' ? 'text-warn' : 'text-white/90')}>
+            {label}
+          </h2>
+          {label === 'Unrated' && (
+            <span className="text-2xs text-white/40 truncate">
+              visible to you only, until each gets a rating
+            </span>
+          )}
+        </div>
         {sortControl}
       </div>
       <div className="relative">
