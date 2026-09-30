@@ -396,6 +396,45 @@ export function isMicrophoneEnabled(): boolean {
   return track ? track.enabled : false;
 }
 
+/**
+ * Switches the microphone mid-call, without renegotiating.
+ *
+ * `replaceTrack` swaps what a sender is carrying without touching the
+ * connection it is carried over — the only way to change a device while a
+ * call is live rather than only before the next one starts, which is what
+ * Settings' own device pickers were doing until now: saving a preference
+ * nothing downstream ever read.
+ */
+export async function setMicrophoneDevice(deviceId: string): Promise<void> {
+  const wasEnabled = isMicrophoneEnabled();
+  const captured = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: deviceId === 'default' ? undefined : { exact: deviceId },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+  const next = captured.getAudioTracks()[0];
+  if (!next) return;
+  next.enabled = wasEnabled;
+
+  for (const session of sessions.values()) {
+    const sender = session.pc.getSenders().find((s) => s.track?.kind === 'audio');
+    void sender?.replaceTrack(next);
+  }
+
+  if (localStream) {
+    for (const old of localStream.getAudioTracks()) {
+      localStream.removeTrack(old);
+      old.stop();
+    }
+    localStream.addTrack(next);
+  } else {
+    localStream = captured;
+  }
+}
+
 /* ------------------------------------------------------- camera on/off */
 
 /**

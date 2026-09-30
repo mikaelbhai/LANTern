@@ -14,6 +14,7 @@ import {
   PhoneOff,
   Play,
   Radio,
+  Settings2,
   Signal,
   Smile,
   Sliders,
@@ -48,6 +49,7 @@ export function CallOverlay() {
   const endCall = useStore((s) => s.endCall);
   const answerCall = useStore((s) => s.answerCall);
   const updateCall = useStore((s) => s.updateCall);
+  const navigate = useStore((s) => s.navigate);
 
   const [elapsed, setElapsed] = React.useState(0);
   const poppedOut = useStore((s) => s.poppedOut);
@@ -791,6 +793,21 @@ export function CallOverlay() {
               setMoreOpen(false);
             }}
           />
+          {/* The mic/camera/speaker pickers already live in Settings > Calls -
+              this pops the call into the corner rather than duplicating them
+              here, so both are on screen at once instead of one replacing
+              the other. A mic changed there takes effect on this same call;
+              see CallsTab's own comment on why the speaker needs no such
+              wiring and the mic does. */}
+          <MoreTile
+            label="Mic & speaker"
+            icon={<Settings2 size={18} />}
+            onClick={() => {
+              setMoreOpen(false);
+              updateCall((c) => ({ ...c, pip: true }));
+              navigate('settings');
+            }}
+          />
         </div>
       </Modal>
 
@@ -981,6 +998,7 @@ function Tile({
   const profile = useStore((s) => s.profile);
   const peers = useStore((s) => s.peers);
   const mirror = useStore((s) => s.settings.calls.camera !== 'no-mirror');
+  const speaker = useStore((s) => s.settings.calls.speaker);
   const videoRef = React.useRef<HTMLVideoElement>(null);
 
   const isSelf = tile === 'self';
@@ -1007,6 +1025,18 @@ function Tile({
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
+
+  // Which physical speaker plays this - only meaningful on the far side's
+  // tile, which is the element actually carrying their audio (see this
+  // component's own note on why it stays mounted for a voice call too).
+  // `setSinkId` is Chromium-only and absent on some builds, so a device
+  // that cannot change output just keeps using whatever the system
+  // default already is rather than throwing.
+  React.useEffect(() => {
+    const el = videoRef.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (isSelf || !el?.setSinkId) return;
+    void el.setSinkId(speaker === 'default' ? '' : speaker).catch(() => {});
+  }, [isSelf, speaker, stream]);
 
   React.useEffect(() => {
     if (!isSelf && videoRef.current && p) {

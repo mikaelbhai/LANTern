@@ -42,6 +42,7 @@ import { pickFolder } from '../lib/picker';
 import { cn, formatBytes, squareImageDataUrl } from '../lib/utils';
 import { sfx } from '../lib/audio';
 import { copyText } from '../lib/clipboard';
+import * as rtc from '../lib/webrtc';
 import type { ControlStatus, RatingsStatus, WifiStatus } from '../lib/types';
 
 type Tab =
@@ -430,10 +431,21 @@ function NotificationsTab() {
 function CallsTab() {
   const s = useStore((st) => st.settings.calls);
   const set = useStore((st) => st.setSettings);
+  const inCall = useStore((st) => !!st.call);
   const upd = (patch: Partial<typeof s>) =>
     set((x) => ({ ...x, calls: { ...x.calls, ...patch } }));
   const [devices, setDevices] = React.useState<MediaDeviceInfo[]>([]);
   const [level, setLevel] = React.useState(0);
+
+  // Only the microphone needs telling explicitly — the speaker follows the
+  // setting on its own (see CallOverlay's Tile, which re-applies setSinkId
+  // whenever this same value changes), but capture has no such live wiring
+  // of its own: nothing re-opens the microphone just because a preference
+  // changed underneath it.
+  const chooseMic = (v: string) => {
+    upd({ mic: v });
+    if (inCall) void rtc.setMicrophoneDevice(v).catch(() => {});
+  };
 
   React.useEffect(() => {
     navigator.mediaDevices
@@ -481,10 +493,10 @@ function CallsTab() {
   return (
     <>
       <Group title="Devices">
-        <Row label="Microphone">
+        <Row label="Microphone" hint={inCall ? 'Changes take effect on this call too' : undefined}>
           <Select
             value={s.mic}
-            onChange={(v) => upd({ mic: v })}
+            onChange={chooseMic}
             options={opts('audioinput', 'System default')}
             className="w-52"
           />
