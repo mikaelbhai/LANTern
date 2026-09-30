@@ -13,6 +13,7 @@ mod audiotrack;
 mod battery;
 mod callaudio;
 mod clientlog;
+mod companion;
 mod incomingcall;
 #[cfg(target_os = "windows")]
 pub mod autoshare;
@@ -249,6 +250,10 @@ pub fn run() {
             commands::peers_pair_start,
             commands::peers_pair_cancel,
             commands::peers_pair_confirm,
+            commands::peers_set_companion,
+            commands::peers_companions,
+            commands::companion_browse,
+            commands::companion_fetch,
             commands::net_connection_profiles,
             commands::net_set_private,
             commands::update_launch,

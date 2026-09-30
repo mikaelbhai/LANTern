@@ -433,6 +433,85 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             }
 
             /*
+             * Browsing a companion's filesystem - one directory at a time,
+             * asked over the signalling link rather than as an HTTP route,
+             * so nothing about it is reachable by a browser guessing at a
+             * URL the way a published share deliberately is.
+             *
+             * Checked against `s.companions`, not `s.trusted`: the sender
+             * has to be a device *this* end already marked as its own
+             * before a single filename crosses the wire. Silent otherwise -
+             * a stranger's browse request gets exactly the same nothing a
+             * wrong rating PIN does, not an error that confirms anyone is
+             * even listening.
+             */
+            if envelope.kind == "fsbrowse" {
+                let allowed = state.with(|s| s.companions.contains(&envelope.from));
+                if allowed {
+                    let path = envelope.payload.get("path").and_then(|v| v.as_str());
+                    let request_id = envelope
+                        .payload
+                        .get("requestId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let (entries, error) = match path {
+                        None => (crate::companion::roots(), None),
+                        Some(p) => match crate::companion::list(p) {
+                            Ok(e) => (e, None),
+                            Err(e) => (Vec::new(), Some(e)),
+                        },
+                    };
+                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    links.send(
+                        &envelope.from,
+                        &Envelope {
+                            v: 1,
+                            from: me,
+                            kind: "fsbrowseresult".into(),
+                            payload: serde_json::json!({
+                                "requestId": request_id,
+                                "path": path,
+                                "entries": entries,
+                                "error": error,
+                            }),
+                        },
+                    );
+                }
+                continue;
+            }
+
+            // The answer to a browse, delivered straight to the frontend -
+            // nothing here needs a native decision, only somewhere to show
+            // up.
+            if envelope.kind == "fsbrowseresult" {
+                deliver(&app, &envelope);
+                continue;
+            }
+
+            // A companion asking for one specific file. Reuses the ordinary
+            // file-transfer path exactly as if this device had offered it
+            // by hand — the requester sees a normal incoming-file offer,
+            // with every existing accept/pause/resume/progress behaviour
+            // already built for it, rather than a second download mechanism
+            // that would need all of that taught to it again.
+            if envelope.kind == "fsfetch" {
+                let allowed = state.with(|s| s.companions.contains(&envelope.from));
+                if let (true, Some(path)) = (
+                    allowed,
+                    envelope.payload.get("path").and_then(|v| v.as_str()),
+                ) {
+                    crate::transfers::offer(
+                        &app,
+                        &state,
+                        &envelope.from,
+                        vec![std::path::PathBuf::from(path)],
+                        false,
+                    );
+                }
+                continue;
+            }
+
+            /*
              * A call offer, or the end of one - recognised here rather than
              * left to the frontend alone.
              *
@@ -1033,6 +1112,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // is already applied natively by the time this arrives (above) —
         // this is only the UI's cue that it happened.
         "pairresult" => "pair:result",
+        // A companion's answer to a directory listing this device asked
+        // for. The eligibility check already happened on their end, before
+        // this was ever sent.
+        "fsbrowseresult" => "companion:browsed",
         "signal" => "call:state",
         _ => return,
     };

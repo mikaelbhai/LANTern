@@ -137,6 +137,14 @@ export interface Message {
   deleted?: boolean;
   replyTo?: string;
   threadRoot?: string;
+  /**
+   * The name of whoever originally sent this, when it arrived by forwarding.
+   *
+   * Just the name, not a link back to the source message — there is no server
+   * to resolve that against later, and the room the original lived in may not
+   * even be one this device is still a member of.
+   */
+  forwardedFrom?: { name: string };
   reactions: Record<string, string[]>;
   attachments: Attachment[];
   voice?: VoiceClip;
@@ -624,4 +632,19 @@ export interface Wakeable {
    * indistinguishable from one that failed.
    */
   wakeable?: boolean;
+}
+
+/**
+ * Files staged for a device that is not here, to go out the moment it is.
+ *
+ * Keyed by `deviceId` rather than `peer.id` — a peer id belongs to one
+ * session on one link, and the whole point of this is to survive the device
+ * being gone when it was made and somebody else's session id when it is back.
+ */
+export interface PendingSend {
+  deviceId: string;
+  /** Who this was queued for, remembered the same way `Wakeable.name` is. */
+  name: string;
+  paths: string[];
+  queuedAt: number;
 }

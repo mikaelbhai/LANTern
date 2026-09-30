@@ -326,6 +326,18 @@ pub fn may_serve_as(
     stream_path: &str,
     name: &str,
 ) -> bool {
+    // Trusted is one of the two things trust actually means — the other
+    // being "auto-accept from trusted peers" over in transfers.rs. A device
+    // vouched for sees the whole library, the same as this device's own
+    // sees itself: an age limit is for a household's own devices deciding
+    // what a child's tablet may open, not a second gate in front of
+    // somebody already let all the way in.
+    if let Some(device) = &device {
+        if state.with(|s| s.trusted.contains(device)) {
+            return true;
+        }
+    }
+
     let needs = min_age_for(state, stream_path, name);
     let allowed = match &device {
         Some(device) => allowed_age(state, device),
@@ -666,6 +678,25 @@ mod gate_tests {
         let path = "/media/Some Film.mkv";
         assert!(!may_serve(&state, Some("key-child"), path, "Some Film.mkv"));
         assert!(may_serve(&state, Some("key-grown"), path, "Some Film.mkv"));
+    }
+
+    /// Trust is one of the two things trust means - the other is auto-accept
+    /// in transfers.rs. A trusted device sees the whole library regardless
+    /// of whatever age limit it was separately given; a household vouching
+    /// for a device is not a household that meant to also leave its age
+    /// limit in force behind that device's back.
+    #[test]
+    fn a_trusted_device_sees_past_its_own_age_limit() {
+        let state = household();
+        state.with(|s| {
+            s.issued_keys.insert("trusted-child".into(), "key-trusted".into());
+            s.device_ages.insert("trusted-child".into(), 7);
+            s.trusted.insert("trusted-child".into());
+        });
+        assert!(may_serve(&state, Some("key-trusted"), "/media/Some Film.mkv", "Some Film.mkv"));
+        // An untrusted device with the identical age limit is still refused -
+        // this is trust doing the work, not the limit having moved.
+        assert!(!may_serve(&state, Some("key-child"), "/media/Some Film.mkv", "Some Film.mkv"));
     }
 
     /// The whole point of a key. Guessing one, dropping it, or presenting

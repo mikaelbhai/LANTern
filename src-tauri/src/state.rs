@@ -73,6 +73,20 @@ pub struct Inner {
     /// Devices the host has vouched for. The other half of `blocked`, and
     /// what "auto-accept from trusted peers" actually reads.
     pub trusted: std::collections::HashSet<String>,
+    /// This person's *own* other devices - a phone and a desktop belonging
+    /// to whoever sits at this one, not another person's machine merely
+    /// vouched for.
+    ///
+    /// Kept apart from `trusted` on purpose: trusting a peer is "I vouch for
+    /// this other person's device" and grants nothing beyond calls and
+    /// file auto-accept. A companion is "this is also me," which is why it
+    /// is the one thing in this application allowed to browse a device's
+    /// whole filesystem rather than only what has been explicitly
+    /// published - a grant trust was never meant to carry, and reusing it
+    /// would have quietly widened every trust decision anyone had already
+    /// made. Set only through pairing (see commands::peers_pair_confirm),
+    /// never as a side effect of trusting someone.
+    pub companions: std::collections::HashSet<String>,
     /// The PIN this device is currently showing for someone to pair with,
     /// and when it stops being valid.
     ///
@@ -201,6 +215,7 @@ impl AppState {
             issued_keys: std::collections::HashMap::new(),
             held_keys: std::collections::HashMap::new(),
             trusted: std::collections::HashSet::new(),
+            companions: std::collections::HashSet::new(),
             pending_pair: None,
             approvals: std::collections::HashMap::new(),
             trust_local_requests: true,

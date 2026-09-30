@@ -21,6 +21,7 @@ import type {
   Message,
   NetInfo,
   Peer,
+  PendingSend,
   Profile,
   Room,
   Share,
@@ -28,7 +29,7 @@ import type {
   VoiceClip,
   GameSession,
 } from './types';
-import { uid } from './utils';
+import { canForwardMessage, uid } from './utils';
 
 /**
  * Call offers waiting for the user to answer, keyed by call id.
@@ -348,6 +349,8 @@ interface State {
   openThread: (messageId: string | null) => void;
 
   sendMessage: (roomId: string, input: Partial<Message>) => void;
+  /** Re-sends a message's content into other rooms, marked as forwarded. */
+  forwardMessage: (messageId: string, targetRoomIds: string[]) => Promise<void>;
   editMessage: (id: string, body: string) => void;
   deleteMessage: (id: string) => void;
   toggleReaction: (id: string, emoji: string) => void;
@@ -381,6 +384,11 @@ interface State {
   addTransfers: (t: Transfer[]) => void;
   updateTransfer: (t: Transfer) => void;
   setShares: (s: Share[]) => void;
+
+  /** Files staged for a sleeping device, sent the moment it rejoins. */
+  pendingSends: Record<string, PendingSend>;
+  queueSend: (deviceId: string, name: string, paths: string[]) => void;
+  cancelQueuedSend: (deviceId: string) => void;
 
   pushActivity: (a: Omit<ActivityItem, 'id' | 'ts'>) => void;
   toast: (t: Omit<Toast, 'id'>) => void;
@@ -447,6 +455,7 @@ function loadPersisted(): Partial<State> {
       // and silently dropped on load, which is a record that resets every
       // time the application starts.
       scores: p.scores ?? emptyScores(),
+      pendingSends: p.pendingSends ?? {},
     };
   } catch {
     return {};
@@ -481,6 +490,7 @@ function persist(s: State) {
           callLog: s.callLog.slice(-200),
           activity: s.activity.slice(0, 100),
           scores: s.scores,
+          pendingSends: s.pendingSends,
         }),
       );
     } catch {
@@ -610,6 +620,41 @@ export const useStore = create<State>((set, get) => {
     if (!toast.action) setTimeout(() => get().dismissToast(toast.id), 5200);
   };
 
+  /**
+   * Sends whatever was staged for a device the moment it is seen again.
+   *
+   * Keyed and looked up by `deviceId`, never `peer.id` — the id a device had
+   * when it went to sleep belongs to a session that no longer exists, and
+   * comparing against it here would silently never match.
+   */
+  const flushPendingSend = async (deviceId: string, peerId: string) => {
+    const pending = get().pendingSends[deviceId];
+    if (!pending) return;
+    set((s) => {
+      const pendingSends = { ...s.pendingSends };
+      delete pendingSends[deviceId];
+      return { pendingSends };
+    });
+    persist(get());
+
+    const created = await api.files.offer(peerId, pending.paths).catch(() => []);
+    get().addTransfers(created);
+    const failed = created.filter((t) => t.state === 'failed').length;
+    if (!created.length || failed === created.length) {
+      get().toast({
+        kind: 'error',
+        title: 'Could not send',
+        body: `${pending.name} is back, but the queued send failed.`,
+      });
+      return;
+    }
+    get().toast({
+      kind: 'info',
+      title: created.length === 1 ? 'Sending 1 file' : `Sending ${created.length} files`,
+      body: `${pending.name} is back online — sending what was queued.`,
+    });
+  };
+
   return {
     ready: false,
     onboarded: persisted.onboarded ?? false,
@@ -637,6 +682,7 @@ export const useStore = create<State>((set, get) => {
     threadRootId: null,
 
     transfers: {},
+    pendingSends: persisted.pendingSends ?? {},
     shares: [],
     call: null,
     callLog: persisted.callLog ?? [],
@@ -895,7 +941,10 @@ export const useStore = create<State>((set, get) => {
         // before it is up is a no-op that nothing retries. One second is
         // long enough for the reconciler to have connected and short enough
         // that a face appears while somebody is still looking at the row.
-        setTimeout(() => void get().shareProfile(p.id), 1000);
+        setTimeout(() => {
+          void get().shareProfile(p.id);
+          void flushPendingSend(p.deviceId ?? p.id, p.id);
+        }, 1000);
       });
       on('peer:updated', (p: Peer) => {
         rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
@@ -1565,6 +1614,52 @@ export const useStore = create<State>((set, get) => {
       }
     },
 
+    async forwardMessage(messageId, targetRoomIds) {
+      let source: Message | undefined;
+      for (const list of Object.values(get().messages)) {
+        source = list.find((m) => m.id === messageId);
+        if (source) break;
+      }
+      if (!source || !canForwardMessage(source, get().transfers)) return;
+
+      const me = get().profile.id;
+      const authorName =
+        source.authorId === me
+          ? get().profile.name || 'You'
+          : (get().peers[source.authorId]?.name ?? 'Someone');
+
+      for (const roomId of targetRoomIds) {
+        const room = get().rooms[roomId];
+        if (!room) continue;
+
+        // Mirrors Composer's own attach-and-send: a disk-backed attachment
+        // becomes a fresh transfer to whoever is in the target room, rather
+        // than reusing a transfer id that belongs to a different link.
+        const finalAttachments: Attachment[] = [];
+        for (const a of source.attachments) {
+          if (!a.transferId) {
+            finalAttachments.push(a);
+            continue;
+          }
+          const path = get().transfers[a.transferId]?.localPath;
+          if (!path || room.members.length === 0) continue;
+          const [primary, ...rest] = room.members;
+          const created = await api.files.offer(primary, [path], true).catch(() => []);
+          for (const peerId of rest) void api.files.offer(peerId, [path], true);
+          if (created[0]) finalAttachments.push({ ...a, transferId: created[0].id, localPath: undefined });
+        }
+
+        get().sendMessage(roomId, {
+          body: source.body,
+          attachments: finalAttachments,
+          voice: source.voice,
+          sticker: source.sticker,
+          gif: source.gif,
+          forwardedFrom: { name: authorName },
+        });
+      }
+    },
+
     editMessage(id, body) {
       set((s) => {
         const messages = { ...s.messages };
@@ -1807,6 +1902,32 @@ export const useStore = create<State>((set, get) => {
         for (const t of list) transfers[t.id] = t;
         return { transfers };
       });
+    },
+
+    queueSend(deviceId, name, paths) {
+      if (!paths.length) return;
+      set((s) => ({
+        pendingSends: {
+          ...s.pendingSends,
+          [deviceId]: { deviceId, name, paths, queuedAt: Date.now() },
+        },
+      }));
+      persist(get());
+      get().toast({
+        kind: 'info',
+        title: 'Waiting to send',
+        body: `Will go to ${name} the moment it's back online.`,
+      });
+    },
+
+    cancelQueuedSend(deviceId) {
+      set((s) => {
+        if (!s.pendingSends[deviceId]) return {};
+        const pendingSends = { ...s.pendingSends };
+        delete pendingSends[deviceId];
+        return { pendingSends };
+      });
+      persist(get());
     },
 
     updateTransfer(t) {

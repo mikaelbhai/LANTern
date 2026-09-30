@@ -304,6 +304,20 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
         [],
     );
 
+    // This person's own other devices, not another person's merely trusted.
+    // See state.rs's own comment on `companions` for why this is a separate
+    // table rather than a flag reused on `trusted` - a companion is allowed
+    // to browse this device's whole filesystem, which trust was never meant
+    // to grant.
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS companions (
+            device_id     TEXT PRIMARY KEY,
+            name          TEXT NOT NULL DEFAULT '',
+            companion_at  INTEGER NOT NULL
+        )",
+        [],
+    );
+
     Ok(())
 }
 

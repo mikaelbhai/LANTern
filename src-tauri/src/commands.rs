@@ -172,7 +172,10 @@ pub fn boot(app: AppHandle, state: AppState) {
                         if let Ok(rows) =
                             stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
                         {
-                            macs.extend(rows.flatten());
+                            // A row can be here with no address at all - see
+                            // `remember_macs` - and an empty string is not a
+                            // hardware address worth caching.
+                            macs.extend(rows.flatten().filter(|(_, mac)| !mac.is_empty()));
                         }
                     }
                     // Who may watch what, read before the server can answer
@@ -182,6 +185,12 @@ pub fn boot(app: AppHandle, state: AppState) {
                     if let Ok(mut stmt) = conn.prepare("SELECT device_id FROM trusted") {
                         if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                             trusted.extend(rows.flatten());
+                        }
+                    }
+                    let mut companions = std::collections::HashSet::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT device_id FROM companions") {
+                        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            companions.extend(rows.flatten());
                         }
                     }
                     // Approvals that have already lapsed are dropped on the
@@ -224,6 +233,7 @@ pub fn boot(app: AppHandle, state: AppState) {
                     state.with(|s| {
                         s.blocked = blocked;
                         s.trusted = trusted;
+                        s.companions = companions;
                         s.approvals = approvals;
                         s.control.load_allowed(allowed);
                         s.macs = macs;
@@ -1301,6 +1311,84 @@ pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, 
     let _ = app.emit("peers:changed", &peers);
 }
 
+/// Marks a device as this person's own — a phone or a second PC, not
+/// another person's machine merely vouched for. See `companions`'s own
+/// comment in state.rs for why this is deliberately not `trusted`.
+///
+/// Only ever set from a completed pairing (see `PairShowModal`/
+/// `PairEnterModal`), never as a side effect of trusting someone: the PIN
+/// handshake is what actually establishes "I am standing at both of
+/// these," which is the only thing that should grant browsing a whole
+/// filesystem.
+pub(crate) fn set_companion(state: &AppState, device_id: &str, companion: bool) {
+    state.with(|s| {
+        let name = s
+            .peers
+            .values()
+            .find(|p| p.device_id == device_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+
+        if companion {
+            s.companions.insert(device_id.to_string());
+        } else {
+            s.companions.remove(device_id);
+        }
+
+        if let Some(db) = s.db.as_ref() {
+            if companion {
+                let _ = db.execute(
+                    "INSERT INTO companions (device_id, name, companion_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(device_id) DO UPDATE SET name = ?2",
+                    rusqlite::params![device_id, name, crate::model::now_ms()],
+                );
+            } else {
+                let _ = db.execute(
+                    "DELETE FROM companions WHERE device_id = ?1",
+                    rusqlite::params![device_id],
+                );
+            }
+        }
+    });
+}
+
+#[tauri::command]
+pub fn peers_set_companion(state: State<'_, AppState>, device_id: String, companion: bool) {
+    set_companion(&state, &device_id, companion);
+}
+
+/// Every device marked as this person's own, for the list in Settings.
+#[tauri::command]
+pub fn peers_companions(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = db.prepare(
+            "SELECT device_id, name, companion_at FROM companions ORDER BY companion_at DESC",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map([], |r| {
+            let device_id = r.get::<_, String>(0)?;
+            let stored = r.get::<_, String>(1)?;
+            let name = s
+                .peers
+                .values()
+                .find(|p| p.device_id == device_id)
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or(stored);
+            Ok(serde_json::json!({
+                "deviceId": device_id,
+                "name": name,
+                "companionAt": r.get::<_, i64>(2)?,
+            }))
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    })
+}
+
 /// Shows a PIN for someone else to type in, confirming this device is the
 /// one meant. Cleared by the first match, or after `PAIR_TTL_MS` — a
 /// standing PIN nobody has typed yet is a standing offer, and pairing is
@@ -1340,6 +1428,46 @@ pub fn peers_pair_confirm(state: State<'_, AppState>, pin: String) -> usize {
         kind: "pairconfirm".into(),
         payload: serde_json::json!({ "pin": pin }),
     })
+}
+
+/// Asks a companion for one directory's contents — `path` of `None` for
+/// the starting points (`companion::roots`). The answer arrives later, as
+/// `companion:browsed`, matched back up by `request_id`; this device has no
+/// way to know whether the far end will even answer, since the eligibility
+/// check happens entirely on their side.
+#[tauri::command]
+pub fn companion_browse(
+    state: State<'_, AppState>,
+    peer_id: String,
+    path: Option<String>,
+    request_id: String,
+) {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "fsbrowse".into(),
+            payload: serde_json::json!({ "path": path, "requestId": request_id }),
+        },
+    );
+}
+
+/// Asks a companion to send one file — arrives on this end as an ordinary
+/// incoming-file offer, the same as any other transfer.
+#[tauri::command]
+pub fn companion_fetch(state: State<'_, AppState>, peer_id: String, path: String) {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "fsfetch".into(),
+            payload: serde_json::json!({ "path": path }),
+        },
+    );
 }
 
 /// Every device the host has vouched for, for the list beside the blocked one.
@@ -3948,11 +4076,19 @@ pub fn wake_device(state: State<'_, AppState>, mac: String) -> Res<usize> {
     crate::wol::wake(parsed, &broadcasts)
 }
 
-/// Notes the hardware address of every peer currently visible.
+/// Notes every peer currently visible, and its hardware address when the ARP
+/// table has one.
 ///
 /// Called when the wake list is read rather than on a timer: the ARP table is
 /// only consulted for devices that are answering right now, and looking one
 /// up costs a subprocess.
+///
+/// The row is written even when no MAC comes back - `arp` is a subprocess
+/// this app cannot spawn on Android at all, so a phone asking this question
+/// never resolved one for anybody, and used to forget every device it had
+/// ever seen the moment they went to sleep. A device that cannot be woken
+/// still deserves to be remembered; `wakeable()` below is what turns an empty
+/// address into a hidden Wake button rather than one that silently fails.
 fn remember_macs(state: &AppState) {
     let seen: Vec<(String, String, String, String, String)> = state.with(|s| {
         s.peers
@@ -3970,11 +4106,11 @@ fn remember_macs(state: &AppState) {
     });
 
     for (device_id, ip, name, device_name, os) in seen {
-        let Some(mac) = crate::wol::mac_for(&ip) else {
-            continue;
-        };
+        let mac = crate::wol::mac_for(&ip).unwrap_or_default();
         state.with(|s| {
-            s.macs.insert(device_id.clone(), mac.clone());
+            if !mac.is_empty() {
+                s.macs.insert(device_id.clone(), mac.clone());
+            }
             if let Some(db) = s.db.as_ref() {
                 let _ = db.execute(
                     "INSERT INTO device_macs (device_id, mac, name, device_name, os, seen_at)
@@ -4101,7 +4237,10 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
                 "deviceName": device_name,
                 "os": os,
                 "online": peer.is_some(),
-                "wakeable": can_be_woken(&os, &name, &device_name),
+                // No address on file - most often a phone asking about a
+                // device it never got to ARP-resolve - means no packet can
+                // be sent, whatever kind of machine this is.
+                "wakeable": !mac.is_empty() && can_be_woken(&os, &name, &device_name),
             }));
         }
         out

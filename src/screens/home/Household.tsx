@@ -37,6 +37,7 @@ import {
   Smartphone,
   Tv,
   Users,
+  X,
 } from 'lucide-react';
 
 import { api } from '../../lib/bridge';
@@ -47,7 +48,7 @@ import { Avatar } from '../../components/Avatar';
 import { Button, IconButton } from '../../components/ui';
 import { cn, whenLabel } from '../../lib/utils';
 import { useNow } from '../../lib/hooks';
-import type { Message, Peer, Room, Transfer, Wakeable } from '../../lib/types';
+import type { Message, Peer, PendingSend, Room, Transfer, Wakeable } from '../../lib/types';
 import type { Screen } from '../../lib/nav';
 
 /** One person and every device answering to their name. */
@@ -82,6 +83,8 @@ export function Household({
   const messages = useStore((s) => s.messages);
   const profile = useStore((s) => s.profile);
   const openRoom = useStore((s) => s.openRoom);
+  const pendingSends = useStore((s) => s.pendingSends);
+  const cancelQueuedSend = useStore((s) => s.cancelQueuedSend);
   const now = useNow(30_000);
 
   const [open, setOpen] = React.useState<string | null>(null);
@@ -104,6 +107,23 @@ export function Household({
   React.useEffect(loadWakeable, [loadWakeable, peers]);
 
   /*
+   * Everything remembered that is not here right now, wakeable or not.
+   *
+   * A phone is remembered exactly like a desktop is - it was seen, it went
+   * quiet, its name is on file - the only difference is what the right-hand
+   * button gets to do about it. Filtering this list down to the wakeable ones
+   * used to mean an Android phone that had been seen once simply had nowhere
+   * to appear once it went to sleep: not a person (nothing here groups an
+   * offline device under one), not a stranger (this list is where a nameless
+   * one becomes visible), nothing.
+   */
+  const remembered = React.useMemo(() => {
+    const by = new Map<string, Wakeable>();
+    for (const d of known) if (!d.online) by.set(d.deviceId, d);
+    return by;
+  }, [known]);
+
+  /*
    * The ones asleep that a magic packet could actually reach.
    *
    * `wakeable` is decided natively, from what kind of machine it is: a phone
@@ -114,9 +134,9 @@ export function Household({
    */
   const wakeable = React.useMemo(() => {
     const by = new Map<string, Wakeable>();
-    for (const d of known) if (!d.online && d.wakeable !== false) by.set(d.deviceId, d);
+    for (const d of remembered.values()) if (d.wakeable !== false) by.set(d.deviceId, d);
     return by;
-  }, [known]);
+  }, [remembered]);
 
   const needle = query.trim().toLowerCase();
 
@@ -150,8 +170,8 @@ export function Household({
   // one that has never announced itself under a name.
   const strangers = React.useMemo(() => {
     const seen = new Set(Object.values(peers).map((p) => p.deviceId));
-    return [...wakeable.values()].filter((d) => !seen.has(d.deviceId));
-  }, [wakeable, peers]);
+    return [...remembered.values()].filter((d) => !seen.has(d.deviceId));
+  }, [remembered, peers]);
 
   /*
    * Wake everything named, under one key.
@@ -185,6 +205,9 @@ export function Household({
           wakeable={wakeable}
           woken={woken[person.name]}
           onWake={(devices) => void wake(person.name, devices)}
+          pendingSends={pendingSends}
+          onQueueSend={(deviceId, name) => void queueFilesFor(deviceId, name)}
+          onCancelQueuedSend={cancelQueuedSend}
           expanded={open === person.name}
           onToggle={() => setOpen(open === person.name ? null : person.name)}
           onOpen={() => {
@@ -214,7 +237,9 @@ export function Household({
         underneath it: a device being asleep is a state it is in, not a
         different kind of thing.
       */}
-      {strangers.map((device) => (
+      {strangers.map((device) => {
+        const queued = pendingSends[device.deviceId];
+        return (
         <Row
           key={device.deviceId}
           avatar={<Avatar name={nameOf(device)} size={44} muted />}
@@ -222,29 +247,59 @@ export function Household({
           dim
           // The machine's own name underneath the person's, when they differ,
           // because "Rehan" says nothing about which of his boxes this is.
-          line={{
-            text:
-              device.deviceName && device.deviceName !== device.name
-                ? `${device.deviceName} · not here right now`
-                : 'Not here right now',
-          }}
+          line={
+            queued
+              ? {
+                  text: `${queued.paths.length === 1 ? '1 file' : `${queued.paths.length} files`} waiting to send`,
+                }
+              : {
+                  text:
+                    device.deviceName && device.deviceName !== device.name
+                      ? `${device.deviceName} · not here right now`
+                      : 'Not here right now',
+                }
+          }
           right={
-            woken[device.deviceId] ? (
-              <span className="text-2xs text-muted">{woken[device.deviceId]}</span>
-            ) : (
-              <Button
-                size="sm"
-                variant="accent"
-                className="rounded-full"
-                icon={<Power size={12} />}
-                onClick={() => void wake(device.deviceId, [device])}
-              >
-                Wake
-              </Button>
-            )
+            <div className="flex items-center gap-1.5">
+              {/*
+                Not every remembered device can be woken - this list holds a
+                phone exactly as it holds a desktop now, and offering a button
+                that cannot work is worse than offering none.
+              */}
+              {device.wakeable !== false &&
+                (woken[device.deviceId] ? (
+                  <span className="text-2xs text-muted">{woken[device.deviceId]}</span>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="accent"
+                    className="rounded-full"
+                    icon={<Power size={12} />}
+                    onClick={() => void wake(device.deviceId, [device])}
+                  >
+                    Wake
+                  </Button>
+                ))}
+              {queued ? (
+                <IconButton
+                  label={`Cancel the queued send to ${nameOf(device)}`}
+                  onClick={() => cancelQueuedSend(device.deviceId)}
+                >
+                  <X size={14} />
+                </IconButton>
+              ) : (
+                <IconButton
+                  label={`Send a file to ${nameOf(device)} when it's back online`}
+                  onClick={() => void queueFilesFor(device.deviceId, nameOf(device))}
+                >
+                  <Send size={14} />
+                </IconButton>
+              )}
+            </div>
           }
         />
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -353,6 +408,9 @@ function PersonRow({
   wakeable,
   woken,
   onWake,
+  pendingSends,
+  onQueueSend,
+  onCancelQueuedSend,
   expanded,
   onToggle,
   onOpen,
@@ -365,6 +423,9 @@ function PersonRow({
   /** What the person's own Wake button has to say for itself, if anything. */
   woken?: string;
   onWake: (devices: Wakeable[]) => void;
+  pendingSends: Record<string, PendingSend>;
+  onQueueSend: (deviceId: string, name: string) => void;
+  onCancelQueuedSend: (deviceId: string) => void;
   expanded: boolean;
   onToggle: () => void;
   onOpen: () => void;
@@ -468,6 +529,8 @@ function PersonRow({
             const sleeper = wakeable.get(device.deviceId);
             const moving = transfers.find((t) => t.state === 'active' && t.peerId === device.id);
             const asleep = device.status === 'offline';
+            const queued = pendingSends[device.deviceId];
+            const label = device.deviceName || device.name;
             return (
               <div key={device.deviceId} className="flex items-center gap-2.5 py-2">
                 <span className={cn('shrink-0', asleep ? 'text-muted' : 'text-gold')}>
@@ -477,10 +540,15 @@ function PersonRow({
                   <div
                     className={cn('text-xs truncate', asleep ? 'text-muted' : 'text-txt font-medium')}
                   >
-                    {device.deviceName || device.name}
+                    {label}
                   </div>
                   {moving ? (
                     <TransferLine transfer={moving} />
+                  ) : queued ? (
+                    <div className="text-2xs text-gold truncate mt-0.5">
+                      {queued.paths.length === 1 ? '1 file' : `${queued.paths.length} files`} waiting
+                      to send
+                    </div>
                   ) : (
                     <div className="text-2xs text-muted truncate mt-0.5">{whereabouts(device)}</div>
                   )}
@@ -496,22 +564,48 @@ function PersonRow({
                 */}
                 {!asleep && (
                   <IconButton
-                    label={`Send a file to ${device.deviceName || device.name}`}
+                    label={`Send a file to ${label}`}
                     onClick={() => void sendTo(device.id)}
                   >
                     <Send size={14} />
                   </IconButton>
                 )}
-                {asleep && sleeper && (
-                  <Button
-                    size="sm"
-                    variant="accent"
-                    className="rounded-full shrink-0"
-                    icon={<Power size={12} />}
-                    onClick={() => onWake([sleeper])}
-                  >
-                    Wake
-                  </Button>
+                {asleep && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {sleeper && (
+                      <Button
+                        size="sm"
+                        variant="accent"
+                        className="rounded-full"
+                        icon={<Power size={12} />}
+                        onClick={() => onWake([sleeper])}
+                      >
+                        Wake
+                      </Button>
+                    )}
+                    {/*
+                      Staged rather than sent, because there is no live link to
+                      send it over - the whole reason this device has a Wake
+                      button instead of a Send one. `flushPendingSend` in the
+                      store is what actually moves it, the moment this device
+                      is seen again.
+                    */}
+                    {queued ? (
+                      <IconButton
+                        label={`Cancel the queued send to ${label}`}
+                        onClick={() => onCancelQueuedSend(device.deviceId)}
+                      >
+                        <X size={14} />
+                      </IconButton>
+                    ) : (
+                      <IconButton
+                        label={`Send a file to ${label} when it's back online`}
+                        onClick={() => onQueueSend(device.deviceId, label)}
+                      >
+                        <Send size={14} />
+                      </IconButton>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -609,6 +703,19 @@ async function sendTo(peerId: string) {
   const picked = await pickFilesToSend();
   const paths = picked.map((f) => f.path).filter((p): p is string => !!p);
   if (paths.length) void sendFilesToPeer(peerId, paths);
+}
+
+/**
+ * Stages files for a device that is not here, to go out the moment it is.
+ *
+ * By `deviceId`, not `peerId` — there is no live peer to send this to yet,
+ * which is the entire premise, and the id it will show up under next is not
+ * the id it had last time.
+ */
+async function queueFilesFor(deviceId: string, name: string) {
+  const picked = await pickFilesToSend();
+  const paths = picked.map((f) => f.path).filter((p): p is string => !!p);
+  if (paths.length) useStore.getState().queueSend(deviceId, name, paths);
 }
 
 /** Narrows away the devices we have no hardware address for. */
