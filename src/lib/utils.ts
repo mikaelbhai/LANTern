@@ -1,5 +1,20 @@
+import type { Message, Transfer } from './types';
+
 export function cn(...parts: unknown[]): string {
   return parts.filter((p): p is string => typeof p === 'string' && p.length > 0).join(' ');
+}
+
+/**
+ * Whether a message can be forwarded right now.
+ *
+ * A deleted message has nothing left to send. A disk-backed attachment whose
+ * transfer has not finished has no local file behind it yet on this device -
+ * offering Forward for it would either send nothing or send a half file, and
+ * neither is something to do silently, so the action is disabled instead.
+ */
+export function canForwardMessage(message: Message, transfers: Record<string, Transfer>): boolean {
+  if (message.deleted) return false;
+  return message.attachments.every((a) => !a.transferId || transfers[a.transferId]?.state === 'done');
 }
 
 export const uid = (): string =>

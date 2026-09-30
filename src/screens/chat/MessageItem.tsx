@@ -9,6 +9,7 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
+  Forward,
   MessageSquare,
   MoreHorizontal,
   Pause,
@@ -31,6 +32,7 @@ import { pickFolder } from '../../lib/picker';
 import { useStore } from '../../lib/store';
 import { useClickOutside, useFileExists } from '../../lib/hooks';
 import {
+  canForwardMessage,
   clockTime,
   cn,
   exactTime,
@@ -51,6 +53,8 @@ export function MessageItem({
   highlight,
   onReply,
   onOpenThread,
+  onForward,
+  onLongPressSelect,
   threadCount,
   selectMode,
   selected,
@@ -62,6 +66,10 @@ export function MessageItem({
   highlight?: string;
   onReply: () => void;
   onOpenThread: () => void;
+  /** Absent where forwarding has nowhere to go yet, e.g. inside a thread panel. */
+  onForward?: () => void;
+  /** Touch long-press: enters selection mode with this message picked. */
+  onLongPressSelect?: () => void;
   threadCount: number;
   /** True while the room is choosing messages to act on in bulk. */
   selectMode?: boolean;
@@ -72,6 +80,7 @@ export function MessageItem({
   const peers = useStore((s) => s.peers);
   const rooms = useStore((s) => s.rooms);
   const saved = useStore((s) => s.saved);
+  const transfers = useStore((s) => s.transfers);
   const density = useStore((s) => s.settings.density);
   const toggleReaction = useStore((s) => s.toggleReaction);
   const togglePin = useStore((s) => s.togglePin);
@@ -90,6 +99,30 @@ export function MessageItem({
   // place in a long conversation on a phone where hovering does not exist.
   const [focused, setFocused] = React.useState(false);
 
+  /*
+   * Long-press to select, touch only.
+   *
+   * A mouse already has the hover bar and right-click for everything this
+   * does, so treating a held left button the same way would just add a
+   * second, slower way to trigger something one click already reaches.
+   */
+  const longPressTimer = React.useRef<number | null>(null);
+  const longPressFired = React.useRef(false);
+  const startLongPress = (e: React.PointerEvent) => {
+    if (!onLongPressSelect || (e.pointerType !== 'touch' && e.pointerType !== 'pen')) return;
+    longPressFired.current = false;
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFired.current = true;
+      onLongPressSelect();
+    }, 450);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
   const copyBody = async () => {
     const ok = await copyText(m.body);
     if (!ok) return;
@@ -104,6 +137,7 @@ export function MessageItem({
   const author = mine ? profile : peers[m.authorId];
   const room = rooms[m.roomId];
   const canEdit = mine && Date.now() - m.ts < EDIT_WINDOW_MS && !m.deleted;
+  const canForward = !!onForward && canForwardMessage(m, transfers);
   const isSaved = saved.includes(m.id);
   const mentionsMe = m.mentions.includes(profile.id);
 
@@ -161,9 +195,25 @@ export function MessageItem({
       onPointerLeave={() => {
         setHovered(false);
         if (!menuOpen && !pickerOpen) setPickerOpen(false);
+        cancelLongPress();
+      }}
+      onPointerDown={startLongPress}
+      onPointerUp={cancelLongPress}
+      onPointerMove={cancelLongPress}
+      onContextMenu={(e) => {
+        if (m.deleted || selectMode) return;
+        e.preventDefault();
+        setMenuOpen(true);
       }}
       id={`msg-${m.id}`}
-      onClick={() => (selectMode ? onToggleSelect?.() : setFocused((f) => !f))}
+      onClick={() => {
+        // The click that ends a long-press must not also toggle focus/select.
+        if (longPressFired.current) {
+          longPressFired.current = false;
+          return;
+        }
+        selectMode ? onToggleSelect?.() : setFocused((f) => !f);
+      }}
       className={cn(
         'group relative flex gap-2.5 px-4 transition-colors selectable',
         pad,
@@ -222,6 +272,13 @@ export function MessageItem({
             {m.scheduledFor && (
               <Badge tone="gold">Sends {clockTime(m.scheduledFor)}</Badge>
             )}
+          </div>
+        )}
+
+        {m.forwardedFrom && !m.deleted && (
+          <div className="flex items-center gap-1.5 mb-1 text-2xs text-muted italic">
+            <Forward size={10} className="shrink-0" />
+            Forwarded from {m.forwardedFrom.name}
           </div>
         )}
 
@@ -391,6 +448,15 @@ export function MessageItem({
             >
               <Reply size={13} />
             </button>
+            {canForward && onForward && (
+              <button
+                onClick={onForward}
+                aria-label="Forward"
+                className="h-6 w-6 rounded-[4px] grid place-items-center text-dim hover:text-txt hover:bg-raised"
+              >
+                <Forward size={13} />
+              </button>
+            )}
             <button
               onClick={onOpenThread}
               aria-label="Reply in thread"
@@ -433,6 +499,17 @@ export function MessageItem({
                     >
                       {isSaved ? 'Remove bookmark' : 'Save message'}
                     </MenuItem>
+                    {canForward && onForward && (
+                      <MenuItem
+                        icon={<Forward size={12} />}
+                        onClick={() => {
+                          onForward();
+                          setMenuOpen(false);
+                        }}
+                      >
+                        Forward
+                      </MenuItem>
+                    )}
                     {canEdit && (
                       <MenuItem
                         icon={<Pencil size={12} />}

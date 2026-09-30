@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Upload } from 'lucide-react';
+import { ArrowDown, Upload } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
 import { Empty } from '../../components/ui';
 import { MessageItem } from './MessageItem';
@@ -15,6 +15,8 @@ export function MessageList({
   highlight,
   onReply,
   onOpenThread,
+  onForward,
+  onLongPressSelect,
   onDropFiles,
   selectMode,
   selectedIds,
@@ -24,6 +26,8 @@ export function MessageList({
   highlight?: string;
   onReply: (m: Message) => void;
   onOpenThread: (m: Message) => void;
+  onForward: (m: Message) => void;
+  onLongPressSelect: (id: string) => void;
   onDropFiles: (files: File[]) => void;
   selectMode?: boolean;
   selectedIds?: Set<string>;
@@ -37,6 +41,16 @@ export function MessageList({
   const scroller = React.useRef<HTMLDivElement>(null);
   const [pinnedToBottom, setPinnedToBottom] = React.useState(true);
   const [dragOver, setDragOver] = React.useState(false);
+  // How many messages arrived while scrolled away from the bottom - the count
+  // behind the floating jump button. Reset the moment the bottom is reached
+  // again, by any route (the button or an ordinary scroll).
+  const [newCount, setNewCount] = React.useState(0);
+  const prevLenRef = React.useRef(0);
+  // This component is not remounted when the active room changes - `room`
+  // just becomes a new prop - so a length carried over from whatever room was
+  // open a moment ago would read as a pile of "new" messages in the one just
+  // opened. Detected the same way, by comparing against what was there last.
+  const prevRoomIdRef = React.useRef(room.id);
 
   // Only top-level messages appear in the main transcript; thread replies live
   // in the side panel and are counted here.
@@ -48,10 +62,25 @@ export function MessageList({
   }, [all]);
 
   React.useEffect(() => {
-    if (pinnedToBottom) {
+    const roomChanged = prevRoomIdRef.current !== room.id;
+    prevRoomIdRef.current = room.id;
+    const grew = roomChanged ? 0 : messages.length - prevLenRef.current;
+    prevLenRef.current = messages.length;
+
+    if (roomChanged || pinnedToBottom) {
       scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+      setNewCount(0);
+      if (roomChanged) setPinnedToBottom(true);
+    } else if (grew > 0) {
+      setNewCount((n) => n + grew);
     }
-  }, [messages.length, pinnedToBottom]);
+  }, [messages.length, pinnedToBottom, room.id]);
+
+  const jumpToLatest = () => {
+    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
+    setPinnedToBottom(true);
+    setNewCount(0);
+  };
 
   const typingNames = Object.keys(typing ?? {})
     .map((id) => peers[id]?.name)
@@ -119,6 +148,8 @@ export function MessageList({
                 threadCount={threadCounts[m.id] ?? 0}
                 onReply={() => onReply(m)}
                 onOpenThread={() => onOpenThread(m)}
+                onForward={() => onForward(m)}
+                onLongPressSelect={() => onLongPressSelect(m.id)}
                 selectMode={selectMode}
                 selected={selectedIds?.has(m.id)}
                 onToggleSelect={() => onToggleSelect?.(m.id)}
@@ -163,6 +194,23 @@ export function MessageList({
           )}
         </AnimatePresence>
       </div>
+
+      <AnimatePresence>
+        {!pinnedToBottom && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            onClick={jumpToLatest}
+            aria-label={newCount > 0 ? `${newCount} new messages, jump to latest` : 'Jump to latest'}
+            className="absolute bottom-3 right-3 z-20 flex items-center gap-1.5 h-8 pl-2.5 pr-3 rounded-full bg-gold text-on-gold text-2xs font-semibold shadow-lg hover:brightness-110"
+          >
+            <ArrowDown size={13} />
+            {newCount > 0 && <span>{newCount > 99 ? '99+' : newCount} new</span>}
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {dragOver && (

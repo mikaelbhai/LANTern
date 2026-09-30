@@ -4,8 +4,11 @@ import {
   ArrowLeft,
   Bookmark,
   CheckSquare,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Download,
+  Forward,
   Hash,
   Images,
   MessageSquare,
@@ -36,12 +39,14 @@ import { MessageList } from './chat/MessageList';
 import { Composer } from './chat/Composer';
 import { ThreadPanel } from './chat/ThreadPanel';
 import { MediaGallery } from './chat/MediaGallery';
+import { ForwardModal } from './chat/ForwardModal';
 import { useClickOutside } from '../lib/hooks';
 import { useStore } from '../lib/store';
 import { useIsMobile } from '../lib/hooks';
 import { attachmentFromFile } from '../lib/actions';
 import { copyText } from '../lib/clipboard';
 import {
+  canForwardMessage,
   clockTime,
   cn,
   download,
@@ -68,6 +73,9 @@ export function Chats() {
   // time through each row's own hover menu.
   const [selectMode, setSelectMode] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  // Which messages a Forward modal is open for - one from the hover bar or
+  // right-click menu, several from the selection toolbar. Null means closed.
+  const [forwardIds, setForwardIds] = React.useState<string[] | null>(null);
 
   const room = activeRoomId ? rooms[activeRoomId] : null;
 
@@ -90,6 +98,14 @@ export function Chats() {
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedIds(new Set());
+  };
+
+  // Long-press on a bubble: the touch equivalent of the toolbar's own
+  // selection-mode button, just starting with that one message already
+  // picked rather than an empty set.
+  const beginSelectWith = (id: string) => {
+    setSelectMode(true);
+    setSelectedIds(new Set([id]));
   };
 
   const showList = !isMobile || !room;
@@ -121,6 +137,7 @@ export function Chats() {
                 selectedIds={selectedIds}
                 onEnterSelectMode={() => setSelectMode(true)}
                 onExitSelectMode={exitSelectMode}
+                onForwardSelected={() => setForwardIds([...selectedIds])}
               />
 
               <AnimatePresence>
@@ -132,6 +149,8 @@ export function Chats() {
                 highlight={searchTerm}
                 onReply={setReplyTo}
                 onOpenThread={(m) => useStore.getState().openThread(m.id)}
+                onForward={(m) => setForwardIds([m.id])}
+                onLongPressSelect={beginSelectWith}
                 onDropFiles={(files) => void attachAndSend(room.id, files)}
                 selectMode={selectMode}
                 selectedIds={selectedIds}
@@ -187,6 +206,14 @@ export function Chats() {
         ))}
 
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <ForwardModal
+        open={forwardIds !== null}
+        messageIds={forwardIds ?? []}
+        onClose={() => {
+          setForwardIds(null);
+          if (selectMode) exitSelectMode();
+        }}
+      />
     </div>
   );
 }
@@ -384,6 +411,7 @@ function RoomHeader({
   selectedIds,
   onEnterSelectMode,
   onExitSelectMode,
+  onForwardSelected,
 }: {
   room: Room;
   onBack?: () => void;
@@ -397,15 +425,64 @@ function RoomHeader({
   selectedIds: Set<string>;
   onEnterSelectMode: () => void;
   onExitSelectMode: () => void;
+  onForwardSelected: () => void;
 }) {
   const peers = useStore((s) => s.peers);
   const messages = useStore((s) => s.messages[room.id] ?? []);
+  const saved = useStore((s) => s.saved);
+  const transfers = useStore((s) => s.transfers);
   const startCall = useStore((s) => s.startCall);
   const deleteRoom = useStore((s) => s.deleteRoom);
   const deleteMessage = useStore((s) => s.deleteMessage);
+  const toggleSaved = useStore((s) => s.toggleSaved);
   const [searching, setSearching] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = React.useState(false);
   const [membersOpen, setMembersOpen] = React.useState(false);
+  const [matchIndex, setMatchIndex] = React.useState(0);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Ctrl/Cmd+F while a room is open takes over from the browser's own
+  // find-in-page, which can only search what happens to be rendered and
+  // knows nothing about a chat's own message list.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearching(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const searchMatches = React.useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return [];
+    return messages.filter((m) => !m.deleted && m.body.toLowerCase().includes(q)).sort((a, b) => a.ts - b.ts);
+  }, [messages, searchTerm]);
+
+  const jumpToMatch = (i: number) => {
+    if (!searchMatches.length) return;
+    const idx = ((i % searchMatches.length) + searchMatches.length) % searchMatches.length;
+    setMatchIndex(idx);
+    document
+      .getElementById(`msg-${searchMatches[idx].id}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  React.useEffect(() => {
+    setMatchIndex(0);
+    if (searchMatches.length) {
+      document
+        .getElementById(`msg-${searchMatches[0].id}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    // Only re-jump when the search term itself changes, not on every message
+    // that happens to arrive while a search is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm]);
 
   const authorNameFor = (authorId: string) =>
     authorId === useStore.getState().profile.id
@@ -422,9 +499,24 @@ function RoomHeader({
     onExitSelectMode();
   };
 
+  // Stars whatever isn't already starred rather than toggling each one - the
+  // point of picking several messages and hitting one Star button is "star
+  // these", not "flip each one's own state", which for an already-starred
+  // message in the set would silently remove it instead.
+  const starSelected = () => {
+    for (const id of selectedIds) if (!saved.includes(id)) toggleSaved(id);
+    onExitSelectMode();
+  };
+
   const deleteSelected = () => {
     for (const id of selectedIds) deleteMessage(id);
     onExitSelectMode();
+    setConfirmDeleteSelected(false);
+  };
+
+  const requestDeleteSelected = () => {
+    if (selectedIds.size > 1) setConfirmDeleteSelected(true);
+    else deleteSelected();
   };
 
   const dmPeer = room.kind === 'dm' ? peers[room.members[0]] : null;
@@ -477,6 +569,19 @@ function RoomHeader({
           <div className="text-sm font-semibold flex-1">
             {selectedIds.size} selected
           </div>
+          <IconButton label="Star selected" disabled={!selectedIds.size} onClick={starSelected}>
+            <Bookmark size={15} />
+          </IconButton>
+          <IconButton
+            label="Forward selected"
+            disabled={
+              !selectedIds.size ||
+              !messages.filter((m) => selectedIds.has(m.id)).every((m) => canForwardMessage(m, transfers))
+            }
+            onClick={onForwardSelected}
+          >
+            <Forward size={15} />
+          </IconButton>
           <IconButton
             label="Copy selected"
             disabled={!selectedIds.size}
@@ -487,7 +592,7 @@ function RoomHeader({
           <IconButton
             label="Delete selected"
             disabled={!selectedIds.size}
-            onClick={deleteSelected}
+            onClick={requestDeleteSelected}
           >
             <Trash2 size={15} />
           </IconButton>
@@ -530,16 +635,48 @@ function RoomHeader({
           {searching && (
             <motion.div initial={{ width: 0 }} animate={{ width: 180 }} exit={{ width: 0 }}>
               <Input
+                ref={searchInputRef}
                 autoFocus
                 value={searchTerm}
                 onChange={(e) => onSearch(e.target.value)}
                 onBlur={() => !searchTerm && setSearching(false)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    onSearch('');
+                    setSearching(false);
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    jumpToMatch(matchIndex + (e.shiftKey ? -1 : 1));
+                  }
+                }}
                 placeholder="Search this room…"
                 icon={<Search size={12} />}
               />
             </motion.div>
           )}
         </AnimatePresence>
+
+        {searchTerm && searching && (
+          <>
+            <span className="text-2xs text-muted tabular-nums px-1 shrink-0">
+              {searchMatches.length ? `${matchIndex + 1} of ${searchMatches.length}` : '0 of 0'}
+            </span>
+            <IconButton
+              label="Previous match"
+              disabled={!searchMatches.length}
+              onClick={() => jumpToMatch(matchIndex - 1)}
+            >
+              <ChevronUp size={14} />
+            </IconButton>
+            <IconButton
+              label="Next match"
+              disabled={!searchMatches.length}
+              onClick={() => jumpToMatch(matchIndex + 1)}
+            >
+              <ChevronDown size={14} />
+            </IconButton>
+          </>
+        )}
 
         {!searching && (
           <IconButton
@@ -696,6 +833,22 @@ function RoomHeader({
       )}
 
       <MembersModal room={room} open={membersOpen} onClose={() => setMembersOpen(false)} />
+
+      <Modal
+        open={confirmDeleteSelected}
+        onClose={() => setConfirmDeleteSelected(false)}
+        title={`Delete ${selectedIds.size} messages?`}
+        footer={
+          <>
+            <Button onClick={() => setConfirmDeleteSelected(false)}>Cancel</Button>
+            <Button variant="danger" onClick={deleteSelected}>
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <p className="text-xs text-dim">This cannot be undone.</p>
+      </Modal>
     </header>
   );
 }
