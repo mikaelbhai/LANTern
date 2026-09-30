@@ -1,7 +1,7 @@
 {
   "name": "lantern",
   "private": true,
-  "version": "1.2.6",
+  "version": "1.2.7",
   "type": "module",
   "description": "LANTern — unleash your Wi-Fi's potential.",
   "license": "MIT",
