@@ -38,6 +38,65 @@ pub fn set_playing(playing: bool) {
     }
 }
 
+/// Tells Android who decides which way up the screen is.
+///
+/// `sensor` rotates from the accelerometer whatever the system's auto-rotate
+/// switch says, `locked` freezes the current orientation, `landscape` forces
+/// sideways, and `system` gives rotation back to Android. The web layer
+/// cannot do any of this on its own: `screen.orientation.lock` works only in
+/// fullscreen and cannot override the auto-rotate switch.
+///
+/// Does nothing where there is no activity - every desktop.
+pub fn set_orientation(mode: &str) {
+    #[cfg(target_os = "android")]
+    {
+        crate::apkinstall::with_activity(|env, class| {
+            if let Ok(arg) = env.new_string(mode) {
+                let _ = env.call_static_method(
+                    class,
+                    "setOrientationMode",
+                    "(Ljava/lang/String;)V",
+                    &[(&arg).into()],
+                );
+            }
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = mode;
+    }
+}
+
+/// Keeps the screen on while a film plays. Android only; see
+/// `MainActivity.setKeepScreenOn` for why it is a window flag.
+pub fn set_keep_awake(on: bool) {
+    #[cfg(target_os = "android")]
+    {
+        crate::apkinstall::with_activity(|env, class| {
+            let _ = env.call_static_method(
+                class,
+                "setKeepScreenOn",
+                "(Z)V",
+                &[jni::objects::JValue::Bool(u8::from(on))],
+            );
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = on;
+    }
+}
+
+#[tauri::command]
+pub fn orientation_set(mode: String) {
+    set_orientation(&mode);
+}
+
+#[tauri::command]
+pub fn keep_awake_set(on: bool) {
+    set_keep_awake(on);
+}
+
 /* --------------------------------------------------------- the other way */
 
 /*

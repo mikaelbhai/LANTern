@@ -139,6 +139,8 @@ pub fn run() {
             commands::profile_has_avatar,
             commands::identity_device_id,
             commands::pip_set_playing,
+            pip::orientation_set,
+            pip::keep_awake_set,
             commands::call_audio_earpiece,
             commands::call_audio_reset,
             commands::battery_unrestricted,

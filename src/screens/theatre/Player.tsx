@@ -21,11 +21,18 @@ import {
   WifiOff,
   Languages,
   Crop,
+  Lock,
+  LockOpen,
   Scan,
   Smartphone,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
 import { api, on } from '../../lib/bridge';
+import {
+  rotatesWithDevice,
+  setOrientationLocked,
+  useOrientation,
+} from '../../lib/orientation';
 import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
@@ -80,6 +87,7 @@ export function Player({
   partyMembers,
   onClose,
   onPlayNext,
+  onShape,
 }: {
   item: MediaItem;
   upNext: MediaItem | null;
@@ -91,6 +99,8 @@ export function Player({
   partyMembers?: { name: string; color?: string; emoji?: string }[];
   onClose: () => void;
   onPlayNext: (next: MediaItem) => void;
+  /** Told whether the picture is taller than it is wide, once that is known. */
+  onShape?: (portrait: boolean) => void;
 }) {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const shellRef = React.useRef<HTMLDivElement>(null);
@@ -795,6 +805,38 @@ export function Player({
    * film wants rather than momentarily refusing to rotate one.
    */
   const isPortraitVideo = natural.h > natural.w;
+
+  // Theatre decides what turning the phone does, and for an upright clip that
+  // is nothing - but it cannot know the shape before the first frame.
+  React.useEffect(() => {
+    if (natural.w && natural.h) onShape?.(isPortraitVideo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [natural.w, natural.h]);
+
+  // The screen stays on while a film plays, and only then: a paused film left
+  // on a table should let the phone sleep. A window flag on Android (see
+  // `MainActivity.setKeepScreenOn`), the web's own wake lock elsewhere - which
+  // the browser drops by itself whenever the page is hidden.
+  React.useEffect(() => {
+    if (!playing) return;
+    void api.pip.keepAwake(true).catch(() => {});
+    let lock: { release: () => Promise<void> } | null = null;
+    const wake = (navigator as Navigator & {
+      wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> };
+    }).wakeLock;
+    void wake
+      ?.request('screen')
+      .then((l) => {
+        lock = l;
+      })
+      .catch(() => {});
+    return () => {
+      void api.pip.keepAwake(false).catch(() => {});
+      void lock?.release().catch(() => {});
+    };
+  }, [playing]);
+
+  const orientationLocked = useOrientation((s) => s.locked);
   // The portrait exception, opted into rather than assumed: forcing every
   // fullscreen video to landscape used to mean a phone-shot clip played
   // pillarboxed to a third of the screen with no way to ask for the rest of
@@ -1752,6 +1794,18 @@ export function Player({
                       ) : (
                         <Smartphone size={18} className="rotate-90" />
                       )}
+                    </IconBtn>
+                  )}
+                  {/* The app's own rotation lock. The phone's system switch is
+                      ignored here on purpose - this is the only one that
+                      counts, and it freezes whichever way up the screen is
+                      now, so locking while sideways keeps the player. */}
+                  {rotatesWithDevice() && (
+                    <IconBtn
+                      label={orientationLocked ? 'Unlock rotation' : 'Lock rotation'}
+                      onClick={() => setOrientationLocked(!orientationLocked)}
+                    >
+                      {orientationLocked ? <Lock size={18} className="text-gold" /> : <LockOpen size={18} />}
                     </IconBtn>
                   )}
                   <IconBtn

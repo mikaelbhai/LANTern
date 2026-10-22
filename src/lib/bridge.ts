@@ -299,6 +299,16 @@ export const api = {
    */
   pip: {
     setPlaying: (playing: boolean) => call<void>('pip_set_playing', { playing }),
+    /**
+     * Who decides which way up an Android screen is: `sensor` rotates from the
+     * accelerometer whatever the system's auto-rotate switch says, `locked`
+     * freezes it, `landscape` forces sideways, `system` hands it back. A
+     * desktop has nothing to rotate and this does nothing there.
+     */
+    setOrientation: (mode: 'sensor' | 'locked' | 'landscape' | 'system') =>
+      call<void>('orientation_set', { mode }),
+    /** Keeps an Android screen on while a film plays. */
+    keepAwake: (on: boolean) => call<void>('keep_awake_set', { on }),
   },
   host: {
     /**

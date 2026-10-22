@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Layers,
   Lock,
+  LockOpen,
   Pencil,
   Search,
   ShieldCheck,
@@ -29,6 +30,14 @@ import { Artwork, Thumbnail, TitleCard } from '../lib/poster';
 import { Player } from './theatre/Player';
 import { PublishMediaModal } from './theatre/PublishMedia';
 import { api, on } from '../lib/bridge';
+import {
+  restingMode,
+  rotatesWithDevice,
+  setOrientation,
+  setOrientationLocked,
+  useOrientation,
+  whenHeldSideways,
+} from '../lib/orientation';
 import {
   type Collection,
   type Overrides,
@@ -172,7 +181,24 @@ export function Theatre() {
   }, [grouping]);
   const hero = React.useMemo(() => pickHero(items), [items]);
 
-  const play = (item: MediaItem) => {
+  /* ------------------------------------------------------------ rotation */
+
+  // True while the screen is being held sideways on behalf of a tap, with the
+  // phone itself still upright. See `play`.
+  const forcedLandscape = React.useRef(false);
+  const stopTilt = React.useRef<(() => void) | null>(null);
+  // The title playing is itself taller than it is wide, so turning upright is
+  // how it is meant to be watched and must not close the player.
+  const portraitClip = React.useRef(false);
+
+  const releaseForcedLandscape = React.useCallback(() => {
+    forcedLandscape.current = false;
+    stopTilt.current?.();
+    stopTilt.current = null;
+    setOrientation(restingMode());
+  }, []);
+
+  const play = (item: MediaItem, fromRotation = false) => {
     /*
      * A locked title is listed and not served.
      *
@@ -195,6 +221,29 @@ export function Theatre() {
     }
     setDetail(null);
     setPlaying(item);
+
+    /*
+     * A film tapped while the phone is held upright turns the screen sideways.
+     *
+     * "Landscape is the player" has to work from either end: rotating opens
+     * it, and opening it rotates. The catch is that the sensor still says
+     * upright, so handing rotation straight back to it would swing the screen
+     * back and close the player the moment it opened. Sideways is held until
+     * the phone really is on its side. A `clip` is left to the sensor, since
+     * what somebody filmed on a phone is as likely to be upright.
+     */
+    if (
+      rotatesWithDevice() &&
+      !fromRotation &&
+      item.kind !== 'clip' &&
+      !useOrientation.getState().locked &&
+      !useOrientation.getState().landscape
+    ) {
+      forcedLandscape.current = true;
+      setOrientation('landscape');
+      stopTilt.current?.();
+      stopTilt.current = whenHeldSideways(releaseForcedLandscape);
+    }
   };
 
   /**
@@ -230,6 +279,68 @@ export function Theatre() {
       .map((p) => ({ name: p.name, color: p.color, emoji: p.emoji }));
   }, [party, peers]);
 
+  const orientationLocked = useOrientation((s) => s.locked);
+
+  const closePlayer = () => {
+    if (party) {
+      void api.party.leave(party.id).catch(() => {});
+      setParty(null);
+    }
+    portraitClip.current = false;
+    // Back to the sensor, so the gallery turns upright again if the phone is.
+    if (forcedLandscape.current) releaseForcedLandscape();
+    setPlaying(null);
+    void load();
+  };
+
+  /**
+   * The title landscape opens: what the person was just looking at, else what
+   * they were last watching, else the one the hero banner is offering.
+   * Finished titles are skipped - rotating a phone should not restart a film.
+   */
+  const rotationTarget = (): MediaItem | null => {
+    if (detail && !detail.locked) return detail;
+    const recent = items
+      .filter((i) => !i.locked && i.watchedAt && i.progressSec > 0 && i.durationSec - i.progressSec > 40)
+      .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))[0];
+    return recent ?? (hero && !hero.locked ? hero : null);
+  };
+
+  // Read through a ref so the rotation listener below is installed once and
+  // still sees the screen as it is now, not as it was when it subscribed.
+  const latest = React.useRef({ playing, play, closePlayer, rotationTarget });
+  latest.current = { playing, play, closePlayer, rotationTarget };
+
+  /*
+   * Portrait is the gallery and landscape is the player, on a phone.
+   *
+   * Driven by rotation *changes* and never by the orientation at the moment
+   * Theatre opens, which is what keeps this from throwing somebody into a
+   * film just for visiting the screen sideways. Theatre also takes rotation
+   * away from the system's own switch for as long as it is showing, and gives
+   * it back on the way out - every other screen keeps behaving as it did.
+   */
+  React.useEffect(() => {
+    if (!rotatesWithDevice()) return;
+    setOrientation(restingMode());
+    const off = useOrientation.subscribe((s, prev) => {
+      // The person's own lock beats everything: it is the reason to have one.
+      if (s.landscape === prev.landscape || s.locked) return;
+      const now = latest.current;
+      if (s.landscape && !now.playing) {
+        const target = now.rotationTarget();
+        if (target) now.play(target, true);
+      } else if (!s.landscape && now.playing && !portraitClip.current && !forcedLandscape.current) {
+        now.closePlayer();
+      }
+    });
+    return () => {
+      off();
+      stopTilt.current?.();
+      setOrientation('system');
+    };
+  }, []);
+
   if (playing) {
     const order = seriesOrder(items, playing);
     const at = order.findIndex((i) => i.id === playing.id);
@@ -244,15 +355,15 @@ export function Theatre() {
         party={party && party.itemId === playing.id ? party : null}
         isHost={!!party && party.hostId === profile.id}
         partyMembers={partyMembers}
-        onClose={() => {
-          if (party) {
-            void api.party.leave(party.id).catch(() => {});
-            setParty(null);
-          }
-          setPlaying(null);
-          void load();
-        }}
+        onClose={closePlayer}
         onPlayNext={(next) => setPlaying(next)}
+        onShape={(portrait) => {
+          portraitClip.current = portrait;
+          // A film that turns out to be upright is not watched sideways: let
+          // the sensor have it back so the phone can be held the way it was
+          // filmed.
+          if (portrait && forcedLandscape.current) releaseForcedLandscape();
+        }}
       />
     );
   }
@@ -276,6 +387,18 @@ export function Theatre() {
               icon={<Search size={12} />}
               className="w-44 hidden md:flex"
             />
+            {rotatesWithDevice() && (
+              // The app's own rotation lock - the phone's system switch is
+              // deliberately not consulted here. Locked upright keeps the
+              // gallery however the phone is held.
+              <IconButton
+                label={orientationLocked ? 'Unlock rotation' : 'Lock rotation'}
+                active={orientationLocked}
+                onClick={() => setOrientationLocked(!orientationLocked)}
+              >
+                {orientationLocked ? <Lock size={16} /> : <LockOpen size={16} />}
+              </IconButton>
+            )}
             <IconButton
               label="Rescan the network"
               onClick={() => {

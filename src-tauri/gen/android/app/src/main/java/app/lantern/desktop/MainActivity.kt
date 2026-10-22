@@ -8,6 +8,7 @@ import android.app.PictureInPictureParams
 import android.app.RemoteAction
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -21,9 +22,11 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
+import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
 import java.io.File
+import java.lang.ref.WeakReference
 
 /**
  * LANTern's Android entry point.
@@ -41,6 +44,7 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
+    activityRef = WeakReference(this)
     acquireMulticastLock()
 
     // Hand the Java runtime to the Rust side, which has no other way to reach
@@ -222,6 +226,7 @@ class MainActivity : TauriActivity() {
       }
     }
     multicastLock = null
+    if (activityRef?.get() === this) activityRef = null
     super.onDestroy()
   }
 
@@ -261,6 +266,64 @@ class MainActivity : TauriActivity() {
     @JvmStatic
     fun setMediaPlaying(playing: Boolean) {
       mediaPlaying = playing
+    }
+
+    /**
+     * The window itself, for the two things below that need one.
+     *
+     * Weak, for the reason `appContext` is the application and not this: a
+     * static reference to an activity outlives it and keeps the whole window
+     * alive. Unlike that one this cannot be the application context, because
+     * `requestedOrientation` and window flags belong to an activity.
+     */
+    private var activityRef: WeakReference<MainActivity>? = null
+
+    /**
+     * Who decides which way up the screen is.
+     *
+     * `sensor` is the point of this: FULL_SENSOR rotates from the
+     * accelerometer whatever the system's auto-rotate switch says, which is
+     * how a video player behaves and what the switch being off was never
+     * meant to prevent there. The web layer cannot do this - `screen.
+     * orientation.lock` only works in fullscreen and cannot override that
+     * switch at all.
+     *
+     * `locked` freezes the current orientation (the app's own lock),
+     * `landscape` forces sideways but still picks the correct flip from the
+     * sensor, and `system` gives rotation back to Android - which is what
+     * every screen outside Theatre wants. Anything else is ignored rather
+     * than guessed at.
+     */
+    @JvmStatic
+    fun setOrientationMode(mode: String) {
+      val activity = activityRef?.get() ?: return
+      val requested = when (mode) {
+        "sensor" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        "locked" -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        "system" -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        else -> return
+      }
+      activity.runOnUiThread { runCatching { activity.requestedOrientation = requested } }
+    }
+
+    /**
+     * Keeps the screen on while a film is playing.
+     *
+     * A flag on the window rather than a wake lock: it needs no permission,
+     * it is released by the system if the activity goes away, and it only
+     * holds while this window is in front - which is exactly the condition
+     * a film needs and a background wake lock would get wrong.
+     */
+    @JvmStatic
+    fun setKeepScreenOn(on: Boolean) {
+      val activity = activityRef?.get() ?: return
+      activity.runOnUiThread {
+        runCatching {
+          if (on) activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+          else activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+      }
     }
 
     private const val CALL_CHANNEL_ID = "lantern-incoming-call"
