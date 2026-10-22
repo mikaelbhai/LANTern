@@ -167,6 +167,10 @@ pub fn boot(app: AppHandle, state: AppState) {
                             allowed.extend(rows.flatten());
                         }
                     }
+                    // What was sent and received last time, so the Files list and
+                    // the chat bubbles that point at those transfers still
+                    // know where each file went.
+                    let history = crate::transfers::load_history(&conn);
                     let mut macs = std::collections::HashMap::new();
                     if let Ok(mut stmt) = conn.prepare("SELECT device_id, mac FROM device_macs") {
                         if let Ok(rows) =
@@ -237,6 +241,7 @@ pub fn boot(app: AppHandle, state: AppState) {
                         s.approvals = approvals;
                         s.control.load_allowed(allowed);
                         s.macs = macs;
+                        s.transfers.extend(history);
                         s.device_ages = device_ages;
                         s.title_ages = title_ages;
                         s.db = Some(conn);

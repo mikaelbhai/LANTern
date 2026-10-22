@@ -620,8 +620,90 @@ fn set_state(app: &AppHandle, state: &AppState, transfer_id: &str, next: &str, s
 pub fn emit_one(app: &AppHandle, state: &AppState, transfer_id: &str) {
     let t = state.with(|s| s.transfers.iter().find(|t| t.id == transfer_id).cloned());
     if let Some(t) = t {
+        remember(state, &t);
         let _ = app.emit("transfer:progress", &t);
     }
+}
+
+/// Writes a finished transfer down, so it is still there after a restart.
+///
+/// The `transfers` table had been created and never once written to: the list
+/// lived only in memory, so closing the app lost the record of everything
+/// received - including where each file went, which is the one thing somebody
+/// looking for a file they were sent needs. Only finished ones are written
+/// (done, failed, cancelled): a transfer still moving belongs to a live
+/// connection that will not exist next time, and its progress ticks four times
+/// a second.
+fn remember(state: &AppState, t: &Transfer) {
+    if !matches!(t.state.as_str(), "done" | "failed" | "cancelled") {
+        return;
+    }
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return;
+        };
+        let _ = db.execute(
+            "INSERT INTO transfers
+                (id, name, size, sent, peer_id, direction, state, mime, local_path,
+                 started_at, finished_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                sent = ?4, state = ?7, local_path = ?9, finished_at = ?11",
+            rusqlite::params![
+                t.id,
+                t.name,
+                t.size as i64,
+                t.sent as i64,
+                t.peer_id,
+                t.direction,
+                t.state,
+                t.mime,
+                t.local_path,
+                t.started_at as i64,
+                t.finished_at.map(|f| f as i64),
+                t.expires_at.map(|e| e as i64),
+            ],
+        );
+    });
+}
+
+/// The finished transfers written down last time, oldest first.
+///
+/// Capped: the Files list is something to scroll, not an archive, and a
+/// long-lived install should not load every file it has ever been sent.
+pub fn load_history(conn: &rusqlite::Connection) -> Vec<Transfer> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, name, size, sent, peer_id, direction, state, mime, local_path,
+                started_at, finished_at, expires_at
+         FROM transfers ORDER BY started_at DESC LIMIT 500",
+    ) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| {
+        Ok(Transfer {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            size: r.get::<_, i64>(2)? as u64,
+            sent: r.get::<_, i64>(3)? as u64,
+            peer_id: r.get(4)?,
+            direction: r.get(5)?,
+            state: r.get(6)?,
+            speed_bps: 0,
+            mime: r.get(7)?,
+            local_path: r.get(8)?,
+            started_at: r.get::<_, i64>(9)? as u64,
+            finished_at: r.get::<_, Option<i64>>(10)?.map(|f| f as u64),
+            expires_at: r.get::<_, Option<i64>>(11)?.map(|e| e as u64),
+            bundle_id: None,
+            url: None,
+            via_chat: false,
+        })
+    }) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Transfer> = rows.flatten().collect();
+    out.reverse();
+    out
 }
 
 #[cfg(test)]
@@ -1164,5 +1246,84 @@ mod sync_tests {
         // A Windows-style relative path from a subtitle URL's decoded tail
         // should split the same way a forward-slash one does.
         assert_eq!(safe_relative("Subs\\Film.en.srt"), Path::new("Subs/Film.en.srt"));
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    fn transfer(id: &str, state: &str) -> Transfer {
+        Transfer {
+            id: id.into(),
+            name: format!("{id}.mp4"),
+            size: 1_500_000_000,
+            sent: 1_500_000_000,
+            peer_id: "phone".into(),
+            direction: "in".into(),
+            state: state.into(),
+            speed_bps: 0,
+            started_at: 1_000,
+            finished_at: Some(2_000),
+            mime: "video/mp4".into(),
+            local_path: Some("/home/me/Downloads/LANTern/film.mp4".into()),
+            expires_at: None,
+            bundle_id: None,
+            url: Some("http://x/y".into()),
+            via_chat: true,
+        }
+    }
+
+    fn state_with_table() -> AppState {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE transfers (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL,
+                sent INTEGER NOT NULL DEFAULT 0, peer_id TEXT NOT NULL,
+                direction TEXT NOT NULL, state TEXT NOT NULL,
+                mime TEXT NOT NULL DEFAULT '', local_path TEXT,
+                started_at INTEGER NOT NULL, finished_at INTEGER, expires_at INTEGER);",
+        )
+        .unwrap();
+        let state = AppState::default();
+        state.with(|s| s.db = Some(conn));
+        state
+    }
+
+    #[test]
+    fn a_finished_transfer_is_still_there_after_a_restart_with_its_path() {
+        let state = state_with_table();
+        remember(&state, &transfer("a", "done"));
+
+        let loaded = state.with(|s| load_history(s.db.as_ref().unwrap()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].state, "done");
+        // The reason this exists: where the file went.
+        assert_eq!(
+            loaded[0].local_path.as_deref(),
+            Some("/home/me/Downloads/LANTern/film.mp4")
+        );
+        assert_eq!(loaded[0].size, 1_500_000_000);
+    }
+
+    #[test]
+    fn a_transfer_still_moving_is_not_written_down() {
+        let state = state_with_table();
+        remember(&state, &transfer("moving", "active"));
+        remember(&state, &transfer("waiting", "queued"));
+        remember(&state, &transfer("paused", "paused"));
+
+        assert!(state.with(|s| load_history(s.db.as_ref().unwrap())).is_empty());
+    }
+
+    #[test]
+    fn writing_the_same_transfer_twice_updates_it_rather_than_failing() {
+        let state = state_with_table();
+        remember(&state, &transfer("a", "failed"));
+        remember(&state, &transfer("a", "done"));
+
+        let loaded = state.with(|s| load_history(s.db.as_ref().unwrap()));
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].state, "done");
     }
 }
