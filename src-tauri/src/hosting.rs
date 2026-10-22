@@ -523,7 +523,16 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
             .and_then(|e| e.to_str())
             .unwrap_or_default()
             .to_lowercase();
+        let lower = name.to_lowercase();
+        // The television build is the same application under its own name
+        // (LANTV). It used to share the "Android" card, and with every file in
+        // a release folder carrying the same timestamp the card went to
+        // whichever one the sort happened to put first - a phone visiting the
+        // page was handed the television build.
+        let for_tv = lower.contains("lantv")
+            || lower.split(|c: char| !c.is_alphanumeric()).any(|part| part == "tv");
         let platform = match ext.as_str() {
+            "apk" if for_tv => "Android TV",
             "apk" => "Android",
             "exe" | "msi" => "Windows",
             "dmg" => "macOS",
@@ -550,7 +559,22 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
 
     // Newest first, then one per platform: a folder that has collected three
     // builds should offer the current one, not a list to guess from.
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    //
+    // A build for one processor only (LANTern-phone-arm64-v8a.apk) loses to
+    // the universal one whatever the dates say: whoever opens this page cannot
+    // be asked which architecture their phone is, and the wrong one installs
+    // as "app not installed" with no explanation.
+    let split = |name: &str| {
+        let lower = name.to_lowercase();
+        ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]
+            .iter()
+            .any(|abi| lower.contains(abi))
+    };
+    found.sort_by(|a, b| {
+        split(&a.1.name)
+            .cmp(&split(&b.1.name))
+            .then_with(|| b.0.cmp(&a.0))
+    });
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for (_, item) in found {
@@ -2461,6 +2485,33 @@ mod installer_tests {
         // A folder that has collected three builds should offer the current
         // one, not a list to guess from.
         assert_eq!(android, vec!["LANTern-1.2.6.apk".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_television_build_gets_its_own_card_and_a_phone_gets_the_universal_apk() {
+        let dir = std::env::temp_dir().join(format!("lantern-inst4-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // Written in one go, so the timestamps tie - which is how a release
+        // folder actually looks and what made the old pick arbitrary.
+        for name in [
+            "LANTV-1.2.7.apk",
+            "LANTV-1.2.7-arm64-v8a.apk",
+            "LANTern-1.2.7-phone-arm64-v8a.apk",
+            "LANTern-1.2.7-phone.apk",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let state = state_with(&dir);
+        let list = installer_list(&state);
+        let pick = |platform: &str| {
+            list.iter().find(|i| i.platform == platform).map(|i| i.name.clone())
+        };
+
+        assert_eq!(pick("Android"), Some("LANTern-1.2.7-phone.apk".to_string()));
+        assert_eq!(pick("Android TV"), Some("LANTV-1.2.7.apk".to_string()));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
