@@ -190,6 +190,10 @@ export function Theatre() {
   // The title playing is itself taller than it is wide, so turning upright is
   // how it is meant to be watched and must not close the player.
   const portraitClip = React.useRef(false);
+  // The position last saved for each title watched this session. `items` is
+  // only reloaded when the player closes, so without this a title watched
+  // and then stepped back to opened where the shelf data last had it.
+  const latestProgress = React.useRef<Record<string, number>>({});
 
   const releaseForcedLandscape = React.useCallback(() => {
     forcedLandscape.current = false;
@@ -356,7 +360,12 @@ export function Theatre() {
         isHost={!!party && party.hostId === profile.id}
         partyMembers={partyMembers}
         onClose={closePlayer}
-        onPlayNext={(next) => setPlaying(next)}
+        // Each episode opens where it was left, not where the shelf data was
+        // last loaded: that was fetched before this one was watched.
+        onPlayNext={(next) => setPlaying({ ...next, progressSec: latestProgress.current[next.id] ?? next.progressSec })}
+        onProgress={(id, sec) => {
+          latestProgress.current[id] = sec;
+        }}
         onShape={(portrait) => {
           portraitClip.current = portrait;
           // A film that turns out to be upright is not watched sideways: let

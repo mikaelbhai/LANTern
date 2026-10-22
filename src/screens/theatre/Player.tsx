@@ -42,6 +42,7 @@ import { useBackDismiss } from '../../lib/hooks';
 import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
 import { trackNames } from './tracks';
+import { useDetectedSubtitles } from './useDetectedSubtitles';
 import {
   SubtitleOverlay,
   SUBTITLE_STYLES,
@@ -91,6 +92,7 @@ export function Player({
   onClose,
   onPlayNext,
   onShape,
+  onProgress,
 }: {
   item: MediaItem;
   upNext: MediaItem | null;
@@ -104,7 +106,13 @@ export function Player({
   onPlayNext: (next: MediaItem) => void;
   /** Told whether the picture is taller than it is wide, once that is known. */
   onShape?: (portrait: boolean) => void;
+  /** Told each time the position is saved, so the caller can keep a fresh copy. */
+  onProgress?: (id: string, sec: number) => void;
 }) {
+  // Through a ref: the saving effect is installed once per title and must not
+  // be torn down and rebuilt every time the parent makes a new callback.
+  const onProgressRef = React.useRef(onProgress);
+  onProgressRef.current = onProgress;
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const shellRef = React.useRef<HTMLDivElement>(null);
 
@@ -360,7 +368,15 @@ export function Player({
   // Only the chosen subtitle is fetched — the others would each be a request
   // to another machine for a file nobody asked to read.
   // Readable, unambiguous names for both menus.
-  const subtitleNames = React.useMemo(() => trackNames(subtitles), [subtitles]);
+  const detected = useDetectedSubtitles(subtitles, tracksOpen);
+  // `detected` is a module-level cache that fills in after the menu opens, so
+  // it cannot be a memo dependency; the hook re-renders when it grows.
+  const subtitleNames = trackNames(
+    subtitles.map((s) => {
+      const found = detected.get(s.url);
+      return found ? { ...s, lang: found.lang, kind: found.kind } : s;
+    }),
+  );
   const audioNames = React.useMemo(() => trackNames(audioTracks), [audioTracks]);
 
   const cues = useSubtitleCues(subtitle >= 0 ? (subtitles[subtitle]?.url ?? null) : null);
@@ -383,6 +399,36 @@ export function Player({
    */
   const [audioDelay, setAudioDelay] = React.useState(0);
   const [canSwitchAudio, setCanSwitchAudio] = React.useState(false);
+
+  /*
+   * Moving to another episode starts it afresh.
+   *
+   * This component is not remounted when `item` changes - doing so would
+   * drop fullscreen on every episode of a binge - so everything that belongs
+   * to one title has to be put back by hand. It was not: the clock and the
+   * length stayed what the last episode's were, so E2 opened at E1's
+   * 22 minutes with E1's 53 minute total, and the progress then saved against
+   * E2 was E1's position. Each episode now begins at its own saved place.
+   */
+  const shownItem = React.useRef(item.id);
+  React.useEffect(() => {
+    if (shownItem.current === item.id) return;
+    shownItem.current = item.id;
+    setTime(item.progressSec);
+    latestTime.current = item.progressSec;
+    setDuration(item.durationSec);
+    setBuffered(0);
+    setSourceOffset(0);
+    setNatural({ w: 0, h: 0 });
+    setUnreachable(false);
+    setRepeatA(null);
+    setRepeatB(null);
+    setPlaying(true);
+    setSubtitle(matchLanguage(item.subtitles, item.subtitleLang));
+    setAudioTrack(matchLanguage(item.audioTracks, item.audioLang));
+    setAudioDelay(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
 
   // True when some track here cannot be decoded on this device — which is a
   // reason to offer the control even with nothing to switch between.
@@ -642,6 +688,7 @@ export function Player({
       // be real, whatever the element says.
       if (at < Math.floor(sourceOffset)) return;
       void api.media.setProgress(item.id, at);
+      onProgressRef.current?.(item.id, at);
     };
     const id = setInterval(save, 5000);
     return () => {

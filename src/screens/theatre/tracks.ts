@@ -94,6 +94,23 @@ export function languageName(code: string): string {
 }
 
 /**
+ * The name a person gave a track, if the label carries one.
+ *
+ * The backend's own labels are "language · codec" or "Track 3" when the file
+ * offered nothing, and neither is a name worth showing in place of the
+ * honest "Undetermined".
+ */
+function authoredName(label: string | undefined): string {
+  const first = (label ?? '').split('·')[0].trim();
+  if (!first) return '';
+  if (/^(und|mis|zxx|root)$/i.test(first)) return '';
+  if (/^track(\s+\d+)?$/i.test(first)) return '';
+  // A bare language code is what languageName already tried.
+  if (/^[a-z]{2,3}$/i.test(first)) return '';
+  return first;
+}
+
+/**
  * Names a list of tracks so no two rows read the same.
  *
  * Where a language occurs more than once the copies are numbered, which is the
@@ -101,14 +118,21 @@ export function languageName(code: string): string {
  * is SDH, and which is the plain track. A number at least makes them
  * distinguishable and stable between sessions.
  */
-export function trackNames(tracks: { lang?: string; label?: string }[]): string[] {
+export function trackNames(
+  tracks: { lang?: string; label?: string; kind?: string }[],
+): string[] {
   const base = tracks.map((t) => {
-    const name = languageName(t.lang ?? '');
-    if (name) return name;
-    // No language at all: fall back to whatever the file offered, minus the
-    // codec suffix the backend appends.
-    const label = (t.label ?? '').split('·')[0].trim();
-    return label || 'Track';
+    let name = languageName(t.lang ?? '');
+    // "und" is the muxer saying it was told nothing, not a name. A track that
+    // the author titled ("English [SDH]", "Director's commentary") says more
+    // than that, and used to be shown as "Undetermined 4" anyway because the
+    // language code always won.
+    if (!name || name === 'Undetermined') {
+      const authored = authoredName(t.label);
+      if (authored) name = authored;
+      else if (!name) name = 'Track';
+    }
+    return t.kind ? `${name} (${t.kind})` : name;
   });
 
   const totals = new Map<string, number>();
