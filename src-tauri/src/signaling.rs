@@ -388,7 +388,25 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 });
                 if matched {
                     crate::commands::set_trusted(&state, &envelope.from, true);
-                    state.with(|s| s.pending_pair = None);
+
+                    // Linked as one of this person's own devices only when
+                    // BOTH ends said so: this one by choosing it when the PIN
+                    // was shown, the other by choosing it when typing. Either
+                    // alone leaves a plain trust - one side must never be
+                    // able to open the other's storage by asking.
+                    let typer_said_so = envelope
+                        .payload
+                        .get("companion")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let both = state.with(|s| s.pair_as_companion) && typer_said_so;
+                    if both {
+                        crate::commands::set_companion(&state, &envelope.from, true);
+                    }
+                    state.with(|s| {
+                        s.pending_pair = None;
+                        s.pair_as_companion = false;
+                    });
 
                     let name =
                         state.with(|s| s.peers.get(&envelope.from).map(|p| p.name.clone()));
@@ -406,7 +424,7 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                             v: 1,
                             from: me,
                             kind: "pairresult".into(),
-                            payload: serde_json::json!({ "accepted": true }),
+                            payload: serde_json::json!({ "accepted": true, "companion": both }),
                         },
                     );
                 }
@@ -425,6 +443,22 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                     .unwrap_or(false);
                 if accepted {
                     crate::commands::set_trusted(&state, &envelope.from, true);
+
+                    // Link back only if this end asked for it too - the far
+                    // end saying "companion" is not consent on this side.
+                    let they_agreed = envelope
+                        .payload
+                        .get("companion")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let we_asked = state.with(|s| {
+                        let asked = s.pair_confirm_companion;
+                        s.pair_confirm_companion = false;
+                        asked
+                    });
+                    if they_agreed && we_asked {
+                        crate::commands::set_companion(&state, &envelope.from, true);
+                    }
                     let peers: Vec<_> = state.with(|s| s.peers.values().cloned().collect());
                     let _ = app.emit("peers:changed", &peers);
                 }
@@ -1018,7 +1052,15 @@ fn handle_control(app: &AppHandle, state: &crate::state::AppState, envelope: &En
             if state.with(|s| s.blocked.contains(&from)) {
                 return;
             }
-            let decision = state.with(|s| s.control.request(&from));
+            let decision = state.with(|s| {
+                // One of this person's own devices needs no question: the
+                // pairing that made it a companion was the person standing at
+                // both screens saying so. Anybody else is asked, as before.
+                if s.companions.contains(&from) {
+                    s.control.remember(&from);
+                }
+                s.control.request(&from)
+            });
             match decision {
                 Request::Granted => {
                     // Granted without asking, because this device is on the

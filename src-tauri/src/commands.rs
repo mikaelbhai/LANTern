@@ -1333,6 +1333,11 @@ pub(crate) fn set_companion(state: &AppState, device_id: &str, companion: bool) 
             s.companions.insert(device_id.to_string());
         } else {
             s.companions.remove(device_id);
+            // Unlinking takes the standing permission to control this machine
+            // with it, which `handle_control` granted on the strength of the
+            // link: leaving it would keep a device the person just said is no
+            // longer theirs able to drive the mouse without a prompt.
+            s.control.forget(device_id);
         }
 
         if let Some(db) = s.db.as_ref() {
@@ -1396,7 +1401,7 @@ pub fn peers_companions(state: State<'_, AppState>) -> Vec<serde_json::Value> {
 const PAIR_TTL_MS: u64 = 3 * 60 * 1000;
 
 #[tauri::command]
-pub fn peers_pair_start(state: State<'_, AppState>) -> String {
+pub fn peers_pair_start(state: State<'_, AppState>, companion: Option<bool>) -> String {
     // A UUID's own randomness, reduced to six digits rather than pulling in
     // a `rand` dependency this codebase otherwise has no use for - `uuid`
     // is already here for every token this application hands out.
@@ -1405,13 +1410,19 @@ pub fn peers_pair_start(state: State<'_, AppState>) -> String {
     let pin = format!("{n:06}");
     state.with(|s| {
         s.pending_pair = Some((pin.clone(), crate::model::now_ms() + PAIR_TTL_MS));
+        // Whoever is showing the PIN decides whether the device typing it is
+        // one of their own - it is their storage that would be opened.
+        s.pair_as_companion = companion.unwrap_or(false);
     });
     pin
 }
 
 #[tauri::command]
 pub fn peers_pair_cancel(state: State<'_, AppState>) {
-    state.with(|s| s.pending_pair = None);
+    state.with(|s| {
+        s.pending_pair = None;
+        s.pair_as_companion = false;
+    });
 }
 
 /// The other side of pairing: broadcasts a PIN someone just typed to every
@@ -1420,13 +1431,23 @@ pub fn peers_pair_cancel(state: State<'_, AppState>) {
 /// only one (if any) will actually be. Silence otherwise; see
 /// `signaling.rs`'s native handling of `pairconfirm` for what happens next.
 #[tauri::command]
-pub fn peers_pair_confirm(state: State<'_, AppState>, pin: String) -> usize {
-    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+pub fn peers_pair_confirm(
+    state: State<'_, AppState>,
+    pin: String,
+    companion: Option<bool>,
+) -> usize {
+    let companion = companion.unwrap_or(false);
+    let (links, me) = state.with(|s| {
+        // Remembered until the answer arrives: the far end replies in a
+        // separate message, and this end only links back if it asked to.
+        s.pair_confirm_companion = companion;
+        (s.links.clone(), s.device_id.clone())
+    });
     links.broadcast(&Envelope {
         v: 1,
         from: me,
         kind: "pairconfirm".into(),
-        payload: serde_json::json!({ "pin": pin }),
+        payload: serde_json::json!({ "pin": pin, "companion": companion }),
     })
 }
 
@@ -4807,4 +4828,33 @@ pub fn ratings_set_title(
     });
     crate::library::spawn_refresh(&app, &state);
     Ok(())
+}
+
+#[cfg(test)]
+mod companion_tests {
+    use super::*;
+
+    #[test]
+    fn unlinking_a_companion_also_takes_away_its_standing_control() {
+        let state = AppState::default();
+
+        set_companion(&state, "phone", true);
+        state.with(|s| s.control.remember("phone"));
+        assert!(state.with(|s| s.companions.contains("phone")));
+        assert!(state.with(|s| s.control.is_remembered("phone")));
+
+        // "Not mine any more" must not leave a device that can still drive
+        // the mouse without being asked.
+        set_companion(&state, "phone", false);
+        assert!(!state.with(|s| s.companions.contains("phone")));
+        assert!(!state.with(|s| s.control.is_remembered("phone")));
+    }
+
+    #[test]
+    fn a_companion_is_never_a_side_effect_of_trust() {
+        let state = AppState::default();
+        set_trusted(&state, "stranger", true);
+        assert!(state.with(|s| s.trusted.contains("stranger")));
+        assert!(!state.with(|s| s.companions.contains("stranger")));
+    }
 }

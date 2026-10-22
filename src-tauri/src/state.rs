@@ -94,6 +94,12 @@ pub struct Inner {
     /// looked at and typed by a person standing at both screens, not a
     /// standing offer anyone on the network can try against indefinitely.
     pub pending_pair: Option<(String, u64)>,
+    /// Whether the person showing `pending_pair` said the device that types it
+    /// is one of their own. Both ends have to say so: whoever's storage is
+    /// being opened must be the one who agrees to it.
+    pub pair_as_companion: bool,
+    /// The same choice, made on the typing end for the PIN it just sent.
+    pub pair_confirm_companion: bool,
     /// One-off permission to watch past a rating: (device, path) -> when it
     /// lapses, where 0 never does and a path of `*` covers everything.
     pub approvals: std::collections::HashMap<(String, String), u64>,
@@ -217,6 +223,8 @@ impl AppState {
             trusted: std::collections::HashSet::new(),
             companions: std::collections::HashSet::new(),
             pending_pair: None,
+            pair_as_companion: false,
+            pair_confirm_companion: false,
             approvals: std::collections::HashMap::new(),
             trust_local_requests: true,
             device_ages: std::collections::HashMap::new(),

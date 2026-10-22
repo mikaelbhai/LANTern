@@ -214,9 +214,31 @@ export const api = {
      * match; see `pair:accepted` (the showing side) and `pair:result` (the
      * entering side) for how each finds out.
      */
-    pairStart: () => call<string>('peers_pair_start'),
+    pairStart: (companion = false) => call<string>('peers_pair_start', { companion }),
     pairCancel: () => call<void>('peers_pair_cancel'),
-    pairConfirm: (pin: string) => call<number>('peers_pair_confirm', { pin }),
+    pairConfirm: (pin: string, companion = false) =>
+      call<number>('peers_pair_confirm', { pin, companion }),
+    /**
+     * Devices that are this person's own - a phone, a second PC - as opposed
+     * to somebody merely vouched for. Linked only through pairing, and only
+     * when both ends said so; this is what opens a device's whole storage.
+     */
+    companions: () =>
+      call<{ deviceId: string; name: string; companionAt: number }[]>('peers_companions'),
+    setCompanion: (deviceId: string, companion: boolean) =>
+      call<void>('peers_set_companion', { deviceId, companion }),
+  },
+  /** Browsing and pulling from a linked companion's storage. */
+  companion: {
+    /**
+     * Asks for one folder, or for the drives when `path` is null. The answer
+     * arrives later as `companion:browsed`, matched up by `requestId` - the
+     * far end says nothing at all to a device it has not linked.
+     */
+    browse: (peerId: string, path: string | null, requestId: string) =>
+      call<void>('companion_browse', { peerId, path, requestId }),
+    /** Asks for one file; it arrives as an ordinary incoming transfer. */
+    fetch: (peerId: string, path: string) => call<void>('companion_fetch', { peerId, path }),
   },
   chat: {
     /** `memberIds` are peer device ids; empty means broadcast to the network. */

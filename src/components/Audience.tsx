@@ -20,7 +20,17 @@ import { ShieldCheck, ShieldX, Baby, Clock, EyeOff, Globe, KeyRound, X } from 'l
 
 import { api, on } from '../lib/bridge';
 import { useStore } from '../lib/store';
-import { Button, Checkbox, IconButton, Input, Modal, SectionTitle, Select, Spinner } from './ui';
+import {
+  Button,
+  Checkbox,
+  IconButton,
+  Input,
+  Modal,
+  SectionTitle,
+  Select,
+  Spinner,
+  Toggle,
+} from './ui';
 import { PinPad, sanitizePin } from './PinPad';
 import type { RatingsStatus, Share } from '../lib/types';
 
@@ -519,17 +529,26 @@ function PairShowModal({
 }) {
   const [pin, setPin] = React.useState<string | null>(null);
   const [matched, setMatched] = React.useState(false);
+  // Whether the device typing this PIN is one of this person's own. Asked
+  // here, by whoever is showing it, because it is their storage that would be
+  // opened - and the typing end has to say the same, so neither can open the
+  // other's by asking alone.
+  const [own, setOwn] = React.useState(false);
 
+  // Changing the choice starts over with a fresh PIN: the choice travels with
+  // the PIN, and a PIN already read out should not quietly mean something
+  // different from what it did when it was.
   React.useEffect(() => {
     let cancelled = false;
-    void api.peers.pairStart().then((p) => {
+    setPin(null);
+    void api.peers.pairStart(own).then((p) => {
       if (!cancelled) setPin(p);
     });
     return () => {
       cancelled = true;
       void api.peers.pairCancel();
     };
-  }, []);
+  }, [own]);
 
   React.useEffect(() => {
     return on('pair:accepted', (r: { deviceId: string }) => {
@@ -556,6 +575,14 @@ function PairShowModal({
             <div className="text-4xl font-mono font-bold tracking-[0.15em] py-3">
               {pin ? pin.match(/.{1,3}/g)?.join(' ') : '· · · · · ·'}
             </div>
+            <div className="text-left">
+              <Toggle
+                checked={own}
+                onChange={setOwn}
+                label="This is one of my own devices"
+                hint="Lets it browse this device's storage and control it without asking. Leave off for somebody else's."
+              />
+            </div>
             <p className="text-2xs text-dim">Waiting for them to enter it…</p>
           </>
         )}
@@ -578,6 +605,8 @@ function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: 
   const [pin, setPin] = React.useState('');
   const [state, setState] = React.useState<'idle' | 'trying' | 'failed'>('idle');
   const [matchedName, setMatchedName] = React.useState<string | null>(null);
+  // Said on this end as well as on the one showing the PIN; see PairShowModal.
+  const [own, setOwn] = React.useState(false);
 
   React.useEffect(() => {
     if (state !== 'trying') return;
@@ -595,7 +624,7 @@ function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: 
   const submit = async () => {
     if (pin.length < 4) return;
     setState('trying');
-    await api.peers.pairConfirm(pin);
+    await api.peers.pairConfirm(pin, own);
   };
 
   return (
@@ -612,6 +641,12 @@ function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: 
               Type the PIN showing on the other device.
             </p>
             <PinPad value={pin} onChange={(v) => setPin(sanitizePin(v))} />
+            <Toggle
+              checked={own}
+              onChange={setOwn}
+              label="This is one of my own devices"
+              hint="Both devices have to say so before either can open the other's storage."
+            />
             <Button
               variant="primary"
               full

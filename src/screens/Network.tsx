@@ -22,6 +22,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
+import { MyDevices } from '../components/MyDevices';
 import { NetworkPrivacy } from '../components/NetworkPrivacy';
 import { DeviceTag } from '../components/PeerName';
 import { QrCode } from '../components/QrCode';
@@ -98,6 +99,7 @@ export function Network() {
             actually did anything about what the strip had just said. */}
         <NetworkPrivacy />
         <MyNetworkCard onFirewall={() => setFirewallOpen(true)} />
+        <MyDevices />
         <UpstreamCard />
 
         <section>

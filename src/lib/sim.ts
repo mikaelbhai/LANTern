@@ -227,6 +227,8 @@ let mappings: PortMapping[] = [
 const transfers = new Map<string, Transfer>();
 /** Original item ids synced to a local copy, for media_synced_ids. */
 const syncedIds = new Set<string>();
+// Devices the simulated user has unlinked, so the list can be seen emptying.
+const simCompanionsUnlinked = new Set<string>();
 let shares: Share[] = [];
 let started = false;
 
@@ -734,6 +736,47 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'peers_trusted':
       return [];
+
+    // Companions: one linked device, so the "My devices" list and its storage
+    // browser can be exercised without a second machine. A small fake disk,
+    // answered the way the real thing answers - asynchronously, as an event.
+    case 'peers_companions': {
+      const first = peers[0];
+      return first && !simCompanionsUnlinked.has(first.deviceId)
+        ? [{ deviceId: first.deviceId, name: first.name, companionAt: Date.now() - 3 * 86400_000 }]
+        : [];
+    }
+    case 'peers_set_companion': {
+      if (!args.companion) simCompanionsUnlinked.add(String(args.deviceId));
+      return null;
+    }
+    case 'companion_browse': {
+      const path = (args.path as string | null) ?? null;
+      const dir = (name: string, p: string) => ({ name, path: p, isDir: true, size: 0, modified: 0 });
+      const file = (name: string, p: string, size: number) => ({ name, path: p, isDir: false, size, modified: Date.now() });
+      const disk: Record<string, unknown[]> = {
+        '': [dir('C:\\', 'C:\\'), dir('D:\\', 'D:\\')],
+        'C:\\': [dir('Users', 'C:\\Users'), file('pagefile.sys', 'C:\\pagefile.sys', 4_294_967_296)],
+        'C:\\Users': [dir('Mikael', 'C:\\Users\\Mikael')],
+        'C:\\Users\\Mikael': [dir('Documents', 'C:\\Users\\Mikael\\Documents'), file('notes.txt', 'C:\\Users\\Mikael\\notes.txt', 2048)],
+        'C:\\Users\\Mikael\\Documents': [file('report.pdf', 'C:\\Users\\Mikael\\Documents\\report.pdf', 1_240_000)],
+        'D:\\': [file('backup.zip', 'D:\\backup.zip', 734_003_200)],
+      };
+      const entries = disk[path ?? ''];
+      setTimeout(
+        () =>
+          emit('companion:browsed', {
+            requestId: args.requestId,
+            path,
+            entries: entries ?? [],
+            error: entries ? null : 'that folder cannot be read',
+          }),
+        250,
+      );
+      return null;
+    }
+    case 'companion_fetch':
+      return null;
 
     case 'peers_blocked':
       return [];
