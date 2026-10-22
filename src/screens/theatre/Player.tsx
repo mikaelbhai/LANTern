@@ -42,6 +42,7 @@ import { useBackDismiss } from '../../lib/hooks';
 import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
 import { streamOrigin } from './keyframe';
+import { setBoost } from './loudness';
 import { trackNames } from './tracks';
 import { useDetectedSubtitles } from './useDetectedSubtitles';
 import {
@@ -120,8 +121,19 @@ export function Player({
   const [playing, setPlaying] = React.useState(true);
   const [time, setTime] = React.useState(item.progressSec);
   const [duration, setDuration] = React.useState(item.durationSec);
+  // 0-2: above 1 is gain, which needs the media fetched with a CORS check so
+  // the audio graph may read it.
   const [volume, setVolume] = React.useState(1);
   const [muted, setMuted] = React.useState(false);
+  // Set when a host refused the CORS check (media is then fetched plain, and
+  // cannot be amplified) or the audio graph could not be built at all.
+  const [plainMedia, setPlainMedia] = React.useState(false);
+  const [unboostable, setUnboostable] = React.useState(false);
+  const maxVolume = plainMedia || unboostable ? 1 : 2;
+  const maxVolumeRef = React.useRef(maxVolume);
+  maxVolumeRef.current = maxVolume;
+  // Where to resume when the element is replaced for the sake of the above.
+  const retryAt = React.useRef<number | null>(null);
   /**
    * A software dim, VLC's own answer to there being no web API for the
    * screen's actual backlight. `filter: brightness()` on the picture itself
@@ -315,7 +327,11 @@ export function Player({
         setBrightness(next);
         setSwipeFlash({ zone: 'left', pct: Math.round(((next - 0.4) / 1.2) * 100) });
       } else {
-        const next = Math.max(0, Math.min(1, drag.startValue + deltaY / SWIPE_RANGE_PX));
+        // A full swipe is the whole range, so 200% is not a second swipe away.
+        const next = Math.max(
+          0,
+          Math.min(maxVolumeRef.current, drag.startValue + (deltaY / SWIPE_RANGE_PX) * maxVolumeRef.current),
+        );
         setVolume(next);
         setMuted(false);
         setSwipeFlash({ zone: 'right', pct: Math.round(next * 100) });
@@ -685,11 +701,20 @@ export function Player({
 
   React.useEffect(() => {
     const el = videoRef.current;
-    if (el) {
-      el.volume = volume;
-      el.muted = muted;
-    }
-  }, [volume, muted]);
+    if (!el) return;
+    // The element's own volume stops at 1; anything above that is a gain stage.
+    el.volume = Math.min(1, volume);
+    el.muted = muted;
+    // Without the CORS check the media is opaque to the audio graph, and
+    // routing it through would turn it silent.
+    if (plainMedia) return;
+    if (!setBoost(el, volume)) setUnboostable(true);
+  }, [volume, muted, unreachable, plainMedia]);
+
+  // The loudest this device will go, once it has found it cannot go further.
+  React.useEffect(() => {
+    if (volume > maxVolume) setVolume(maxVolume);
+  }, [volume, maxVolume]);
 
   /**
    * Where the viewer has got to, for the saver below to read.
@@ -867,7 +892,7 @@ export function Player({
           break;
         case 'ArrowUp':
           e.preventDefault();
-          setVolume((v) => Math.min(1, v + 0.05));
+          setVolume((v) => Math.min(maxVolume, v + 0.05));
           break;
         case 'ArrowDown':
           e.preventDefault();
@@ -894,7 +919,7 @@ export function Player({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [time, seekTo, wake, onClose, following, duration, playing, broadcast, controlsLocked]);
+  }, [time, seekTo, wake, onClose, following, duration, playing, broadcast, controlsLocked, maxVolume]);
 
   /**
    * Turns the phone sideways for fullscreen, and back on the way out.
@@ -1337,6 +1362,15 @@ export function Player({
             // no poster is set, and on Android it renders large enough to look
             // like part of the design rather than a loading state.
             poster={item.posterUrl}
+            // A new element when the fetch mode changes: crossOrigin is read
+            // when the media loads, so flipping it on a live element does
+            // nothing until the next source.
+            key={plainMedia ? 'plain' : 'cors'}
+            // The CORS check is what lets the audio graph read the sound for
+            // volume past 100% (see loudness.ts). Every host sends the header
+            // on file bytes; one that does not fails here, and the fallback in
+            // onError fetches it plain at the cost of the boost.
+            crossOrigin={plainMedia ? undefined : 'anonymous'}
             className="bg-black"
             // Sized rather than classed. `object-fit: cover` would crop, but
             // it crops to the element, so the element still has to be the
@@ -1358,8 +1392,11 @@ export function Player({
               }
               // The stream already begins at the requested offset, so seeking
               // again would jump a second time.
-              if (audioTrack < 0 && item.progressSec > 0) {
-                el.currentTime = item.progressSec;
+              // (After the element was replaced mid-film, from where it was.)
+              const resumeAt = retryAt.current ?? item.progressSec;
+              retryAt.current = null;
+              if (audioTrack < 0 && resumeAt > 0) {
+                el.currentTime = resumeAt;
               }
               // A remuxed stream's own clock starts at zero however far in it
               // begins, so the offset is the position until it reports one.
@@ -1368,10 +1405,6 @@ export function Player({
               if (audioTrack >= 0) setTime(streamStart);
               swapping.current = false;
             }}
-            // Deliberately no crossOrigin: the player does not read pixels,
-            // and requiring a CORS-checked fetch here turned a perfectly
-            // reachable file into "Can't reach". The thumbnail grabber sets it
-            // because a canvas read needs it; this does not.
             onTimeUpdate={(e) => {
               if (scrubbing) return;
               // Between asking for a new stream and it being ready, the
@@ -1393,7 +1426,23 @@ export function Player({
               }
               if (upNext) onPlayNext(upNext);
             }}
-            onError={() => setUnreachable(true)}
+            onError={() => {
+              // Requiring the CORS check once turned a reachable file into
+              // "Can't reach". Before believing that, ask for it plain: the
+              // film plays, just not louder than 100%.
+              if (!plainMedia) {
+                retryAt.current = latestTime.current;
+                // The new element reports zero before it has found its place;
+                // that is not a position to write down.
+                swapping.current = true;
+                // A remuxed stream starts where its URL says, not where the
+                // element had got to.
+                if (audioTrack >= 0) startRemuxAt(latestTime.current);
+                setPlainMedia(true);
+                return;
+              }
+              setUnreachable(true);
+            }}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
           >
@@ -1707,7 +1756,7 @@ export function Player({
                   <input
                     type="range"
                     min={0}
-                    max={1}
+                    max={maxVolume}
                     step={0.01}
                     value={muted ? 0 : volume}
                     onChange={(e) => {
@@ -1715,7 +1764,12 @@ export function Player({
                       setMuted(false);
                     }}
                     aria-label="Volume"
-                    className="w-0 group-hover/vol:w-20 transition-all duration-200 h-1 accent-white cursor-pointer"
+                    title={`${Math.round((muted ? 0 : volume) * 100)}%`}
+                    className={cn(
+                      'w-0 group-hover/vol:w-20 transition-all duration-200 h-1 cursor-pointer',
+                      // Past 100% is amplification, which can distort: say so.
+                      volume > 1 ? 'accent-gold' : 'accent-white',
+                    )}
                   />
                 </div>
 
