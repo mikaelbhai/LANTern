@@ -694,6 +694,12 @@ async fn serve_path(
     if params.contains_key("thumb") {
         return serve_thumbnail(&state, &slug, &path).await;
     }
+    // `?keyframe=T` says where a remuxed stream asked to begin at T really
+    // begins, so the player can ask for that instead. Behind the same checks as
+    // the stream it describes, like every other parameter on this path.
+    if let Some(at) = params.get("keyframe").and_then(|t| t.parse::<f64>().ok()) {
+        return serve_keyframe(&state, &slug, &path, at).await;
+    }
     if let Some(index) = params.get("audio").and_then(|n| n.parse::<u64>().ok()) {
         let seek = params
             .get("t")
@@ -801,6 +807,71 @@ async fn serve_thumbnail(state: &AppState, slug: &str, rel: &str) -> Response {
         }
         _ => (StatusCode::NOT_FOUND, "Could not read a frame").into_response(),
     }
+}
+
+/// Where a copied-video stream asked to begin at `at_sec` really begins, as
+/// `{"start": seconds}`: the point in the file its own clock reads zero at.
+///
+/// A remuxed stream cannot start between keyframes, so what the player asks for
+/// and what it gets differ by up to a GOP, and the player's clock and subtitles
+/// went wrong by that difference. The player still asks for `at_sec` - the same
+/// request makes the same jump here - and uses this answer for its clock.
+/// Where ffmpeg cannot say, the request comes back unchanged and the player
+/// behaves as it always did.
+async fn serve_keyframe(state: &AppState, slug: &str, rel: &str, at_sec: f64) -> Response {
+    let reply = |start: f64| {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"))
+            .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
+            .body(Body::from(format!("{{\"start\":{start}}}")))
+            .unwrap()
+    };
+    let at_sec = if at_sec.is_finite() { at_sec.max(0.0) } else { 0.0 };
+    // `arguments` does not seek at all this close to the start.
+    if at_sec <= 0.5 {
+        return reply(0.0);
+    }
+
+    let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
+        return reply(at_sec);
+    };
+    let Some((root, running)) = state.with(|s| {
+        s.shares
+            .iter()
+            .find(|sh| sh.slug == slug)
+            .map(|sh| (PathBuf::from(&sh.path), sh.running))
+    }) else {
+        return not_found("No such share");
+    };
+    if !running {
+        return not_found("No such share");
+    }
+    let Some(target) = resolve(&root, rel) else {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    };
+
+    let args = crate::audiotrack::keyframe_arguments(&target.to_string_lossy(), at_sec);
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        ffmpeg_command(ffmpeg)
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+
+    let start = match output {
+        Ok(Ok(out)) if out.status.success() => {
+            crate::audiotrack::stream_origin(&String::from_utf8_lossy(&out.stdout), at_sec)
+        }
+        _ => None,
+    };
+    reply(start.unwrap_or(at_sec))
 }
 
 fn jpeg(bytes: Vec<u8>) -> Response {

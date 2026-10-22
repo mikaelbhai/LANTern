@@ -41,6 +41,7 @@ import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
 import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
+import { streamOrigin } from './keyframe';
 import { trackNames } from './tracks';
 import { useDetectedSubtitles } from './useDetectedSubtitles';
 import {
@@ -385,10 +386,12 @@ export function Player({
   const [audioTrack, setAudioTrack] = React.useState(() =>
     matchLanguage(item.audioTracks, item.audioLang),
   );
-  // A remuxed stream has no timeline of its own: it begins at the point it was
-  // asked for, so the player's clock is offset by that amount and seeking
-  // re-requests rather than scrubbing.
+  // A remuxed stream has no timeline of its own, so seeking re-requests it
+  // rather than scrubbing: `sourceOffset` is the point it was asked to begin at.
   const [sourceOffset, setSourceOffset] = React.useState(0);
+  // And where it really begins - a keyframe at or before that - which is what
+  // the player's clock is measured from.
+  const [streamStart, setStreamStart] = React.useState(0);
   /**
    * How far to move the audio, in milliseconds, positive for later.
    *
@@ -399,6 +402,37 @@ export function Player({
    */
   const [audioDelay, setAudioDelay] = React.useState(0);
   const [canSwitchAudio, setCanSwitchAudio] = React.useState(false);
+
+  /**
+   * Starts the remuxed stream at `at`, or as near before it as the video allows.
+   *
+   * The video is copied, so the stream can only begin on a keyframe. The host
+   * says which, before the stream is requested, and the clock is measured from
+   * there. Assuming the request was granted put the clock and the subtitles up
+   * to a GOP ahead of the picture after every skip.
+   *
+   * Changes that belong in the same request (a track, a delay) wait for the
+   * answer and go in together: applied at once they would each re-request the
+   * stream from the old offset first.
+   */
+  const startGen = React.useRef(0);
+  const startWith = React.useRef<{ track?: number; delay?: number }>({});
+  const startRemuxAt = React.useCallback(
+    (at: number, change: { track?: number; delay?: number } = {}) => {
+      Object.assign(startWith.current, change);
+      const gen = ++startGen.current;
+      void streamOrigin(item.streamUrl, at).then((start) => {
+        if (gen !== startGen.current) return;
+        const wanted = startWith.current;
+        startWith.current = {};
+        setSourceOffset(at);
+        setStreamStart(start);
+        if (wanted.track !== undefined) setAudioTrack(wanted.track);
+        if (wanted.delay !== undefined) setAudioDelay(wanted.delay);
+      });
+    },
+    [item.streamUrl],
+  );
 
   /*
    * Moving to another episode starts it afresh.
@@ -419,6 +453,7 @@ export function Player({
     setDuration(item.durationSec);
     setBuffered(0);
     setSourceOffset(0);
+    setStreamStart(0);
     setNatural({ w: 0, h: 0 });
     setUnreachable(false);
     setRepeatA(null);
@@ -427,6 +462,9 @@ export function Player({
     setSubtitle(matchLanguage(item.subtitles, item.subtitleLang));
     setAudioTrack(matchLanguage(item.audioTracks, item.audioLang));
     setAudioDelay(0);
+    // An answer still in flight belongs to the last episode.
+    startGen.current++;
+    startWith.current = {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
 
@@ -463,8 +501,12 @@ export function Player({
     if (!track) return;
     if (!needsRemux(track.codec ?? '', track.webSafe !== false, browserCanPlay)) return;
     autoPicked.current = item.id;
-    setAudioTrack(typeof track.index === 'number' ? track.index : 0);
-  }, [item.id, audioTracks, audioTrack]);
+    // From where the viewer is, not from the start: the remuxed stream begins
+    // at whatever it is asked for, and this used to ask for nothing.
+    // `time` would still be the previous episode's on a change of title.
+    startRemuxAt(item.progressSec, { track: typeof track.index === 'number' ? track.index : 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, audioTracks, audioTrack, startRemuxAt]);
 
   /**
    * Remembers the pair whenever either changes.
@@ -504,7 +546,7 @@ export function Player({
     audioTrack >= 0
       ? `${item.streamUrl}${item.streamUrl.includes('?') ? '&' : '?'}audio=${audioTrack}` +
         `&codec=${encodeURIComponent(audioTracks[audioTrack]?.codec ?? '')}` +
-        `&t=${Math.floor(sourceOffset)}` +
+        `&t=${sourceOffset.toFixed(3)}` +
         (audioDelay !== 0 ? `&adelay=${audioDelay}` : '')
       : item.streamUrl;
 
@@ -518,22 +560,33 @@ export function Player({
    * a shift at all.
    */
   const nudgeDelay = (deltaMs: number) => {
-    const next = Math.max(-5000, Math.min(5000, audioDelay + deltaMs));
-    if (next === audioDelay) return;
-    setSourceOffset(Math.max(0, Math.floor(time)));
+    // From the request still in flight, if there is one: two quick taps are
+    // +200, not two readings of +100.
+    const current = startWith.current.delay ?? audioDelay;
+    const next = Math.max(-5000, Math.min(5000, current + deltaMs));
+    if (next === current) return;
+    let track: number | undefined;
     if (audioTrack < 0) {
-      const track: any = audioTracks.find((t: any) => t?.default) ?? audioTracks[0];
-      if (track) setAudioTrack(typeof track.index === 'number' ? track.index : 0);
+      const fallback: any = audioTracks.find((t: any) => t?.default) ?? audioTracks[0];
+      if (fallback) track = typeof fallback.index === 'number' ? fallback.index : 0;
     }
-    setAudioDelay(next);
+    startRemuxAt(time, { delay: next, track });
   };
 
   // A shift belongs to the file it was judged against, not to the player.
   React.useEffect(() => setAudioDelay(0), [item.id]);
 
   const chooseAudio = (index: number) => {
-    setSourceOffset(index >= 0 ? Math.max(0, Math.floor(time)) : 0);
-    setAudioTrack(index);
+    if (index >= 0) {
+      startRemuxAt(time, { track: index });
+    } else {
+      // Back to the file as it is: it has a timeline of its own to seek in.
+      startGen.current++;
+      startWith.current = {};
+      setSourceOffset(0);
+      setStreamStart(0);
+      setAudioTrack(index);
+    }
     setTracksOpen(false);
   };
 
@@ -571,14 +624,14 @@ export function Player({
       // it was asked to. Moving the scrubber means requesting it again from
       // the new point, which the source URL carries.
       if (audioTrack >= 0) {
-        setSourceOffset(clamped);
+        startRemuxAt(clamped);
         return;
       }
 
       const el = videoRef.current;
       if (el && !unreachable && Number.isFinite(el.duration)) el.currentTime = clamped;
     },
-    [duration, unreachable, audioTrack],
+    [duration, unreachable, audioTrack, startRemuxAt],
   );
 
   // When the file cannot be fetched the transport still has to behave, so the
@@ -686,7 +739,7 @@ export function Player({
       const at = Math.floor(latestTime.current);
       // A position before the point the stream was asked to start at cannot
       // be real, whatever the element says.
-      if (at < Math.floor(sourceOffset)) return;
+      if (at < Math.floor(streamStart)) return;
       void api.media.setProgress(item.id, at);
       onProgressRef.current?.(item.id, at);
     };
@@ -695,7 +748,7 @@ export function Player({
       clearInterval(id);
       save();
     };
-  }, [item.id, sourceOffset]);
+  }, [item.id, streamStart]);
 
   /* -------------------------------------------------------- watch party */
 
@@ -1312,7 +1365,7 @@ export function Player({
               // begins, so the offset is the position until it reports one.
               // Set here rather than waiting for the first tick: that tick is
               // what the saver would otherwise have written down.
-              if (audioTrack >= 0) setTime(sourceOffset);
+              if (audioTrack >= 0) setTime(streamStart);
               swapping.current = false;
             }}
             // Deliberately no crossOrigin: the player does not read pixels,
@@ -1325,7 +1378,7 @@ export function Player({
               // element still ticks against the old one. Those readings belong
               // to a position that no longer exists.
               if (swapping.current) return;
-              setTime(sourceOffset + e.currentTarget.currentTime);
+              setTime(streamStart + e.currentTarget.currentTime);
             }}
             onProgress={(e) => {
               const el = e.currentTarget;

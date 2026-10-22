@@ -104,6 +104,13 @@ pub fn arguments(
     // Seeking before -i lets ffmpeg jump by index instead of decoding up to
     // the point, which is the difference between instant and minutes.
     if seek_sec > 0.5 {
+        // The video can only start on a keyframe, up to a GOP before the
+        // request. An accurate seek cuts a re-encoded audio track exactly at
+        // the request, so the picture ran silent from the keyframe until the
+        // audio's own start - the loss of sound after every skip. Starting
+        // both where the file lets them keeps them together; `stream_origin`
+        // says where that is.
+        args.push("-noaccurate_seek".into());
         args.push("-ss".into());
         args.push(format!("{seek_sec:.3}"));
     }
@@ -225,8 +232,110 @@ pub fn thumbnail_arguments(path: &str, at_sec: f64) -> Vec<String> {
     ]
 }
 
+/// Arguments that print the first video packet ffmpeg lands on when it seeks
+/// to `at_sec`, and nothing else.
+///
+/// Same `-ss` before `-i` as `arguments`, so it makes the same jump - which is
+/// the point. See `stream_origin`.
+pub fn keyframe_arguments(path: &str, at_sec: f64) -> Vec<String> {
+    vec![
+        "-v".into(),
+        "error".into(),
+        "-ss".into(),
+        format!("{at_sec:.3}"),
+        "-i".into(),
+        path.into(),
+        "-map".into(),
+        "0:v:0".into(),
+        "-c".into(),
+        "copy".into(),
+        "-frames:v".into(),
+        "1".into(),
+        "-f".into(),
+        "framecrc".into(),
+        "-".into(),
+    ]
+}
+
+/// The point in the file at which a stream asked to begin at `at_sec` reads
+/// zero on its own clock.
+///
+/// The video is copied, and a copied stream can only start on a keyframe, so
+/// `-ss` lands on the one *before* the request - five seconds early in a film
+/// with a ten second GOP. The player took the request for the start, so its
+/// clock and its subtitles ran that far ahead of the picture after every seek.
+///
+/// This reads the true start from the first packet's decode timestamp, which
+/// ffmpeg prints relative to the seek point and therefore negative. The decode
+/// time rather than the presentation time: the stream is shifted so that the
+/// first *decode* is zero, and the picture appears a frame or two after it.
+pub fn stream_origin(framecrc: &str, at_sec: f64) -> Option<f64> {
+    let tick = framecrc
+        .lines()
+        .find_map(|l| l.strip_prefix("#tb 0:"))?
+        .trim()
+        .split_once('/')
+        .and_then(|(n, d)| Some(n.trim().parse::<f64>().ok()? / d.trim().parse::<f64>().ok()?))?;
+
+    // "stream, dts, pts, duration, size, crc"
+    let dts: f64 = framecrc
+        .lines()
+        .find(|l| !l.starts_with('#') && !l.trim().is_empty())?
+        .split(',')
+        .nth(1)?
+        .trim()
+        .parse()
+        .ok()?;
+
+    let origin = at_sec + dts * tick;
+    if !origin.is_finite() {
+        return None;
+    }
+    Some((origin.max(0.0) * 1000.0).round() / 1000.0)
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The numbers from a real file: `-ss 25` into a stream with a keyframe
+    /// every ten seconds, which ffmpeg answers with the keyframe at 20 -
+    /// decoded at 19.917, a frame of B-frame delay before it is shown.
+    const FRAMECRC: &str = "#extradata 0:       46, 0x6e1910c8\n#software: Lavf62.12.101\n\
+        #tb 0: 1/1000\n#media_type 0: video\n#codec_id 0: h264\n\
+        0,      -5083,      -5000,       41,     2869, 0x7181b694\n";
+
+    #[test]
+    fn the_start_of_a_seek_is_read_from_the_first_packet() {
+        assert_eq!(stream_origin(FRAMECRC, 25.0), Some(19.917));
+    }
+
+    #[test]
+    fn a_fractional_timebase_is_converted_to_seconds() {
+        // 123123 / 24000 = 5.130125 s before the seek point.
+        let text = "#tb 0: 1/24000\n0, -123123, -120120, 1001, 1000, 0x0\n";
+        assert_eq!(stream_origin(text, 25.0), Some(19.87));
+    }
+
+    #[test]
+    fn a_start_before_the_file_begins_is_the_beginning() {
+        let text = "#tb 0: 1/1000\n0, -9000, -9000, 41, 1000, 0x0\n";
+        assert_eq!(stream_origin(text, 5.0), Some(0.0));
+    }
+
+    #[test]
+    fn output_that_is_not_a_packet_gives_no_answer() {
+        assert_eq!(stream_origin("", 25.0), None);
+        assert_eq!(stream_origin("#tb 0: 1/1000\n", 25.0), None);
+        assert_eq!(stream_origin("0, 1, 2, 3, 4, 5\n", 25.0), None);
+    }
+
+    #[test]
+    fn the_keyframe_probe_makes_the_same_jump_as_the_stream() {
+        let args = keyframe_arguments("f.mkv", 25.0);
+        let ss = args.iter().position(|a| a == "-ss").unwrap();
+        let input = args.iter().position(|a| a == "-i").unwrap();
+        assert!(ss < input, "-ss must precede -i or this is a different seek");
+    }
 
     /// The case that played in silence: a lone E-AC-3 track. Chromium has no
     /// Dolby decoder, so this must come back false or the remux is skipped
@@ -294,6 +403,10 @@ mod tests {
         let ss = args.iter().position(|a| a == "-ss").expect("seek present");
         let input = args.iter().position(|a| a == "-i").expect("input present");
         assert!(ss < input, "-ss must precede -i to seek by index");
+        assert!(
+            args.contains(&"-noaccurate_seek".to_string()),
+            "audio must start with the video, not at the request"
+        );
 
         assert!(
             !arguments("f.mkv", 0, "AAC", 0.0, 0).contains(&"-ss".to_string()),
