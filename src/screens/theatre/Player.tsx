@@ -22,12 +22,15 @@ import {
   Languages,
   Crop,
   Lock,
+  LockKeyhole,
   LockOpen,
+  Moon,
   Scan,
   Smartphone,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
 import { api, on } from '../../lib/bridge';
+import { useStore } from '../../lib/store';
 import {
   rotatesWithDevice,
   setOrientationLocked,
@@ -143,6 +146,19 @@ export function Player({
   const [hover, setHover] = React.useState<{ x: number; t: number } | null>(null);
   const barRef = React.useRef<HTMLDivElement>(null);
   const previewEver = React.useRef(false);
+  // Seconds, positive meaning later. The one fix for subtitles that were timed
+  // against a different cut of the film, which is most of the ones found
+  // beside a file rather than inside it.
+  const [subDelay, setSubDelay] = React.useState(0);
+  // Falling asleep to a film: the timer pauses it, and "after this one" stops
+  // a series from rolling on into the next episode all night.
+  const [sleepAt, setSleepAt] = React.useState<number | null>(null);
+  const [sleepAtEnd, setSleepAtEnd] = React.useState(false);
+  const [sleepOpen, setSleepOpen] = React.useState(false);
+  // VLC's padlock: with the controls locked a pocket or a child's finger
+  // cannot seek, pause or leave. Tapping shows the unlock for a moment.
+  const [controlsLocked, setControlsLocked] = React.useState(false);
+  const [unlockShown, setUnlockShown] = React.useState(false);
   // Index into item.subtitles, or -1 for off. Off by default: burning
   // subtitles on unasked is worse than one extra click — unless this title,
   // or the last one watched, was being read with them on.
@@ -680,6 +696,12 @@ export function Player({
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      // A locked player listens to nothing but the way out of the lock, and
+      // does not so much as show its controls for a key.
+      if (controlsLocked) {
+        if (e.key === 'Escape') setControlsLocked(false);
+        return;
+      }
       wake();
       // A held modifier means the browser's own shortcut (Ctrl+L, Alt+Left to
       // go back); none of the keys below should swallow those.
@@ -721,6 +743,14 @@ export function Player({
         case 'Home':
           e.preventDefault();
           jump(0);
+          break;
+        // VLC's own keys for subtitles that are early or late: g shows them
+        // sooner, h later, a tenth of a second at a time.
+        case 'g':
+          if (plain) setSubDelay((d) => Math.round((d - 0.1) * 10) / 10);
+          break;
+        case 'h':
+          if (plain) setSubDelay((d) => Math.round((d + 0.1) * 10) / 10);
           break;
         // Ten percent steps: 0 is the start, 5 is halfway.
         case '0':
@@ -764,7 +794,7 @@ export function Player({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [time, seekTo, wake, onClose, following, duration, playing, broadcast]);
+  }, [time, seekTo, wake, onClose, following, duration, playing, broadcast, controlsLocked]);
 
   /**
    * Turns the phone sideways for fullscreen, and back on the way out.
@@ -837,6 +867,109 @@ export function Player({
   }, [playing]);
 
   const orientationLocked = useOrientation((s) => s.locked);
+
+  /* --------------------------------------------- subtitle delay, sleep, lock */
+
+  React.useEffect(() => setSubDelay(0), [item.id]);
+
+  React.useEffect(() => {
+    if (sleepAt === null) return;
+    const id = setTimeout(() => {
+      setPlaying(false);
+      setSleepAt(null);
+      useStore.getState().toast({ kind: 'info', title: 'Sleep timer', body: 'Paused. Good night.' });
+    }, Math.max(0, sleepAt - Date.now()));
+    return () => clearTimeout(id);
+  }, [sleepAt]);
+
+  React.useEffect(() => {
+    if (!unlockShown) return;
+    const id = setTimeout(() => setUnlockShown(false), 2500);
+    return () => clearTimeout(id);
+  }, [unlockShown]);
+
+  /*
+   * Lock-screen and notification controls.
+   *
+   * Without this Android plays the film with a notification that has no
+   * buttons, and the lock screen has nothing to offer - so the only way to
+   * pause is to unlock the phone. Handlers read the player through a ref so
+   * they are registered once rather than on every tick of the clock.
+   */
+  const session = React.useRef({
+    time,
+    duration,
+    playing,
+    following,
+    upNext,
+    previous,
+    seekTo,
+    broadcast,
+    onPlayNext,
+  });
+  session.current = { time, duration, playing, following, upNext, previous, seekTo, broadcast, onPlayNext };
+  const mediaSession = (typeof navigator !== 'undefined' &&
+    (navigator as Navigator & { mediaSession?: MediaSession }).mediaSession) as MediaSession | undefined;
+  React.useEffect(() => {
+    if (!mediaSession || typeof MediaMetadata === 'undefined') return;
+    mediaSession.metadata = new MediaMetadata({
+      title: item.title,
+      artist: ownerName,
+      album: item.series ?? '',
+      artwork: item.posterUrl ? [{ src: item.posterUrl }] : [],
+    });
+    return () => {
+      mediaSession.metadata = null;
+    };
+  }, [mediaSession, item.id, item.title, item.series, item.posterUrl, ownerName]);
+  React.useEffect(() => {
+    if (mediaSession) mediaSession.playbackState = playing ? 'playing' : 'paused';
+  }, [mediaSession, playing]);
+  React.useEffect(() => {
+    if (!mediaSession) return;
+    const move = (to: number) => {
+      const s = session.current;
+      // Only the host moves a watch party's clock - the same rule the buttons
+      // and the keyboard follow.
+      if (s.following) return;
+      const clamped = Math.max(0, Math.min(s.duration, to));
+      s.seekTo(clamped);
+      s.broadcast(s.playing, clamped);
+    };
+    const set = (action: MediaSessionAction, handler: MediaSessionActionHandler | null) => {
+      try {
+        mediaSession.setActionHandler(action, handler);
+      } catch {
+        /* an action this WebView does not know */
+      }
+    };
+    set('play', () => session.current.following || setPlaying(true));
+    set('pause', () => session.current.following || setPlaying(false));
+    set('seekbackward', (d) => move(session.current.time - (d.seekOffset ?? 10)));
+    set('seekforward', (d) => move(session.current.time + (d.seekOffset ?? 10)));
+    set('seekto', (d) => d.seekTime !== undefined && move(d.seekTime));
+    set('previoustrack', () => session.current.previous && session.current.onPlayNext(session.current.previous));
+    set('nexttrack', () => session.current.upNext && session.current.onPlayNext(session.current.upNext));
+    return () => {
+      (['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'previoustrack', 'nexttrack'] as const).forEach((a) =>
+        set(a, null),
+      );
+    };
+  }, [mediaSession]);
+  React.useEffect(() => {
+    if (!mediaSession?.setPositionState || !(duration > 0)) return;
+    try {
+      mediaSession.setPositionState({
+        duration,
+        position: Math.max(0, Math.min(duration, time)),
+        playbackRate: rate,
+      });
+    } catch {
+      /* a position past the end while a stream is being re-requested */
+    }
+    // A whole second is as fine as a lock screen draws it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaSession, Math.floor(time), duration, rate]);
   // The portrait exception, opted into rather than assumed: forcing every
   // fullscreen video to landscape used to mean a phone-shot clip played
   // pillarboxed to a third of the screen with no way to ask for the rest of
@@ -1153,6 +1286,11 @@ export function Player({
             }}
             onEnded={() => {
               setPlaying(false);
+              // "Stop after this one" means the next episode is not started.
+              if (sleepAtEnd) {
+                setSleepAtEnd(false);
+                return;
+              }
               if (upNext) onPlayNext(upNext);
             }}
             onError={() => setUnreachable(true)}
@@ -1578,6 +1716,54 @@ export function Player({
                         ? 'A-…'
                         : 'Repeat'}
                   </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setSleepOpen((o) => !o)}
+                      className={cn(
+                        'flex items-center gap-1.5 text-[11px] hover:text-white',
+                        sleepAt !== null || sleepAtEnd ? 'text-gold' : 'text-white/80',
+                      )}
+                      aria-haspopup="menu"
+                      aria-expanded={sleepOpen}
+                    >
+                      <Moon size={15} />
+                      {sleepAtEnd
+                        ? 'After this'
+                        : sleepAt !== null
+                          ? `Sleep ${Math.max(1, Math.round((sleepAt - Date.now()) / 60000))}m`
+                          : 'Sleep'}
+                    </button>
+                    {sleepOpen && (
+                      <>
+                        <button
+                          aria-label="Close sleep timer menu"
+                          className="track-scrim fixed inset-0 z-20 cursor-default"
+                          onClick={() => setSleepOpen(false)}
+                        />
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-[170px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg">
+                          {[
+                            { label: 'Off', apply: () => { setSleepAt(null); setSleepAtEnd(false); } },
+                            ...[15, 30, 45, 60].map((m) => ({
+                              label: `${m} minutes`,
+                              apply: () => { setSleepAtEnd(false); setSleepAt(Date.now() + m * 60000); },
+                            })),
+                            { label: 'After this one', apply: () => { setSleepAt(null); setSleepAtEnd(true); } },
+                          ].map((option) => (
+                            <button
+                              key={option.label}
+                              onClick={() => {
+                                option.apply();
+                                setSleepOpen(false);
+                              }}
+                              className="track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised"
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
                   {audioTracks.length > 1 && (
                     <div className="relative">
                       <button
@@ -1707,6 +1893,33 @@ export function Player({
                                   {option.label}
                                 </button>
                               ))}
+                              <div className="my-1 border-t border-edge" />
+                              <div className="px-2 pb-1 pt-0.5 label">Subtitle delay</div>
+                              <div className="flex items-center gap-1 px-2 pb-1">
+                                <button
+                                  onClick={() => setSubDelay((d) => Math.round((d - 0.1) * 10) / 10)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Subtitles sooner (G)"
+                                >
+                                  −0.1 s
+                                </button>
+                                <span
+                                  className={cn(
+                                    'w-16 text-center text-2xs tabular-nums',
+                                    subDelay !== 0 ? 'text-gold' : 'text-dim',
+                                  )}
+                                >
+                                  {subDelay > 0 ? '+' : ''}
+                                  {subDelay.toFixed(1)} s
+                                </span>
+                                <button
+                                  onClick={() => setSubDelay((d) => Math.round((d + 0.1) * 10) / 10)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Subtitles later (H)"
+                                >
+                                  +0.1 s
+                                </button>
+                              </div>
                             </div>
                           )}
 
@@ -1796,6 +2009,15 @@ export function Player({
                       )}
                     </IconBtn>
                   )}
+                  <IconBtn
+                    label="Lock controls"
+                    onClick={() => {
+                      setControlsLocked(true);
+                      setChrome(false);
+                    }}
+                  >
+                    <LockKeyhole size={18} />
+                  </IconBtn>
                   {/* The app's own rotation lock. The phone's system switch is
                       ignored here on purpose - this is the only one that
                       counts, and it freezes whichever way up the screen is
@@ -1819,7 +2041,29 @@ export function Player({
             </div>
       </>
 
-      <SubtitleOverlay cues={cues} time={time} style={subStyle} chromeVisible={chrome} />
+      <SubtitleOverlay cues={cues} time={time - subDelay} style={subStyle} chromeVisible={chrome} />
+
+      {/* The padlock. Everything beneath it is out of reach - taps, the
+          gestures, the seek bar - until the unlock is pressed, which only
+          appears after a touch so the picture stays clean. */}
+      {controlsLocked && (
+        <div className="absolute inset-0 z-[60]" onPointerDown={() => setUnlockShown(true)}>
+          {unlockShown && (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                setControlsLocked(false);
+                setUnlockShown(false);
+                wake();
+              }}
+              className="absolute left-1/2 bottom-24 -translate-x-1/2 flex items-center gap-2 h-10 px-4 rounded-pill bg-black/80 border border-white/25 text-white text-xs"
+            >
+              <LockOpen size={16} />
+              Unlock controls
+            </button>
+          )}
+        </div>
+      )}
 
       {following && chrome && (
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 glass border border-edge rounded-pill px-3 h-7 flex items-center">
