@@ -2309,7 +2309,17 @@ const PREVIEW_WIDTH = 168;
  */
 function SeekPreview({ src, at, aspect }: { src: string; at: number; aspect: number }) {
   const ref = React.useRef<HTMLVideoElement>(null);
-  const snapped = Math.floor(Math.max(0, at) / PREVIEW_STEP_SEC) * PREVIEW_STEP_SEC;
+  const nearest = Math.floor(Math.max(0, at) / PREVIEW_STEP_SEC) * PREVIEW_STEP_SEC;
+
+  // Sweeping the pointer along the bar crosses a mark every few pixels, and
+  // each one used to be a fresh range request against the device sharing the
+  // film - the same one feeding the picture being watched. Only a mark the
+  // pointer rests on is fetched.
+  const [snapped, setSnapped] = React.useState(nearest);
+  React.useEffect(() => {
+    const id = setTimeout(() => setSnapped(nearest), 120);
+    return () => clearTimeout(id);
+  }, [nearest]);
 
   React.useEffect(() => {
     const el = ref.current;
@@ -2327,7 +2337,10 @@ function SeekPreview({ src, at, aspect }: { src: string; at: number; aspect: num
         src={src}
         muted
         playsInline
-        preload="auto"
+        // "auto" read the file on from wherever it had seeked, sharing the
+        // host's disk and the Wi-Fi with the film being played. A still frame
+        // needs only the bytes around it.
+        preload="metadata"
         onLoadedMetadata={(e) => {
           e.currentTarget.currentTime = snapped;
         }}

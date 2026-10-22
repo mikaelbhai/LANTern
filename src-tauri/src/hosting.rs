@@ -2212,6 +2212,42 @@ mod tests {
         assert!(response.contains("0123456789"), "{response}");
     }
 
+    /// Against a real clip with a keyframe every ten seconds: asking for 25
+    /// starts the stream at the keyframe at 20, and the answer says so. Skipped
+    /// where ffmpeg is not installed, as the feature is.
+    #[tokio::test]
+    async fn a_keyframe_probe_reports_where_the_stream_really_starts() {
+        let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
+            return;
+        };
+        let (addr, root) = serve_fixture(ShareMode::Files).await;
+        let clip = root.join("clip.mkv");
+        let made = std::process::Command::new(ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=24"])
+            .args(["-t", "40", "-c:v", "libx264", "-g", "240", "-bf", "2"])
+            .arg(&clip)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            return; // an ffmpeg without libx264 cannot make the fixture
+        }
+
+        let reply = get(addr, "/test/clip.mkv?keyframe=25.000", "").await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        let body = reply.rsplit("\r\n\r\n").next().unwrap_or_default();
+        let start: f64 = serde_json::from_str::<serde_json::Value>(body.trim())
+            .ok()
+            .and_then(|v| v["start"].as_f64())
+            .unwrap_or_else(|| panic!("no start in {body:?}"));
+        assert!(
+            (19.8..20.0).contains(&start),
+            "the keyframe at 20 is decoded a frame early: {start}"
+        );
+
+        // Too close to the start for the stream to seek at all.
+        let reply = get(addr, "/test/clip.mkv?keyframe=0.2", "").await;
+        assert!(reply.contains("\"start\":0"), "{reply}");
+    }
+
     #[tokio::test]
     async fn lists_a_directory() {
         let (addr, _root) = serve_fixture(ShareMode::Files).await;
