@@ -179,6 +179,9 @@ async function ensureLocalMedia(kind: CallKind): Promise<MediaStream> {
   return localStream;
 }
 
+/** How long a dropped connection gets to come back before the call is ended. */
+const DISCONNECT_GRACE_MS = 8000;
+
 function send(peerId: string, msg: Omit<SignalMessage, 'from'>): Promise<boolean> {
   return api.call.signal(peerId, msg).catch(() => false);
 }
@@ -220,13 +223,31 @@ function createSession(peerId: string, callId: string, kind: CallKind): Session 
     remoteHandlers.forEach((fn) => fn(peerId, remote));
   };
 
+  let lostTimer: ReturnType<typeof setTimeout> | undefined;
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'connected') {
+      clearTimeout(lostTimer);
       void tuneForLan(pc);
       connectedHandlers.forEach((fn) => fn(peerId));
       return;
     }
+    // The other end vanished without saying goodbye - the app killed, the
+    // Wi-Fi gone. WebRTC calls that `disconnected` and only gives up and says
+    // `failed` after the better part of half a minute, during which this side
+    // sits on a call screen with a frozen picture and nobody there. Brief
+    // blips recover on their own inside a few seconds, so a short grace is
+    // given and then the call is ended as lost.
+    if (pc.connectionState === 'disconnected') {
+      clearTimeout(lostTimer);
+      lostTimer = setTimeout(() => {
+        if (sessions.get(peerId)?.pc !== pc || pc.connectionState === 'connected') return;
+        teardown(peerId);
+        endedHandlers.forEach((fn) => fn(peerId, 'failed'));
+      }, DISCONNECT_GRACE_MS);
+      return;
+    }
     if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      clearTimeout(lostTimer);
       teardown(peerId);
       endedHandlers.forEach((fn) => fn(peerId, 'failed'));
     }
