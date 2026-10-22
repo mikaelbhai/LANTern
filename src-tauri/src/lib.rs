@@ -37,6 +37,7 @@ mod net;
 mod phrase;
 mod crashlog;
 mod pip;
+mod storage;
 pub mod shares;
 mod sidecar;
 #[cfg(test)]
@@ -141,6 +142,8 @@ pub fn run() {
             commands::pip_set_playing,
             pip::orientation_set,
             pip::keep_awake_set,
+            storage::storage_all_files,
+            storage::storage_request_all_files,
             commands::call_audio_earpiece,
             commands::call_audio_reset,
             commands::battery_unrestricted,

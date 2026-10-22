@@ -18,6 +18,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -518,6 +519,38 @@ class MainActivity : TauriActivity() {
           ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
       }.exceptionOrNull()?.let { Log.w("LANTern", "battery optimization request", it) }
+    }
+
+    /**
+     * Whether this app can see every file, not only its own and its media.
+     *
+     * Since scoped storage a directory listing silently omits everything an
+     * app was not granted - documents, PDFs, other apps' downloads - so a
+     * phone browsed from another device looks empty rather than refused.
+     * Below Android 11 the ordinary storage permission is all there is.
+     */
+    @JvmStatic
+    fun allFilesAccess(): Boolean = runCatching {
+      Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+    }.getOrDefault(false)
+
+    /**
+     * Opens the Settings page for the "All files access" switch.
+     *
+     * It is a switch, not a dialog: there is no way to be told yes, only to
+     * take the person to where they can say it. The caller re-checks after.
+     */
+    @JvmStatic
+    fun requestAllFilesAccess() {
+      val ctx = appContext ?: return
+      runCatching {
+        ctx.startActivity(
+          Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:${ctx.packageName}"),
+          ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      }.exceptionOrNull()?.let { Log.w("LANTern", "all files access request", it) }
     }
 
     @JvmStatic

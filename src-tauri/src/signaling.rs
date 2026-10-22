@@ -517,7 +517,7 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // The answer to a browse, delivered straight to the frontend -
             // nothing here needs a native decision, only somewhere to show
             // up.
-            if envelope.kind == "fsbrowseresult" {
+            if envelope.kind == "fsbrowseresult" || envelope.kind == "fsfetchresult" {
                 deliver(&app, &envelope);
                 continue;
             }
@@ -534,13 +534,33 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                     allowed,
                     envelope.payload.get("path").and_then(|v| v.as_str()),
                 ) {
-                    crate::transfers::offer(
+                    let made = crate::transfers::offer(
                         &app,
                         &state,
                         &envelope.from,
                         vec![std::path::PathBuf::from(path)],
                         false,
                     );
+                    // A file this device cannot read produced no offer at all,
+                    // and the asking end had nothing to tell it so: its toast
+                    // said "asked X to send it" and then nothing ever came.
+                    // Only to a device that was allowed to ask - a stranger
+                    // still gets silence.
+                    if made.is_empty() || made.iter().all(|t| t.state == "failed") {
+                        let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                        links.send(
+                            &envelope.from,
+                            &Envelope {
+                                v: 1,
+                                from: me,
+                                kind: "fsfetchresult".into(),
+                                payload: serde_json::json!({
+                                    "path": path,
+                                    "error": "that file could not be read on the other device",
+                                }),
+                            },
+                        );
+                    }
                 }
                 continue;
             }
@@ -1158,6 +1178,7 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // for. The eligibility check already happened on their end, before
         // this was ever sent.
         "fsbrowseresult" => "companion:browsed",
+        "fsfetchresult" => "companion:fetched",
         "signal" => "call:state",
         _ => return,
     };

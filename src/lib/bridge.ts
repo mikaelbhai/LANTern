@@ -228,6 +228,17 @@ export const api = {
     setCompanion: (deviceId: string, companion: boolean) =>
       call<void>('peers_set_companion', { deviceId, companion }),
   },
+  /**
+   * Android's "All files access". Without it a phone shows folders and almost
+   * nothing in them - scoped storage omits whatever an app was not granted,
+   * so a browsed phone looks empty rather than refused. A Settings switch the
+   * person turns on: `requestAllFiles` only opens the page, so re-check after.
+   * Always true off Android.
+   */
+  storage: {
+    allFiles: () => call<boolean>('storage_all_files'),
+    requestAllFiles: () => call<void>('storage_request_all_files'),
+  },
   /** Browsing and pulling from a linked companion's storage. */
   companion: {
     /**

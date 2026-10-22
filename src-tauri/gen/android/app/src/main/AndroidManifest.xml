@@ -47,6 +47,11 @@
          still asks the user to approve both the permission and the install;
          this only allows the app to make the request. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Seeing every file, so a linked phone can be browsed from another of
+         its owner's devices. Since scoped storage a listing silently omits
+         whatever an app was not granted; this is a Settings switch the person
+         turns on, never something granted by being declared. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

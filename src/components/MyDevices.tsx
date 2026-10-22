@@ -46,6 +46,23 @@ export function MyDevices() {
   const [list, setList] = React.useState<Companion[]>([]);
   const [browsing, setBrowsing] = React.useState<{ peerId: string; name: string } | null>(null);
   const [controlling, setControlling] = React.useState<string | null>(null);
+  // Whether THIS device lets itself be seen in full. It is this device's
+  // storage that others would browse, so it is this device that has to be
+  // allowed to read it all - only ever false on Android, which hides files.
+  const [allFiles, setAllFiles] = React.useState(true);
+  const checkAllFiles = React.useCallback(() => {
+    void api.storage
+      .allFiles()
+      // The simulator has no such command and answers with nothing at all.
+      .then((ok) => setAllFiles(ok !== false))
+      .catch(() => setAllFiles(true));
+  }, []);
+  React.useEffect(checkAllFiles, [checkAllFiles]);
+  // Coming back from the Settings page the permission lives on.
+  React.useEffect(() => {
+    window.addEventListener('focus', checkAllFiles);
+    return () => window.removeEventListener('focus', checkAllFiles);
+  }, [checkAllFiles]);
 
   const load = React.useCallback(() => {
     void api.peers
@@ -82,6 +99,19 @@ export function MyDevices() {
         Your own phone or second PC, linked by pairing. They can browse each other's whole storage
         and be used as a screen and controller without asking every time.
       </p>
+
+      {list.length > 0 && !allFiles && (
+        <div className="mb-3 rounded-card border border-gold/40 bg-gold/[0.06] p-3">
+          <p className="text-xs text-dim leading-relaxed mb-2">
+            Your other devices can only see part of this phone's storage until you allow access to
+            all files. Android hides documents, PDFs and other apps' downloads from any app that
+            has not been given it.
+          </p>
+          <Button size="sm" variant="primary" onClick={() => void api.storage.requestAllFiles()}>
+            Allow access to all files
+          </Button>
+        </div>
+      )}
 
       {list.length === 0 ? (
         <p className="text-2xs text-muted leading-relaxed">
@@ -208,6 +238,21 @@ function StorageBrowser({
     const up = trimmed.slice(0, cut);
     return /^[A-Za-z]:$/.test(up) ? `${up}\\` : up;
   };
+
+  // The far end says so when it cannot read what was asked for; without this
+  // the toast below promised a file that then never arrived.
+  React.useEffect(
+    () =>
+      on('companion:fetched', (p: { error?: string | null; path?: string }) => {
+        if (!p.error) return;
+        toast({
+          kind: 'error',
+          title: `${name} could not send ${p.path?.split(/[\\/]/).pop() ?? 'that file'}`,
+          body: p.error,
+        });
+      }),
+    [name, toast],
+  );
 
   const open = (entry: RemoteEntry) => {
     if (entry.isDir) {

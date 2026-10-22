@@ -43,7 +43,21 @@ pub fn roots() -> Vec<Entry> {
             })
             .collect()
     }
-    #[cfg(not(windows))]
+    // An Android phone's "/" is the system's own tree, which an app cannot
+    // read past the first level: starting there showed a list of folders that
+    // all answered "permission denied". What somebody means by a phone's
+    // storage is the shared area their photos, downloads and documents live in.
+    #[cfg(target_os = "android")]
+    {
+        vec![Entry {
+            name: "Internal storage".into(),
+            path: "/storage/emulated/0".into(),
+            is_dir: true,
+            size: 0,
+            modified: 0,
+        }]
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
     {
         vec![Entry {
             name: "/".into(),
