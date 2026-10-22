@@ -114,6 +114,13 @@ export function hostBlocker(): HostBlocker {
   return null;
 }
 
+async function complain(title: string, error: unknown): Promise<void> {
+  const { useStore } = await import('./store');
+  const body =
+    typeof error === 'string' ? error : ((error as { message?: string } | null)?.message ?? String(error));
+  useStore.getState().toast({ kind: 'error', title, body });
+}
+
 /** A file staged for sending, from either a native dialog or the browser. */
 export interface StagedFile {
   name: string;
@@ -132,14 +139,33 @@ export interface StagedFile {
 export async function pickFilesToSend(): Promise<StagedFile[]> {
   if (isTauri()) {
     const { open } = await import('@tauri-apps/plugin-dialog');
-    const selected = await open({ directory: false, multiple: true }).catch(() => null);
+    // A picker that fails used to look exactly like one that was cancelled -
+    // nothing happened - and "attach does nothing" came back with no way to
+    // tell which. Cancel is a null answer; anything thrown is a fault, and
+    // is said.
+    let selected: string | string[] | null = null;
+    try {
+      selected = await open({ directory: false, multiple: true });
+    } catch (e) {
+      await complain('Could not open the file picker', e);
+      return [];
+    }
     const picked = Array.isArray(selected) ? selected : selected ? [selected] : [];
     if (!picked.length) return [];
 
     const { api } = await import('./bridge');
 
     if (!isAndroid()) {
-      const stats = await api.files.stat(picked).catch(() => []);
+      let stats: { path: string; name: string; size: number }[] = [];
+      try {
+        stats = await api.files.stat(picked);
+      } catch (e) {
+        await complain('Could not read the chosen files', e);
+        return [];
+      }
+      if (stats.length === 0) {
+        await complain('Could not read the chosen files', 'They are not files this app can open.');
+      }
       return stats.map((f) => ({ name: f.name, size: f.size, path: f.path }));
     }
 

@@ -60,8 +60,17 @@ use tauri::Manager;
 /// Declared here rather than in `hud` so the command list handed to Tauri is
 /// identical on every platform: `generate_handler!` cannot take a `cfg` per
 /// entry, and a phone has no corner to put this in.
+///
+/// `async`, and that is load-bearing. A synchronous command runs on the thread
+/// that owns the event loop, and the first call here *creates* the popup's
+/// window - which on Windows waits for that same loop to do the work. The
+/// result was a deadlock on the first file offer or call that arrived while
+/// the window was out of sight: every command after it, including ones that
+/// touch nothing, never returned, so a received file looked like the end of
+/// all transfers. Found by receiving one with the window behind another and
+/// watching `plugin:app|version` stop answering.
 #[tauri::command]
-fn hud_set(_app: tauri::AppHandle, _visible: bool, _height: f64) -> Result<(), String> {
+async fn hud_set(_app: tauri::AppHandle, _visible: bool, _height: f64) -> Result<(), String> {
     #[cfg(desktop)]
     return hud::set(_app, _visible, _height);
     #[cfg(not(desktop))]
