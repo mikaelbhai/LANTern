@@ -1327,7 +1327,11 @@ export function Player({
       */}
       <div
         ref={stageRef}
-        className="absolute inset-0 grid place-items-center overflow-hidden"
+        // The tracks are pinned to the stage. Left automatic they grew to fit
+        // a picture larger than the stage - Crop's whole job - and a track
+        // taller than the stage starts at the top, so the overflow all fell
+        // off the bottom instead of half off each edge.
+        className="absolute inset-0 grid grid-cols-[minmax(0,100%)] grid-rows-[minmax(0,100%)] place-items-center overflow-hidden"
         style={brightness !== 1 ? { filter: `brightness(${brightness})` } : undefined}
       >
         {unreachable ? (
