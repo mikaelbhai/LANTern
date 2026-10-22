@@ -1066,6 +1066,12 @@ function Card({
   onInfo: () => void;
 }) {
   const pct = item.durationSec ? (item.progressSec / item.durationSec) * 100 : 0;
+  // Within the last few percent, or the last 40 seconds - the credits - counts
+  // as seen; nobody stops a film at the exact final frame.
+  const finished =
+    item.durationSec > 0 &&
+    item.progressSec > 0 &&
+    item.durationSec - item.progressSec < Math.max(40, item.durationSec * 0.03);
 
   return (
     <motion.div
@@ -1122,7 +1128,19 @@ function Card({
         </span>
       )}
 
-      {pct > 1 && (
+      {/* A tick where it has been watched to the end, in place of a bar that is
+          full - "have I seen this" is the question a shelf of thirty films is
+          asked, and a full bar answers it only to someone who counts pixels. */}
+      {finished && (
+        <span
+          className="absolute bottom-1.5 right-1.5 h-[18px] w-[18px] rounded-full bg-gold grid place-items-center"
+          title="Watched"
+        >
+          <Check size={11} className="text-on-gold" strokeWidth={3} />
+        </span>
+      )}
+
+      {pct > 1 && !finished && (
         <div className="absolute bottom-0 inset-x-0 h-[3px] bg-black/50">
           <div className="h-full bg-gold" style={{ width: `${pct}%` }} />
         </div>
