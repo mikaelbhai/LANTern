@@ -132,6 +132,7 @@ export function Player({
   // The time under a mouse resting on the bar, with its x offset for the label.
   const [hover, setHover] = React.useState<{ x: number; t: number } | null>(null);
   const barRef = React.useRef<HTMLDivElement>(null);
+  const previewEver = React.useRef(false);
   // Index into item.subtitles, or -1 for off. Off by default: burning
   // subtitles on unasked is worse than one extra click — unless this title,
   // or the last one watched, was being read with them on.
@@ -949,6 +950,20 @@ export function Player({
   const bufferedPct = duration ? (buffered / duration) * 100 : 0;
   const nearEnd = duration > 0 && duration - time < 40 && duration - time > 0;
 
+  // The preview is only built once somebody first reaches for the bar: it
+  // opens a second connection to the file, which is not worth doing for a
+  // film that is watched straight through.
+  const previewWanted = scrubTime !== null || hover !== null || previewEver.current;
+  // Kept clear of both ends of the bar so the frame is never cut off, which a
+  // plain centre on the pointer does for the first and last seconds.
+  const barWidth = barRef.current?.clientWidth ?? 0;
+  const previewHalf = PREVIEW_WIDTH / 2 + 4;
+  const rawLeft =
+    scrubTime !== null && duration ? (scrubTime / duration) * barWidth : (hover?.x ?? 0);
+  const previewLeft = barWidth
+    ? Math.max(previewHalf, Math.min(barWidth - previewHalf, rawLeft))
+    : rawLeft;
+
   const pointAt = (clientX: number) => {
     const rect = barRef.current?.getBoundingClientRect();
     if (!rect || !rect.width) return { x: 0, t: 0 };
@@ -971,13 +986,17 @@ export function Player({
       /* the drag simply ends at the bar's edge */
     }
     setScrubbing(true);
+    previewEver.current = true;
     setScrubTime(pointAt(e.clientX).t);
   };
   const scrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!duration) return;
     const at = pointAt(e.clientX);
     if (scrubTime !== null) setScrubTime(at.t);
-    if (e.pointerType === 'mouse') setHover(at);
+    if (e.pointerType === 'mouse') {
+      previewEver.current = true;
+      setHover(at);
+    }
   };
   const scrubUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (scrubTime === null) return;
@@ -1297,19 +1316,30 @@ export function Player({
               >
                 {/* The time a click here would land on - what every other
                     player shows, and the only way to aim at a moment in a
-                    two-hour film rather than guess at a pixel. */}
-                {duration > 0 && (hover || scrubTime !== null) && (
-                  <span
-                    className="absolute -top-6 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 text-white text-2xs tabular-nums pointer-events-none"
+                    two-hour film rather than guess at a pixel - with the
+                    frame from the nearest fifteen seconds above it. */}
+                {previewWanted && duration > 0 && (
+                  <div
+                    className={cn(
+                      'absolute bottom-full mb-1.5 flex flex-col items-center gap-1 pointer-events-none',
+                      hover || scrubTime !== null ? 'opacity-100' : 'opacity-0',
+                    )}
                     style={{
-                      left:
-                        scrubTime !== null
-                          ? `${(scrubTime / duration) * 100}%`
-                          : `${hover!.x}px`,
+                      left: `${previewLeft}px`,
+                      transform: 'translateX(-50%)',
                     }}
                   >
-                    {clock(scrubTime ?? hover!.t)}
-                  </span>
+                    {!unreachable && (
+                      <SeekPreview
+                        src={item.streamUrl}
+                        at={scrubTime ?? hover?.t ?? 0}
+                        aspect={natural.w && natural.h ? natural.w / natural.h : 16 / 9}
+                      />
+                    )}
+                    <span className="px-1.5 py-0.5 rounded bg-black/80 text-white text-2xs tabular-nums">
+                      {clock(scrubTime ?? hover?.t ?? 0)}
+                    </span>
+                  </div>
                 )}
                 <div className="h-1 w-full bg-white/25 rounded-full overflow-hidden group-hover/bar:h-1.5 transition-all">
                   <div
@@ -1803,6 +1833,55 @@ function IconBtn({
     >
       {children}
     </button>
+  );
+}
+
+/** One preview frame for every this many seconds of film. */
+const PREVIEW_STEP_SEC = 15;
+const PREVIEW_WIDTH = 168;
+
+/**
+ * The frame shown above the seek bar, one per fifteen seconds.
+ *
+ * A second, muted <video> parked on the nearest fifteen-second mark, rather
+ * than a canvas the frame is drawn onto and read back: the main player is
+ * deliberately not cross-origin (requiring it turned reachable files into
+ * "Can't reach"), and a canvas read of a video that is not CORS-approved is
+ * refused. The element shows its own frame and nothing has to be read.
+ *
+ * It points at the file itself, never at a remuxed stream: that one has no
+ * timeline to seek in, and the picture is the same whichever soundtrack is on.
+ * The frame only changes when the pointer crosses into another fifteen
+ * seconds, which keeps it to a handful of seeks per drag instead of one for
+ * every pixel.
+ */
+function SeekPreview({ src, at, aspect }: { src: string; at: number; aspect: number }) {
+  const ref = React.useRef<HTMLVideoElement>(null);
+  const snapped = Math.floor(Math.max(0, at) / PREVIEW_STEP_SEC) * PREVIEW_STEP_SEC;
+
+  React.useEffect(() => {
+    const el = ref.current;
+    // Before metadata there is nothing to seek; onLoadedMetadata catches up.
+    if (el && el.readyState >= 1) el.currentTime = snapped;
+  }, [snapped]);
+
+  return (
+    <div
+      className="overflow-hidden rounded-md border border-white/25 bg-black shadow-lg"
+      style={{ width: PREVIEW_WIDTH, height: Math.round(PREVIEW_WIDTH / aspect) }}
+    >
+      <video
+        ref={ref}
+        src={src}
+        muted
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(e) => {
+          e.currentTarget.currentTime = snapped;
+        }}
+        className="h-full w-full object-cover"
+      />
+    </div>
   );
 }
 
