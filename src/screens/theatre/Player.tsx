@@ -124,6 +124,14 @@ export function Player({
     document.pictureInPictureEnabled;
   const [unreachable, setUnreachable] = React.useState(false);
   const [scrubbing, setScrubbing] = React.useState(false);
+  // Where a drag on the bar currently points. The stream is only asked to
+  // move when the finger or button is let go: a remuxed stream is re-requested
+  // from the new point, and doing that on every pixel of a drag would restart
+  // it dozens of times a second.
+  const [scrubTime, setScrubTime] = React.useState<number | null>(null);
+  // The time under a mouse resting on the bar, with its x offset for the label.
+  const [hover, setHover] = React.useState<{ x: number; t: number } | null>(null);
+  const barRef = React.useRef<HTMLDivElement>(null);
   // Index into item.subtitles, or -1 for off. Off by default: burning
   // subtitles on unasked is worse than one extra click — unless this title,
   // or the last one watched, was being read with them on.
@@ -662,19 +670,59 @@ export function Player({
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
       wake();
+      // A held modifier means the browser's own shortcut (Ctrl+L, Alt+Left to
+      // go back); none of the keys below should swallow those.
+      const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+      // One path for every way of moving the playhead, so the keyboard obeys
+      // the same rule the on-screen buttons do: only the host moves a watch
+      // party's clock, and a move is told to the followers.
+      const jump = (target: number) => {
+        if (following) return;
+        const clamped = Math.max(0, Math.min(duration, target));
+        seekTo(clamped);
+        broadcast(playing, clamped);
+      };
       switch (e.key) {
         case ' ':
         case 'k':
           e.preventDefault();
           setPlaying((p) => !p);
           break;
+        // Shift for a minute at a time - ten seconds is the wrong size for
+        // getting across a film, and holding the key down is not a way to
+        // cross an hour.
         case 'ArrowRight':
           e.preventDefault();
-          seekTo(time + 10);
+          jump(time + (e.shiftKey ? 60 : 10));
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          seekTo(time - 10);
+          jump(time - (e.shiftKey ? 60 : 10));
+          break;
+        // The same ten seconds the arrows do, on the keys YouTube users reach
+        // for with the left hand already on K.
+        case 'l':
+          if (plain) jump(time + 10);
+          break;
+        case 'j':
+          if (plain) jump(time - 10);
+          break;
+        case 'Home':
+          e.preventDefault();
+          jump(0);
+          break;
+        // Ten percent steps: 0 is the start, 5 is halfway.
+        case '0':
+        case '1':
+        case '2':
+        case '3':
+        case '4':
+        case '5':
+        case '6':
+        case '7':
+        case '8':
+        case '9':
+          if (plain && duration > 0) jump((Number(e.key) / 10) * duration);
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -705,7 +753,7 @@ export function Player({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [time, seekTo, wake, onClose]);
+  }, [time, seekTo, wake, onClose, following, duration, playing, broadcast]);
 
   /**
    * Turns the phone sideways for fullscreen, and back on the way out.
@@ -894,17 +942,54 @@ export function Player({
   // what it costs, and the cost is the entire question.
   const lost = Math.round(croppedAway(frame, natural) * 100);
 
-  const pct = duration ? (time / duration) * 100 : 0;
+  // While dragging, the bar and the clock follow the pointer rather than the
+  // video, which has not moved yet.
+  const shownTime = scrubTime ?? time;
+  const pct = duration ? (shownTime / duration) * 100 : 0;
   const bufferedPct = duration ? (buffered / duration) * 100 : 0;
   const nearEnd = duration > 0 && duration - time < 40 && duration - time > 0;
 
-  const scrub = (e: React.MouseEvent<HTMLDivElement>) => {
+  const pointAt = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width) return { x: 0, t: 0 };
+    const f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return { x: f * rect.width, t: f * duration };
+  };
+
+  // Pointer events rather than mouse events, so one handler covers a mouse, a
+  // finger and a pen - a phone had only the click that follows a tap, and no
+  // way to drag at all.
+  const scrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only the host moves the party's clock.
-    if (following) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const target = ((e.clientX - rect.left) / rect.width) * duration;
+    if (following || !duration) return;
+    // Capture keeps a drag alive after the pointer leaves the bar. It is a
+    // nicety, and can be refused (the pointer already gone) - the scrub must
+    // still start.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* the drag simply ends at the bar's edge */
+    }
+    setScrubbing(true);
+    setScrubTime(pointAt(e.clientX).t);
+  };
+  const scrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!duration) return;
+    const at = pointAt(e.clientX);
+    if (scrubTime !== null) setScrubTime(at.t);
+    if (e.pointerType === 'mouse') setHover(at);
+  };
+  const scrubUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (scrubTime === null) return;
+    const target = pointAt(e.clientX).t;
+    setScrubTime(null);
+    setScrubbing(false);
     seekTo(target);
     broadcast(playing, target);
+  };
+  const scrubCancel = () => {
+    setScrubTime(null);
+    setScrubbing(false);
   };
 
   return (
@@ -1200,12 +1285,32 @@ export function Player({
             >
               {/* scrubber */}
               <div
-                onClick={scrub}
-                onMouseDown={() => setScrubbing(true)}
-                onMouseUp={() => setScrubbing(false)}
-                onMouseLeave={() => setScrubbing(false)}
-                className="group/bar relative h-4 flex items-center cursor-pointer"
+                ref={barRef}
+                onPointerDown={scrubDown}
+                onPointerMove={scrubMove}
+                onPointerUp={scrubUp}
+                onPointerCancel={scrubCancel}
+                onPointerLeave={() => setHover(null)}
+                // `touch-none`: without it the browser claims a horizontal
+                // drag for scrolling and the bar only ever sees the start.
+                className="group/bar relative h-6 flex items-center cursor-pointer touch-none"
               >
+                {/* The time a click here would land on - what every other
+                    player shows, and the only way to aim at a moment in a
+                    two-hour film rather than guess at a pixel. */}
+                {duration > 0 && (hover || scrubTime !== null) && (
+                  <span
+                    className="absolute -top-6 -translate-x-1/2 px-1.5 py-0.5 rounded bg-black/80 text-white text-2xs tabular-nums pointer-events-none"
+                    style={{
+                      left:
+                        scrubTime !== null
+                          ? `${(scrubTime / duration) * 100}%`
+                          : `${hover!.x}px`,
+                    }}
+                  >
+                    {clock(scrubTime ?? hover!.t)}
+                  </span>
+                )}
                 <div className="h-1 w-full bg-white/25 rounded-full overflow-hidden group-hover/bar:h-1.5 transition-all">
                   <div
                     className="h-full bg-white/30 absolute"
@@ -1305,7 +1410,7 @@ export function Player({
                 </div>
 
                 <span className="text-[11px] font-mono text-white/80 tabular-nums">
-                  {clock(time)} / {clock(duration)}
+                  {clock(shownTime)} / {clock(duration)}
                 </span>
 
                 <div className="ml-auto flex items-center gap-3">
