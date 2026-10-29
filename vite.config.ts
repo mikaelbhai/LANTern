@@ -16,6 +16,10 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(appVersion),
   },
   plugins: [react()],
+  // Relative, so the same build works from the root of the app and from
+  // /guest/ on a host that serves it to a browser. Absolute asset URLs would
+  // ask the host for /assets/..., which is where a published folder could be.
+  base: './',
   clearScreen: false,
   server: {
     port: 1420,

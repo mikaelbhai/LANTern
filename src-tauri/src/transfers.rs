@@ -109,7 +109,7 @@ pub struct FileControl {
     pub action: String,
 }
 
-fn guess_mime(path: &Path) -> String {
+pub(crate) fn guess_mime(path: &Path) -> String {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

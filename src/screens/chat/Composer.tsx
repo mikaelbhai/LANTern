@@ -20,7 +20,7 @@ import { Button, IconButton, Modal, Tooltip } from '../../components/ui';
 import { EmojiPicker } from './Pickers';
 import { useStore } from '../../lib/store';
 import { useClickOutside } from '../../lib/hooks';
-import { api } from '../../lib/bridge';
+import { api, isGuest } from '../../lib/bridge';
 import { attachmentFromFile } from '../../lib/actions';
 import { pickFilesToSend } from '../../lib/picker';
 import { cn, fileToDataUrl, formatDuration, mimeKind } from '../../lib/utils';
@@ -418,7 +418,7 @@ export function Composer({
               <IconButton label="Send" variant="primary" onClick={() => send()}>
                 <Send size={15} />
               </IconButton>
-            ) : (
+            ) : isGuest() ? null : (
               <VoiceRecorder
                 onSend={(voice) => {
                   sendMessage(room.id, { voice, threadRoot });

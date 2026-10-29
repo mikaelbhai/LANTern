@@ -351,6 +351,107 @@ function OfferTheApp() {
 }
 
 /**
+ * Letting a browser with no app use LANTern from this machine's landing page.
+ *
+ * Off until somebody turns it on: it opens a door on the network, and the
+ * person it opens it for should be the one who decided to. Every guest is still
+ * asked about, one at a time (see GuestPrompt); this switch only decides
+ * whether the question can be asked at all.
+ */
+function GuestAccess() {
+  const [on_, setOn] = React.useState(false);
+  const [guests, setGuests] = React.useState<
+    Awaited<ReturnType<typeof api.guest.list>>
+  >([]);
+  const toast = useStore((s) => s.toast);
+
+  const refresh = React.useCallback(() => {
+    void api.guest.list().then(setGuests).catch(() => setGuests([]));
+  }, []);
+
+  React.useEffect(() => {
+    void api.guest.enabled().then(setOn).catch(() => setOn(false));
+  }, []);
+
+  // A guest arriving, leaving or being let in changes this list; the prompt
+  // and the peer events are the cheapest signals that it has.
+  React.useEffect(() => {
+    if (!on_) return;
+    refresh();
+    const stops = ['guest:request', 'peer:joined', 'peer:left'].map((e) => on(e, refresh));
+    const tick = window.setInterval(refresh, 8000);
+    return () => {
+      stops.forEach((stop) => stop());
+      window.clearInterval(tick);
+    };
+  }, [on_, refresh]);
+
+  if (!canHost()) return null;
+
+  const toggle = async (next: boolean) => {
+    try {
+      await api.guest.setEnabled(next);
+      setOn(next);
+      if (!next) setGuests([]);
+    } catch (err) {
+      toast({ kind: 'error', title: 'Could not change guest mode', body: String(err) });
+    }
+  };
+
+  const present = guests.filter((g) => g.standing === 'allowed');
+
+  return (
+    <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium">Let guests try LANTern in their browser</p>
+          <p className="text-2xs text-muted leading-relaxed mt-0.5">
+            A phone or laptop with no app can open this machine&rsquo;s address, ask to join, and
+            chat with you, watch what you publish and send you files. You are asked about every
+            device, and they cannot call you or reach anything else here.
+          </p>
+        </div>
+        <Toggle checked={on_} onChange={(v) => void toggle(v)} />
+      </div>
+
+      {on_ && (
+        <div className="mt-2.5 pt-2.5 border-t border-edge">
+          {present.length === 0 ? (
+            <p className="text-2xs text-muted">
+              No guests right now. They appear here once you let them in.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              {present.map((g) => (
+                <li key={g.id} className="flex items-center gap-2 text-2xs">
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full shrink-0',
+                      g.online ? 'bg-gold' : 'bg-dim',
+                    )}
+                    aria-label={g.online ? 'Connected' : 'Away'}
+                  />
+                  <span className="truncate flex-1">
+                    {g.name} <span className="text-muted">· {g.agent}</span>
+                  </span>
+                  <button
+                    onClick={() => void api.guest.remove(g.id).then(refresh)}
+                    aria-label={`Send ${g.name} away`}
+                    className="text-muted hover:text-danger shrink-0"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * The server behind those URLs, when it is not answering.
  *
  * A share stays marked live in the database whether or not anything holds the
@@ -470,6 +571,7 @@ export function Hosting() {
         <NetworkPrivacy />
         <KeepHosting />
         <OfferTheApp />
+        <GuestAccess />
 
         {shares.length === 0 ? (
           <Empty

@@ -41,6 +41,7 @@ import { ThreadPanel } from './chat/ThreadPanel';
 import { MediaGallery } from './chat/MediaGallery';
 import { ForwardModal } from './chat/ForwardModal';
 import { useClickOutside } from '../lib/hooks';
+import { isGuest } from '../lib/bridge';
 import { useStore } from '../lib/store';
 import { useIsMobile } from '../lib/hooks';
 import { attachmentFromFile } from '../lib/actions';
@@ -624,7 +625,9 @@ function RoomHeader({
         <div className="text-2xs text-muted truncate">
           {room.kind === 'dm'
             ? dmPeer
-              ? `${dmPeer.ip} · ${dmPeer.latencyMs.toFixed(1)} ms`
+              ? // A peer that has not been measured yet reads -1; showing that
+                // as a latency is a reading nothing took.
+                `${dmPeer.ip}${dmPeer.latencyMs >= 0 ? ` · ${dmPeer.latencyMs.toFixed(1)} ms` : ''}`
               : 'Peer offline'
             : `${online} of ${room.members.length} online`}
         </div>
@@ -723,7 +726,9 @@ function RoomHeader({
 
         {/* The two that stay on a phone. Calling the person you are typing to
             is the reason anybody looks at the top of a conversation. */}
-        {room.kind !== 'broadcast' && (
+        {/* Not in a browser guest's tab: it cannot open a microphone on a page
+            that is not https, so these would only ever fail. */}
+        {room.kind !== 'broadcast' && !isGuest() && (
           <>
             <IconButton
               label="Voice call"

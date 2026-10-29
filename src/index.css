@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The bar on the guest page's "waiting for the host" screen. */
+@keyframes guest-wait {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 @layer base {
   :root {
     --c-base: 12 15 20;

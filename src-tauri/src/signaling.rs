@@ -176,7 +176,9 @@ impl Links {
 /// Accepts inbound peer connections for the lifetime of the process.
 pub async fn serve(app: AppHandle, state: AppState, links: Links, port: u16) -> std::io::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let inbound = spawn_delivery(app, state.clone());
+    let inbound = spawn_delivery(app.clone(), state.clone());
+    // Browser guests send down the same queue a peer's link does.
+    crate::guest::attach(app, state.clone(), inbound.clone());
 
     loop {
         let Ok((stream, addr)) = listener.accept().await else {

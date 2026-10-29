@@ -45,6 +45,13 @@ export function emit(event: string, payload?: any) {
 export const isTauri = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+/**
+ * This page was served by a LANTern host to a browser with no app: the same
+ * interface, talking to that host over HTTP instead of to Rust. See guest.ts.
+ */
+export const isGuest = (): boolean =>
+  typeof window !== 'undefined' && !isTauri() && location.pathname.startsWith('/guest');
+
 let invokeFn: ((cmd: string, args?: any) => Promise<any>) | null = null;
 
 async function nativeInvoke(cmd: string, args?: any): Promise<any> {
@@ -63,6 +70,8 @@ async function simulator() {
 
 async function call<T>(cmd: string, args?: any): Promise<T> {
   if (isTauri()) return nativeInvoke(cmd, args) as Promise<T>;
+  // Never the simulator for a guest: it would answer with invented peers.
+  if (isGuest()) return (await import('./guest')).handle(cmd, args) as Promise<T>;
   const s = await simulator();
   return s.handle(cmd, args) as Promise<T>;
 }
@@ -94,6 +103,12 @@ let wired = false;
 export async function startBridge() {
   if (wired) return;
   wired = true;
+  if (isGuest()) {
+    // Resolves once the host has let this tab in, so nothing initialises
+    // before there is somebody to be a guest of.
+    await (await import('./guest')).startGuest();
+    return;
+  }
   if (isTauri()) {
     const { listen } = await import('@tauri-apps/api/event');
     // Each subscription is isolated: a single rejected `listen` must not stop
@@ -125,6 +140,7 @@ export async function startBridge() {
       'game:session',
       'main:away',
       'update:progress',
+      'guest:request',
     ];
 
     await Promise.all(
@@ -238,6 +254,25 @@ export const api = {
   storage: {
     allFiles: () => call<boolean>('storage_all_files'),
     requestAllFiles: () => call<void>('storage_request_all_files'),
+  },
+  /** Letting browsers use this machine as guests. See guest.rs. */
+  guest: {
+    enabled: () => call<boolean>('guest_enabled'),
+    setEnabled: (on: boolean) => call<void>('guest_set_enabled', { on }),
+    list: () =>
+      call<
+        {
+          id: string;
+          name: string;
+          agent: string;
+          ip: string;
+          standing: 'pending' | 'allowed' | 'denied';
+          joinedAt: number;
+          online: boolean;
+        }[]
+      >('guest_list'),
+    decide: (id: string, allow: boolean) => call<void>('guest_decide', { id, allow }),
+    remove: (id: string) => call<void>('guest_remove', { id }),
   },
   /** Browsing and pulling from a linked companion's storage. */
   companion: {

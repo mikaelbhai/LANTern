@@ -20,7 +20,9 @@ import { Network } from './screens/Network';
 import { Settings } from './screens/Settings';
 import { CallOverlay } from './screens/call/CallOverlay';
 import { useStore } from './lib/store';
-import { startBridge } from './lib/bridge';
+import { isGuest, startBridge } from './lib/bridge';
+import { GuestApp } from './screens/Guest';
+import { GuestPrompt } from './components/GuestPrompt';
 import { setSoundEnabled } from './lib/audio';
 import { prepareCallAlerts } from './lib/ringer';
 import { useIsMobile } from './lib/hooks';
@@ -159,7 +161,9 @@ export default function App() {
   // precisely the moment the app is likely to be backgrounded and unable to
   // show one — leaving the first call silent.
   React.useEffect(() => {
-    if (!settings.notifications.call) return;
+    // Not for a guest: it would put a permission prompt on a page that is not
+    // allowed notifications anyway, before they have done anything.
+    if (isGuest() || !settings.notifications.call) return;
     void prepareCallAlerts();
   }, [settings.notifications.call]);
 
@@ -217,6 +221,11 @@ export default function App() {
     },
     [navigate],
   );
+
+  // A browser tab served by a host: its own, much smaller, interface. It has to
+  // come before the onboarding check, since a guest gives a name at the door
+  // and is never shown the setup screens.
+  if (isGuest()) return <GuestApp />;
 
   if (!onboarded) return <Onboarding />;
 
@@ -384,6 +393,8 @@ export default function App() {
       <IncomingFile />
       <IncomingGame />
       <RejoinBanner />
+      {/* A browser asking to be let in. Over everything, like a call. */}
+      <GuestPrompt />
       </div>
 
       {isMobile && (

@@ -1,4 +1,4 @@
-import { isTauri } from './bridge';
+import { isGuest, isTauri } from './bridge';
 
 /**
  * Folder and file selection.
@@ -185,12 +185,22 @@ export async function pickFilesToSend(): Promise<StagedFile[]> {
     return staged;
   }
 
+  // A guest's browser cannot give a path either, but the page can keep the
+  // File itself and hand back a stand-in that guest.ts turns into an upload.
+  const guest = isGuest() ? await import('./guest') : null;
+
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     input.onchange = () =>
-      resolve(Array.from(input.files ?? []).map((f) => ({ name: f.name, size: f.size })));
+      resolve(
+        Array.from(input.files ?? []).map((f) => ({
+          name: f.name,
+          size: f.size,
+          path: guest ? guest.stageGuestFile(f) : undefined,
+        })),
+      );
     input.oncancel = () => resolve([]);
     input.click();
   });

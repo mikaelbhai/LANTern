@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use crate::state::AppState;
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/", get(index))
         // Registered before the slug routes so a share can never be named
         // "transfer" and shadow a file someone is receiving.
@@ -38,7 +38,11 @@ pub fn router(state: AppState) -> Router {
         // This machine's screen, for the device driving it. Registered before
         // the slug routes so no published folder can shadow it.
         .route("/control/screen", get(serve_screen))
-        .route("/control/size", get(serve_screen_size))
+        .route("/control/size", get(serve_screen_size));
+    // Browser guests: the page, and the small API behind it. Before the slug
+    // routes, so no published folder can be named "guest" and shadow them.
+    let router = crate::guest::routes(router);
+    router
         .route("/:slug", get(serve_root))
         // `/media/` as well as `/media`. The wildcard below does not match an
         // empty tail, so every folder link the landing page had ever emitted -
@@ -275,6 +279,11 @@ const DOWNLOAD_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='curre
 stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
 <path d='M12 4v11m0 0 4-4m-4 4-4-4M5 19h14'/></svg>";
 
+/// A window with a play triangle, for the card that opens guest mode.
+const BROWSER_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<rect x='3' y='4' width='18' height='16' rx='2.5'/><path d='M10 9.5v5l4-2.5z'/></svg>";
+
 /// Landing page listing everything currently published.
 async fn index(
     State(state): State<Arc<AppState>>,
@@ -301,6 +310,19 @@ async fn index(
         "<header><h1>LANTern</h1><p class=sub>Shared from {}</p></header><main>",
         escape(&host),
     ));
+
+    // The way in for somebody who cannot, or does not want to, install
+    // anything: LANTern itself, in this tab. Only while the host has allowed it.
+    if crate::guest::landing_open() {
+        body.push_str(&format!(
+            "<h2>Try it here</h2><ul class=cards><li><a href=\"/guest/\">\
+             <span class=ico>{}</span><span class=body>\
+             <span class=name>Use LANTern in this browser</span>\
+             <span class=meta>Chat, watch the library, send files. Nothing to install.</span>\
+             </span><span class=chev>&rsaquo;</span></a></li></ul>",
+            BROWSER_GLYPH,
+        ));
+    }
 
     if shares.is_empty() {
         body.push_str(
@@ -1862,6 +1884,35 @@ mod tests {
         let mut out = Vec::new();
         stream.read_to_end(&mut out).await.unwrap();
         String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Guest mode lives under /guest, beside the slug routes. Building the
+    /// router at all is the first check - an overlap between a static prefix and
+    /// a wildcard panics when it is built - and the rest are that a published
+    /// folder is still reachable, and that with no application window behind it
+    /// every guest route says so rather than pretending to work.
+    #[tokio::test]
+    async fn the_guest_routes_coexist_with_published_folders_and_refuse_without_a_window() {
+        let (addr, root) = serve_fixture(ShareMode::Files).await;
+
+        let folder = get(addr, "/test/hello.txt", "").await;
+        assert!(folder.contains("0123456789"), "a published folder stopped answering");
+
+        let bare = get(addr, "/guest", "").await;
+        assert!(bare.starts_with("HTTP/1.1 308"), "got: {}", bare.lines().next().unwrap_or(""));
+
+        for path in ["/guest/", "/guest/assets/app.js", "/guest/api/events", "/guest/api/status"] {
+            let answer = get(addr, path, "").await;
+            let first = answer.lines().next().unwrap_or("").to_string();
+            // 503 for a page and the stream; the status route answers 200 with
+            // "enabled": false, which is how the page learns to show the notice.
+            assert!(
+                first.contains("503") || (path.ends_with("status") && first.contains("200")),
+                "{path} answered {first}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A share whose one file is rated far above what any caller is allowed.

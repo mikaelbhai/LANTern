@@ -22,6 +22,7 @@ pub mod db;
 mod discovery;
 mod ebml;
 pub mod hosting;
+pub mod guest;
 mod library;
 mod identity;
 mod input;
@@ -226,6 +227,11 @@ pub fn run() {
             commands::installers_held,
             commands::installers_fetch,
             commands::installers_remove,
+            guest::guest_enabled,
+            guest::guest_set_enabled,
+            guest::guest_list,
+            guest::guest_decide,
+            guest::guest_remove,
             commands::installers_dir,
             commands::service_set,
             commands::service_running,
@@ -391,6 +397,10 @@ pub fn run() {
 // ask what is inside a file - can do it without going through the app.
 
 pub use ebml::{Probe, Track};
+
+/// For the guest harness in examples/, which builds the same envelopes a peer does.
+pub use model::{Share, ShareMode};
+pub use signaling::Envelope;
 
 pub fn is_matroska_path(path: &std::path::Path) -> bool {
     ebml::is_matroska(path)

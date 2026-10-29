@@ -2012,7 +2012,7 @@ export function Player({
                       </>
                     )}
                   </div>
-                  {audioTracks.length > 1 && (
+                  {audioTracks.length > 0 && (
                     <div className="relative">
                       <button
                         onClick={() => setAudioOpen((o) => !o)}
@@ -2034,6 +2034,7 @@ export function Player({
                             onClick={() => setAudioOpen(false)}
                           />
                         <div className="track-menu absolute bottom-7 right-0 z-30 w-[210px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg flex flex-col max-h-[min(60vh,26rem)]">
+                          {audioTracks.length > 1 && (
                           <div className="overflow-y-auto overscroll-contain min-h-0">
                             <button
                               onClick={() => chooseAudio(-1)}
@@ -2061,7 +2062,46 @@ export function Player({
                               </button>
                             ))}
                           </div>
-                          {!canSwitchAudio && (
+                          )}
+                          {audioTracks.length > 0 && (
+                            <div className="shrink-0">
+                              <div className="my-1 border-t border-edge" />
+                              <div className="px-2 pb-1 pt-0.5 label">Audio delay</div>
+                              <div className="flex items-center gap-1 px-2 pb-1">
+                                <button
+                                  onClick={() => nudgeDelay(-50)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Audio earlier"
+                                >
+                                  −50 ms
+                                </button>
+                                <span
+                                  className={cn(
+                                    'w-16 text-center text-2xs tabular-nums',
+                                    audioDelay !== 0 ? 'text-gold' : 'text-dim',
+                                  )}
+                                >
+                                  {audioDelay > 0 ? `+${audioDelay}` : audioDelay} ms
+                                </span>
+                                <button
+                                  onClick={() => nudgeDelay(50)}
+                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
+                                  title="Audio later"
+                                >
+                                  +50 ms
+                                </button>
+                              </div>
+                              {audioDelay !== 0 && (
+                                <button
+                                  onClick={() => nudgeDelay(-audioDelay)}
+                                  className="track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised text-dim"
+                                >
+                                  Back to none
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {audioTracks.length > 1 && !canSwitchAudio && (
                             <p className="shrink-0 px-2 py-1.5 text-[10px] text-muted leading-relaxed">
                               Switching needs ffmpeg on the device sharing this file. The
                               browser cannot change audio tracks on its own.
@@ -2143,72 +2183,37 @@ export function Player({
                               ))}
                               <div className="my-1 border-t border-edge" />
                               <div className="px-2 pb-1 pt-0.5 label">Subtitle delay</div>
-                              <div className="flex items-center gap-1 px-2 pb-1">
-                                <button
-                                  onClick={() => setSubDelay((d) => Math.round((d - 0.1) * 10) / 10)}
-                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
-                                  title="Subtitles sooner (G)"
-                                >
-                                  −0.1 s
-                                </button>
-                                <span
-                                  className={cn(
-                                    'w-16 text-center text-2xs tabular-nums',
-                                    subDelay !== 0 ? 'text-gold' : 'text-dim',
-                                  )}
-                                >
-                                  {subDelay > 0 ? '+' : ''}
-                                  {subDelay.toFixed(1)} s
-                                </span>
-                                <button
-                                  onClick={() => setSubDelay((d) => Math.round((d + 0.1) * 10) / 10)}
-                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
-                                  title="Subtitles later (H)"
-                                >
-                                  +0.1 s
-                                </button>
+                              <div className="grid grid-cols-4 gap-1 px-2 pb-1">
+                                {[-1, -0.1, 0.1, 1].map((step) => (
+                                  <button
+                                    key={step}
+                                    onClick={() =>
+                                      setSubDelay((d) => Math.round((d + step) * 10) / 10)
+                                    }
+                                    className="track-row h-7 rounded-input text-2xs hover:bg-raised tabular-nums"
+                                    title={step < 0 ? 'Subtitles sooner (G)' : 'Subtitles later (H)'}
+                                  >
+                                    {step > 0 ? '+' : '−'}
+                                    {Math.abs(step)}
+                                  </button>
+                                ))}
                               </div>
+                              <button
+                                onClick={() => setSubDelay(0)}
+                                disabled={subDelay === 0}
+                                className={cn(
+                                  'track-row w-full px-2 h-7 rounded-input text-2xs tabular-nums',
+                                  subDelay !== 0 ? 'text-gold hover:bg-raised' : 'text-dim',
+                                )}
+                                title="Back to no delay"
+                              >
+                                {subDelay === 0
+                                  ? 'No delay'
+                                  : `${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)} s · reset`}
+                              </button>
                             </div>
                           )}
 
-                          {audioTracks.length > 0 && (
-                            <div className="shrink-0">
-                              <div className="my-1 border-t border-edge" />
-                              <div className="px-2 pb-1 pt-0.5 label">Audio delay</div>
-                              <div className="flex items-center gap-1 px-2 pb-1">
-                                <button
-                                  onClick={() => nudgeDelay(-50)}
-                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
-                                  title="Audio earlier"
-                                >
-                                  −50 ms
-                                </button>
-                                <span
-                                  className={cn(
-                                    'w-16 text-center text-2xs tabular-nums',
-                                    audioDelay !== 0 ? 'text-gold' : 'text-dim',
-                                  )}
-                                >
-                                  {audioDelay > 0 ? `+${audioDelay}` : audioDelay} ms
-                                </span>
-                                <button
-                                  onClick={() => nudgeDelay(50)}
-                                  className="track-row h-7 flex-1 rounded-input text-2xs hover:bg-raised"
-                                  title="Audio later"
-                                >
-                                  +50 ms
-                                </button>
-                              </div>
-                              {audioDelay !== 0 && (
-                                <button
-                                  onClick={() => nudgeDelay(-audioDelay)}
-                                  className="track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised text-dim"
-                                >
-                                  Back to none
-                                </button>
-                              )}
-                            </div>
-                          )}
                         </div>
                         </>
                       )}

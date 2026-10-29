@@ -255,6 +255,7 @@ pub fn boot(app: AppHandle, state: AppState) {
 
     // The installer folder, before the host server starts reading it.
     load_installers(&state);
+    crate::guest::load_setting(&state);
 
     /*
      * Tell this LAN what networks we can reach, shortly after starting.
