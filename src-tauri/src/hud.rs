@@ -155,4 +155,61 @@ pub fn sync<R: Runtime>(app: &AppHandle<R>) {
         .unwrap_or(false);
 
     let _ = app.emit("main:away", away);
+
+    // Memory is only handed back when the window is really gone. "Away" above
+    // includes merely not being in front, and trimming the page every time
+    // somebody clicks another window would make coming back to it stutter.
+    #[cfg(windows)]
+    {
+        let hidden = app
+            .get_webview_window("main")
+            .map(|w| !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false))
+            .unwrap_or(false);
+        trim_web_view(app, hidden);
+    }
+}
+
+/// Tells WebView2 to hold as little as it can while the window is hidden.
+///
+/// A window in the tray is not drawing anything, and the GPU and renderer
+/// processes that serve it kept their caches regardless - measured at over a
+/// gigabyte after a film, settling to a few hundred megabytes only slowly.
+/// `MemoryUsageTargetLevel::Low` asks the runtime to trim them now.
+///
+/// Not `TrySuspend`: that freezes the page, and a frozen page cannot ring when
+/// a call comes in, which is the reason the application stays in the tray at
+/// all.
+#[cfg(windows)]
+fn trim_web_view<R: Runtime>(app: &AppHandle<R>, hidden: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static LOW: AtomicBool = AtomicBool::new(false);
+
+    // Only on a change: sync runs on every focus event.
+    if LOW.swap(hidden, Ordering::Relaxed) == hidden {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let _ = window.with_webview(move |webview| unsafe {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        };
+        use windows_core::Interface;
+
+        let Ok(core) = webview.controller().CoreWebView2() else {
+            return;
+        };
+        // Older runtimes do not have the call; there is nothing to do for them.
+        let Ok(core) = core.cast::<ICoreWebView2_19>() else {
+            return;
+        };
+        let level = if hidden {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+        } else {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+        };
+        let _ = core.SetMemoryUsageTargetLevel(level);
+    });
 }

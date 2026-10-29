@@ -96,6 +96,11 @@ jni = "0.21"
 
 [target.'cfg(windows)'.dependencies]
 enigo = "0.2"
+# Asking the web view to hold less memory while the window is out of sight. Both
+# are the versions Tauri's own web view layer already resolves, so this adds a
+# direct dependency on them and not a second copy.
+webview2-com = "0.38"
+windows-core = "0.61"
 
 # Taking a picture of this screen, for a phone that is driving it.
 #

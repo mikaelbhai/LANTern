@@ -2754,6 +2754,8 @@ dependencies = [
  "tokio-util",
  "tower-http 0.5.2",
  "uuid",
+ "webview2-com",
+ "windows-core 0.61.2",
  "xcap",
 ]
 
