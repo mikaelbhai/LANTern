@@ -723,6 +723,13 @@ export async function handle(cmd: string, args: any): Promise<any> {
       return had;
     }
 
+    case 'media_sync_remove_local': {
+      const before = media.length;
+      media = media.filter((m) => m.relPath !== args.relPath || !m.id.startsWith('synced:'));
+      emit('media:changed', media.map((m) => ({ ...m })));
+      return media.length < before;
+    }
+
     /* --------------------------------------------------------- audience */
     //
     // Unhandled here, each of these resolved as `null` — which is what a

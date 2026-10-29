@@ -184,6 +184,7 @@ pub fn run() {
             commands::media_sync_start,
             commands::media_synced_ids,
             commands::media_sync_remove,
+            commands::media_sync_remove_local,
             commands::files_list,
             commands::files_stat,
             commands::files_pause,

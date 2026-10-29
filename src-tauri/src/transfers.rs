@@ -1220,6 +1220,34 @@ pub fn remove_synced(state: &AppState, item_id: &str) -> bool {
     true
 }
 
+/// Deletes the synced copy that lives at `rel_path` inside the synced share.
+///
+/// Matched on the end of the stored path with separators normalised: the row
+/// keeps the absolute path in whatever form this platform wrote it, and the
+/// shelf knows only the share-relative one, with forward slashes.
+pub fn remove_synced_copy(state: &AppState, rel_path: &str) -> bool {
+    let rel = rel_path.replace('\\', "/");
+    if rel.is_empty() {
+        return false;
+    }
+    let found = state.with(|s| {
+        let db = s.db.as_ref()?;
+        let mut stmt = db.prepare("SELECT item_id, local_path FROM synced").ok()?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .ok()?
+            .flatten()
+            .collect();
+        rows.into_iter()
+            .find(|(_, path)| path.replace('\\', "/").ends_with(&format!("/{rel}")))
+            .map(|(id, _)| id)
+    });
+    match found {
+        Some(id) => remove_synced(state, &id),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod sync_tests {
     use super::safe_relative;

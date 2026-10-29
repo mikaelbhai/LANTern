@@ -418,6 +418,9 @@ export const api = {
     syncedIds: () => call<string[]>('media_synced_ids'),
     /** Deletes a synced copy and drops it off Theatre's shelf. */
     removeSynced: (itemId: string) => call<boolean>('media_sync_remove', { id: itemId }),
+    /** Deletes a synced copy from the card of the copy itself, found by its path on the shelf. */
+    removeLocalCopy: (relPath: string) =>
+      call<boolean>('media_sync_remove_local', { relPath }),
   },
   /**
    * Installing a newer version.

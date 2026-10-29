@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Film,
+  HardDrive,
   Info,
   Play,
   Plus,
@@ -102,6 +103,12 @@ export function Theatre() {
   const load = React.useCallback(async () => {
     setItems(await api.media.list());
     setLoading(false);
+  }, []);
+
+  /** Deletes a synced copy from its own card; the shelf is re-read by the event that follows. */
+  const deleteCopy = React.useCallback(async (item: MediaItem) => {
+    await api.media.removeLocalCopy(item.relPath);
+    setDetail(null);
   }, []);
 
   /**
@@ -581,6 +588,7 @@ export function Theatre() {
         syncTransfers={syncTransfers}
         onSync={startSync}
         onRemoveSync={removeSync}
+        onDeleteCopy={deleteCopy}
       />
 
       <CollectionSheet
@@ -1063,6 +1071,10 @@ function Row({
   );
 }
 
+/** A title stored on this device by Sync, rather than one streamed from somewhere. */
+export const isSyncedCopy = (item: MediaItem): boolean =>
+  (!!item.streamUrl && item.streamUrl.includes('/lantern-synced/')) || item.id.startsWith('synced:');
+
 function Card({
   item,
   owner,
@@ -1137,6 +1149,18 @@ function Card({
         </span>
       )}
 
+      {/* A copy that lives on this device. It plays with nobody else awake,
+          which is the thing worth knowing about it from the shelf. */}
+      {isSyncedCopy(item) && (
+        <span
+          className="absolute bottom-1.5 left-1.5 px-1.5 h-[18px] rounded-[4px] bg-black/70 border border-cyan/40 text-[10px] font-medium text-white/90 flex items-center gap-1"
+          title="Synced - stored on this device"
+        >
+          <HardDrive size={9} className="text-cyan" />
+          Synced
+        </span>
+      )}
+
       {/* A tick where it has been watched to the end, in place of a bar that is
           full - "have I seen this" is the question a shelf of thirty films is
           asked, and a full bar answers it only to someone who counts pixels. */}
@@ -1190,6 +1214,7 @@ function DetailSheet({
   syncTransfers,
   onSync,
   onRemoveSync,
+  onDeleteCopy,
 }: {
   item: MediaItem | null;
   owner: string;
@@ -1208,6 +1233,8 @@ function DetailSheet({
   syncTransfers: Record<string, string>;
   onSync: (i: MediaItem) => void;
   onRemoveSync: (i: MediaItem) => void;
+  /** Deletes the copy this card is, when it is one. */
+  onDeleteCopy: (i: MediaItem) => void;
 }) {
   const peers = useStore((s) => s.peers);
 
@@ -1339,6 +1366,19 @@ function DetailSheet({
                   onSync={onSync}
                   onRemove={onRemoveSync}
                 />
+                {isSyncedCopy(item) && (
+                  <Button
+                    icon={<HardDrive size={13} />}
+                    onClick={() => {
+                      if (window.confirm(`Delete the copy of “${item.title}” stored on this device?`)) {
+                        onDeleteCopy(item);
+                      }
+                    }}
+                    title="Frees the space; the original stays where it is"
+                  >
+                    Delete copy
+                  </Button>
+                )}
                 <Button onClick={onClose}>Close</Button>
               </div>
             </div>

@@ -63,6 +63,9 @@ import {
 } from '../../lib/aspect';
 
 const HIDE_AFTER_MS = 2800;
+// How close, in pixels, the pointer has to come to where the film is now for a
+// drag to let go of the pointer and hold on to that spot.
+const SNAP_PX = 16;
 // A full-height vertical swipe covers the full 0-1 brightness/volume range.
 const SWIPE_RANGE_PX = 220;
 
@@ -163,6 +166,9 @@ export function Player({
   // from the new point, and doing that on every pixel of a drag would restart
   // it dozens of times a second.
   const [scrubTime, setScrubTime] = React.useState<number | null>(null);
+  // True while the drag is held on the place the film is at now, so letting go
+  // there changes nothing - the way to take a seek back.
+  const [scrubSnapped, setScrubSnapped] = React.useState(false);
   // The time under a mouse resting on the bar, with its x offset for the label.
   const [hover, setHover] = React.useState<{ x: number; t: number } | null>(null);
   const barRef = React.useRef<HTMLDivElement>(null);
@@ -618,9 +624,13 @@ export function Player({
 
   /* ------------------------------------------------------ chrome timing */
 
+  const scrubbingNow = React.useRef(false);
   const wake = React.useCallback(() => {
     setChrome(true);
     clearTimeout(hideTimer.current);
+    // Not while a seek is being aimed: the bar being dragged is the thing that
+    // would vanish out from under the finger.
+    if (scrubbingNow.current) return;
     hideTimer.current = window.setTimeout(() => setChrome(false), HIDE_AFTER_MS);
   }, []);
 
@@ -1266,9 +1276,29 @@ export function Player({
 
   const pointAt = (clientX: number) => {
     const rect = barRef.current?.getBoundingClientRect();
-    if (!rect || !rect.width) return { x: 0, t: 0 };
+    if (!rect || !rect.width) return { x: 0, t: 0, snapped: false };
     const f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return { x: f * rect.width, t: f * duration };
+    const x = f * rect.width;
+    // A pull toward where the film is now. Without it, taking back a seek
+    // meant finding that one pixel again by eye.
+    const here = duration ? (time / duration) * rect.width : -Infinity;
+    if (Math.abs(x - here) <= SNAP_PX) return { x: here, t: time, snapped: true };
+    return { x, t: f * duration, snapped: false };
+  };
+
+  const aim = (at: { t: number; snapped: boolean }) => {
+    setScrubTime(at.t);
+    setScrubSnapped((was) => {
+      // A tick under the finger as it lands, where the phone can give one.
+      if (at.snapped && !was) {
+        try {
+          navigator.vibrate?.(8);
+        } catch {
+          /* no haptics here */
+        }
+      }
+      return at.snapped;
+    });
   };
 
   // Pointer events rather than mouse events, so one handler covers a mouse, a
@@ -1287,12 +1317,12 @@ export function Player({
     }
     setScrubbing(true);
     previewEver.current = true;
-    setScrubTime(pointAt(e.clientX).t);
+    aim(pointAt(e.clientX));
   };
   const scrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!duration) return;
     const at = pointAt(e.clientX);
-    if (scrubTime !== null) setScrubTime(at.t);
+    if (scrubTime !== null) aim(at);
     if (e.pointerType === 'mouse') {
       previewEver.current = true;
       setHover(at);
@@ -1300,16 +1330,33 @@ export function Player({
   };
   const scrubUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (scrubTime === null) return;
-    const target = pointAt(e.clientX).t;
+    const at = pointAt(e.clientX);
     setScrubTime(null);
+    setScrubSnapped(false);
     setScrubbing(false);
-    seekTo(target);
-    broadcast(playing, target);
+    // Let go on the spot the film is at: the seek is cancelled, and the
+    // stream is not restarted to go nowhere.
+    if (at.snapped) return;
+    seekTo(at.t);
+    broadcast(playing, at.t);
   };
   const scrubCancel = () => {
     setScrubTime(null);
+    setScrubSnapped(false);
     setScrubbing(false);
   };
+
+  // The controls stay up for as long as a seek is being aimed, and the usual
+  // countdown starts again when it ends.
+  React.useEffect(() => {
+    scrubbingNow.current = scrubbing;
+    if (scrubbing) {
+      clearTimeout(hideTimer.current);
+      setChrome(true);
+    } else {
+      wake();
+    }
+  }, [scrubbing, wake]);
 
   return (
     <div
@@ -1669,8 +1716,13 @@ export function Player({
                         aspect={natural.w && natural.h ? natural.w / natural.h : 16 / 9}
                       />
                     )}
-                    <span className="px-1.5 py-0.5 rounded bg-black/80 text-white text-2xs tabular-nums">
-                      {clock(scrubTime ?? hover?.t ?? 0)}
+                    <span
+                      className={cn(
+                        'px-1.5 py-0.5 rounded text-2xs tabular-nums',
+                        scrubSnapped ? 'bg-gold text-on-gold font-medium' : 'bg-black/80 text-white',
+                      )}
+                    >
+                      {scrubSnapped ? `Stay at ${clock(scrubTime ?? 0)}` : clock(scrubTime ?? hover?.t ?? 0)}
                     </span>
                   </div>
                 )}
@@ -1695,6 +1747,18 @@ export function Player({
                     style={{ width: `${pct}%` }}
                   />
                 </div>
+                {/* Where the film is now, while a seek is being aimed: the
+                    thing the drag is pulled toward, and ringed when it holds. */}
+                {scrubTime !== null && duration > 0 && (
+                  <span
+                    className={cn(
+                      'absolute -ml-1.5 h-3 w-3 rounded-full border-2 pointer-events-none transition-transform',
+                      scrubSnapped ? 'border-gold bg-gold/40 scale-125' : 'border-white/80 bg-black/40',
+                    )}
+                    style={{ left: `${(time / duration) * 100}%` }}
+                    aria-hidden
+                  />
+                )}
                 {repeatA !== null && duration > 0 && (
                   <span
                     className="absolute h-3 w-0.5 bg-gold -ml-px"

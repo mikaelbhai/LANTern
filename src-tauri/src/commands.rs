@@ -1659,6 +1659,21 @@ pub fn media_sync_remove(app: AppHandle, state: State<'_, AppState>, id: String)
     removed
 }
 
+/// Deletes a synced copy from the card of the copy itself.
+///
+/// The shelf shows the local copy as a title of its own, with an id from the
+/// synced share and nothing that names the title it was pulled from, so it is
+/// found by where it lives on disk.
+#[tauri::command]
+pub fn media_sync_remove_local(app: AppHandle, state: State<'_, AppState>, rel_path: String) -> bool {
+    let removed = crate::transfers::remove_synced_copy(&state, &rel_path);
+    if removed {
+        let items = media::refresh(&state);
+        let _ = app.emit("media:changed", &items);
+    }
+    removed
+}
+
 /// Starts (or resumes) pulling a file a peer has offered.
 ///
 /// `dir` is where the person receiving it wants it: a folder they picked for
