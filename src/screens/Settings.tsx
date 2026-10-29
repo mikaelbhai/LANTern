@@ -102,7 +102,7 @@ export function Settings() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                'shrink-0 h-7 px-2.5 rounded-input text-xs',
+                'shrink-0 h-7 px-2.5 rounded-input text-xs max-md:h-9 max-md:px-3',
                 tab === t.id ? 'bg-gold text-on-gold font-medium' : 'text-dim',
               )}
             >

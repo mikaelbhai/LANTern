@@ -29,7 +29,9 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const sizes = {
-    xs: 'h-6 px-2 text-2xs gap-1 rounded-input',
+    // 24 px is a mouse's target; on a phone a finger needs a good deal more,
+    // and these are the buttons that sit in every screen's header.
+    xs: 'h-6 px-2 text-2xs gap-1 rounded-input max-md:h-8 max-md:px-2.5',
     sm: 'h-8 px-3 text-xs gap-1.5 rounded-input',
     md: 'h-9 px-4 text-sm gap-2 rounded-input',
     lg: 'h-11 px-5 text-sm gap-2 rounded-card',
@@ -357,7 +359,10 @@ export function Toggle({
           onChange(!checked);
         }}
         className={cn(
+          // The switch is drawn small; the finger that has to hit it is not. An
+          // invisible margin of the same button makes it a target worth aiming at.
           'relative h-[18px] w-[32px] rounded-pill shrink-0 transition-colors duration-200 border',
+          'before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[""]',
           checked ? 'bg-gold/90 border-gold shadow-glow' : 'bg-raised border-edge',
         )}
       >
@@ -485,7 +490,9 @@ export function Segmented<T extends string>({
             }}
             className={cn(
               'relative rounded-[4px] transition-colors whitespace-nowrap',
-              size === 'xs' ? 'px-2 h-5 text-2xs' : 'px-2.5 h-6 text-xs',
+              size === 'xs'
+                ? 'px-2 h-5 text-2xs max-md:h-8 max-md:px-2.5'
+                : 'px-2.5 h-6 text-xs max-md:h-8 max-md:px-3',
               on ? 'text-on-gold' : 'text-dim hover:text-txt',
             )}
           >

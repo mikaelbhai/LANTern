@@ -217,7 +217,7 @@ function Transfers() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search transfers…"
           icon={<Search size={14} />}
-          className="flex-1 min-w-[120px] md:flex-none md:w-48 md:shrink-0"
+          className="flex-[1.4] min-w-0 md:flex-none md:w-48 md:shrink-0"
         />
         <Select
           value={filter}
@@ -228,7 +228,10 @@ function Transfers() {
             { value: 'out', label: 'Sent' },
             { value: 'active', label: 'Active' },
           ]}
-          className="w-28 shrink-0"
+          // Shares the row on a phone instead of running off the end of it: the
+          // third control was cut off with the scroll bar hidden, so there was
+          // nothing to say it was there.
+          className="flex-1 min-w-0 md:flex-none md:w-28 md:shrink-0"
         />
         <Select
           value={kind}
@@ -240,7 +243,7 @@ function Transfers() {
             { value: 'audio', label: 'Audio' },
             { value: 'file', label: 'Documents' },
           ]}
-          className="w-32 shrink-0"
+          className="flex-1 min-w-0 md:flex-none md:w-32 md:shrink-0"
         />
         <Select
           value={peerFilter}
