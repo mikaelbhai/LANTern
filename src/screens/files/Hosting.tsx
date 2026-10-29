@@ -36,7 +36,7 @@ import {
 } from '../../components/ui';
 import { api, on } from '../../lib/bridge';
 import { canHost, hostBlocker, pickFolder } from '../../lib/picker';
-import { latestInstallers } from '../../lib/update';
+import { installerSlot, latestInstallers } from '../../lib/update';
 import { useStore } from '../../lib/store';
 import { cn, formatBytes, relativeTime } from '../../lib/utils';
 import { useNow } from '../../lib/hooks';
@@ -223,6 +223,22 @@ function OfferTheApp() {
       for (const asset of assets) {
         setBusy(`Fetching ${asset.name}…`);
         await api.service.fetchInstaller(asset.url, asset.name, asset.digest);
+      }
+
+      // Replace, do not accumulate: the previous version of each build goes,
+      // along with anything that is not one of the main builds (the
+      // per-processor APKs an earlier fetch used to keep). A platform this
+      // release does not carry yet - the .dmg is built by CI after the tag
+      // lands - keeps what it had rather than disappearing from the page.
+      const fresh = new Set(assets.map((a) => a.name));
+      const refilled = new Set(assets.map((a) => installerSlot(a.name)));
+      const onDisk = await api.service.heldInstallers().catch(() => []);
+      for (const file of onDisk) {
+        if (fresh.has(file.name)) continue;
+        const slot = installerSlot(file.name);
+        if (slot === null || refilled.has(slot)) {
+          await api.service.removeInstaller(file.name).catch(() => undefined);
+        }
       }
       refresh();
       toast({

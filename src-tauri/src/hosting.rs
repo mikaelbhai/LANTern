@@ -536,6 +536,9 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
             "apk" => "Android",
             "exe" | "msi" => "Windows",
             "dmg" => "macOS",
+            // A sideload package: signed on the phone by AltStore or
+            // Sideloadly, not by anyone here.
+            "ipa" => "iOS",
             "appimage" | "deb" => "Linux",
             _ => continue,
         };
@@ -584,6 +587,15 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
         seen.push(item.platform.clone());
         out.push(item);
     }
+    // The page reads the same every time it is opened, not in whatever order
+    // the file system and the timestamps happened to produce.
+    let rank = |platform: &str| {
+        ["Android", "Android TV", "Windows", "macOS", "iOS", "Linux"]
+            .iter()
+            .position(|p| *p == platform)
+            .unwrap_or(usize::MAX)
+    };
+    out.sort_by_key(|i| rank(&i.platform));
     out
 }
 
@@ -2619,6 +2631,27 @@ mod installer_tests {
 
         assert_eq!(pick("Android"), Some("LANTern-1.2.7-phone.apk".to_string()));
         assert_eq!(pick("Android TV"), Some("LANTV-1.2.7.apk".to_string()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_page_lists_the_main_builds_in_a_fixed_order() {
+        let dir = std::env::temp_dir().join(format!("lantern-inst5-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        for name in [
+            "LANTern_1.3.0_universal.dmg",
+            "LANTern-1.3.0-ios.ipa",
+            "LANTern_1.3.0_x64-setup.exe",
+            "LANTV-1.3.0.apk",
+            "LANTern-1.3.0-phone.apk",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+
+        let state = state_with(&dir);
+        let order: Vec<String> = installer_list(&state).iter().map(|i| i.platform.clone()).collect();
+        assert_eq!(order, ["Android", "Android TV", "Windows", "macOS", "iOS"]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

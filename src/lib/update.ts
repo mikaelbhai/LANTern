@@ -237,18 +237,44 @@ export async function latestInstallers(): Promise<ReleaseAsset[]> {
   };
   if (release.draft) return [];
 
-  // The extensions the landing page knows how to label. Anything else in a
-  // release — checksums, source archives — is not something anybody installs.
-  const installer = /\.(apk|exe|msi|dmg|appimage|deb)$/i;
-
-  return (release.assets ?? [])
-    .filter((a) => installer.test(a.name))
-    .map((a) => ({
+  // One build per slot. A release also carries a package for each processor
+  // (…-arm64-v8a.apk and the like); the landing page cannot ask a stranger's
+  // phone which it has, so it offers the universal one and those extras are
+  // never fetched - nine files, forty megabytes apiece, for four download
+  // buttons.
+  const chosen = new Map<InstallerSlot, ReleaseAsset>();
+  for (const a of release.assets ?? []) {
+    const slot = installerSlot(a.name);
+    if (!slot || chosen.has(slot)) continue;
+    chosen.set(slot, {
       name: a.name,
       url: a.browser_download_url,
       size: a.size,
       digest: a.digest,
-    }));
+    });
+  }
+  return INSTALLER_SLOTS.flatMap((slot) => chosen.get(slot) ?? []);
+}
+
+/** The places on the landing page, in the order they are listed there. */
+export const INSTALLER_SLOTS = ['phone', 'tv', 'windows', 'mac', 'ios'] as const;
+export type InstallerSlot = (typeof INSTALLER_SLOTS)[number];
+
+/**
+ * Which slot a release file fills, or null when it is not one of the main
+ * builds - a per-processor APK, a checksum, a source archive, an .msi beside
+ * the setup.exe. Also what decides which files already on disk are leftovers.
+ */
+export function installerSlot(name: string): InstallerSlot | null {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.ipa')) return 'ios';
+  if (lower.endsWith('.dmg')) return 'mac';
+  if (lower.endsWith('.exe')) return lower.includes('setup') ? 'windows' : null;
+  if (lower.endsWith('.apk')) {
+    if (/arm64-v8a|armeabi-v7a|x86_64|x86/.test(lower)) return null;
+    return lower.includes('lantv') ? 'tv' : 'phone';
+  }
+  return null;
 }
 
 /** Bytes as a SHA-256 hex string, using the webview's own crypto. */
