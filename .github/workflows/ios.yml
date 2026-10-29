@@ -64,20 +64,25 @@ jobs:
       - name: Generate the Xcode project
         run: npx tauri ios init --ci
 
-      - name: Tell Xcode not to sign
+      # An xcconfig through XCODE_XCCONFIG_FILE was tried first and did not
+      # reach the xcodebuild the Tauri CLI runs: it still stopped at "Signing
+      # requires a development team". So the generated project itself is
+      # changed - automatic signing becomes manual with no identity - which
+      # no invocation can override.
+      - name: Switch signing off in the generated project
+        working-directory: src-tauri/gen/apple
         run: |
-          cat > "$RUNNER_TEMP/unsigned.xcconfig" <<'EOF'
-          CODE_SIGNING_ALLOWED = NO
-          CODE_SIGNING_REQUIRED = NO
-          CODE_SIGN_IDENTITY =
-          DEVELOPMENT_TEAM =
-          PROVISIONING_PROFILE_SPECIFIER =
-          EOF
-          echo "XCODE_XCCONFIG_FILE=$RUNNER_TEMP/unsigned.xcconfig" >> "$GITHUB_ENV"
+          echo "--- project.yml, signing lines"
+          grep -nEi "sign|team|provision" project.yml || true
+          echo "--- project.pbxproj, signing lines before"
+          grep -nE "CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING" lantern.xcodeproj/project.pbxproj || true
+          perl -pi -e 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;\n\t\t\t\tCODE_SIGN_IDENTITY = "";/g; s/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' lantern.xcodeproj/project.pbxproj
+          echo "--- project.pbxproj, signing lines after"
+          grep -nE "CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING" lantern.xcodeproj/project.pbxproj || true
 
-      # Expected to end in an export error. What matters is whether the
-      # archive exists afterwards, which the next step checks.
-      - name: Archive
+      # May end in an export error. What matters is what it left behind, which
+      # the next step looks for.
+      - name: Build
         run: |
           set -o pipefail
           npx tauri ios build --ci --export-method debugging -v 2>&1 | tee "$RUNNER_TEMP/ios-build.log" || true
@@ -86,14 +91,20 @@ jobs:
         id: named
         run: |
           version=$(node -p "require('./package.json').version")
-          archive=$(find src-tauri/gen/apple -name '*.xcarchive' -maxdepth 4 | head -1)
-          if [ -z "$archive" ]; then
-            echo "No .xcarchive was produced; the build log is attached." >&2
+          # Wherever Xcode left the app: inside an archive when the CLI archived,
+          # in DerivedData when it only built.
+          archive=$(find src-tauri/gen/apple -maxdepth 4 -name '*.xcarchive' | head -1)
+          if [ -n "$archive" ]; then
+            app=$(find "$archive/Products/Applications" -maxdepth 1 -name '*.app' | head -1)
+          else
+            app=$(find "$HOME/Library/Developer/Xcode/DerivedData" src-tauri/gen/apple/build -maxdepth 6 -path '*iphoneos*' -name '*.app' 2>/dev/null | head -1)
+          fi
+          echo "Archive: ${archive:-none}"
+          echo "App:     ${app:-none}"
+          if [ -z "$app" ]; then
+            echo "No .app was produced; the build log is attached." >&2
             exit 1
           fi
-          app=$(find "$archive/Products/Applications" -name '*.app' -maxdepth 1 | head -1)
-          echo "Archive: $archive"
-          echo "App:     $app"
           rm -rf "$RUNNER_TEMP/ipa" && mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
           # A signature left over from the archive would be invalid once the
