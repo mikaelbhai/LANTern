@@ -229,14 +229,61 @@ function connect(since: number) {
     // never comes back.
     try {
       const status = await getJson<Status>('/guest/api/status');
-      if (status.standing !== 'allowed') {
-        source?.close();
-        set({ phase: status.enabled ? 'removed' : 'off' });
+      if (status.standing === 'allowed') return;
+      if (status.enabled && status.standing === null) {
+        // The host restarted, or forgot this tab: it kept its guests in memory.
+        // Come back in by the same door without throwing the page away - the
+        // film or the conversation on screen is not something to lose to a
+        // restart on the other side.
+        void rejoin();
+        return;
       }
+      source?.close();
+      set({ phase: status.enabled ? 'removed' : 'off' });
     } catch {
       /* Still offline; EventSource is already trying again. */
     }
   };
+}
+
+let rejoining = false;
+
+/**
+ * Asks the host again, quietly, after it has lost track of this tab.
+ *
+ * The phase stays "allowed" while it does: the interface underneath keeps what it
+ * had. Only a refusal, or giving up, ends the session.
+ */
+async function rejoin(): Promise<void> {
+  if (rejoining) return;
+  rejoining = true;
+  try {
+    const name = snapshot.name || rememberedName() || 'Guest';
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const joined = await fetch('/guest/api/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name }),
+      }).catch(() => null);
+      if (joined?.ok) {
+        const status = await getJson<Status>('/guest/api/status').catch(() => null);
+        if (status?.standing === 'allowed') {
+          set({ me: status.me ?? snapshot.me });
+          connect(0);
+          return;
+        }
+        if (status?.standing === 'denied') {
+          set({ phase: 'denied' });
+          return;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    set({ phase: 'removed' });
+  } finally {
+    rejoining = false;
+  }
 }
 
 interface WireEnvelope {

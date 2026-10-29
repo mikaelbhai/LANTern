@@ -429,38 +429,120 @@ pub fn resume_for<'a>(
     let (Some(key), true) = (key, duration_sec > 0.0) else {
         return own;
     };
-    let elsewhere = saved
-        .values()
-        .filter(|r| {
+    // Every row for this title at this length - its own and anywhere else.
+    let candidates = || {
+        own.into_iter().chain(saved.values().filter(|r| {
             r.title_key.as_deref() == Some(key)
                 && r.duration_sec > 0.0
                 && (r.duration_sec - duration_sec).abs() <= SAME_LENGTH_SEC
-        })
-        .max_by_key(|r| r.watched_at);
-    match (own, elsewhere) {
-        (Some(a), Some(b)) => Some(if b.watched_at > a.watched_at { b } else { a }),
-        (a, b) => a.or(b),
+        }))
+    };
+    let newest = candidates().max_by_key(|r| r.watched_at)?;
+    // A row that says "the very start" is what a position looks like after
+    // something went wrong - a stream that dropped, a copy that was reset - and
+    // the newest write is not always the true one. Where any other row has a
+    // real position for the same title, the newest of those is the one to
+    // resume from.
+    if newest.progress_sec < RESET_BELOW_SEC {
+        if let Some(real) = candidates()
+            .filter(|r| r.progress_sec > REAL_ABOVE_SEC)
+            .max_by_key(|r| r.watched_at)
+        {
+            return Some(real);
+        }
     }
+    Some(newest)
+}
+
+/// A saved position under this many seconds reads as "at the start".
+pub const RESET_BELOW_SEC: f64 = 5.0;
+/// ...and over this many as somebody having really watched some of it.
+pub const REAL_ABOVE_SEC: f64 = 60.0;
+
+/// Whether writing this position would throw away a real one.
+///
+/// A film an hour in does not move to the first seconds by itself. Anything that
+/// says it has - an element that was rebuilt after the host dropped and reported
+/// zero, a stale copy, a reconnect that raced a save - is refused here, at the
+/// one place every write passes through. Somebody who deliberately starts over
+/// says so (`force`) and is let through; a few seconds in, which is what
+/// starting over looks like a moment later, is above the line anyway.
+pub fn regresses(state: &AppState, id: &str, progress_sec: f64) -> bool {
+    if progress_sec >= RESET_BELOW_SEC {
+        return false;
+    }
+    let before: Option<f64> = state.with(|s| {
+        s.db.as_ref().and_then(|db| {
+            db.query_row("SELECT progress_sec FROM progress WHERE id = ?1", [id], |r| r.get(0))
+                .ok()
+        })
+    });
+    before.is_some_and(|b| b > REAL_ABOVE_SEC)
+}
+
+/// Writes down that a position was refused, and what it would have replaced.
+pub fn note_blocked(state: &AppState, id: &str, wanted: f64) {
+    let before: f64 = state.with(|s| {
+        s.db.as_ref()
+            .and_then(|db| {
+                db.query_row("SELECT progress_sec FROM progress WHERE id = ?1", [id], |r| r.get(0))
+                    .ok()
+            })
+            .unwrap_or(0.0)
+    });
+    eprintln!("progress: refused {wanted:.1}s for {id}, which is at {before:.1}s");
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO progress_blocked (at, id, wanted, before) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![crate::model::now_ms() as i64, id, wanted, before],
+            );
+            // A log, not an archive.
+            let _ = db.execute(
+                "DELETE FROM progress_blocked WHERE rowid NOT IN
+                 (SELECT rowid FROM progress_blocked ORDER BY at DESC LIMIT 200)",
+                [],
+            );
+        }
+    });
 }
 
 /// Records where the viewer got to, so it survives a restart.
+///
+/// Returns whether it was written. Refuses a position that would throw away a
+/// real one (see `regresses`) unless `force` says that was meant.
 pub fn save_progress(
     state: &AppState,
     id: &str,
     progress_sec: f64,
     duration_sec: f64,
     key: Option<&str>,
-) {
+    force: bool,
+) -> bool {
+    if !force && regresses(state, id, progress_sec) {
+        note_blocked(state, id, progress_sec);
+        return false;
+    }
     state.with(|s| {
-        let Some(db) = s.db.as_ref() else { return };
-        let _ = db.execute(
+        let Some(db) = s.db.as_ref() else { return false };
+        // What is already known about the title is kept when this write does
+        // not know it. While a host is away its titles are not on the shelf, so
+        // a position saved then arrives with no length and no title key; the
+        // row used to be overwritten with those blanks, which is how the same
+        // title stopped being recognisable on another device or after the host
+        // came back.
+        db.execute(
             "INSERT INTO progress (id, progress_sec, duration_sec, updated_at, title_key)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET
-                progress_sec = ?2, duration_sec = ?3, updated_at = ?4, title_key = ?5",
+                progress_sec = ?2,
+                duration_sec = CASE WHEN ?3 > 0 THEN ?3 ELSE COALESCE(duration_sec, 0) END,
+                updated_at = ?4,
+                title_key = COALESCE(?5, title_key)",
             rusqlite::params![id, progress_sec, duration_sec, crate::model::now_ms() as i64, key],
-        );
-    });
+        )
+        .is_ok()
+    })
 }
 
 pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
@@ -539,12 +621,32 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
                 .iter()
                 .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(id))
             {
-                if let Some(progress) = previous.get("progressSec").cloned() {
-                    item.as_object_mut().unwrap().insert("progressSec".into(), progress);
-                }
-                for key in ["audioLang", "subtitleLang", "watchedAt"] {
-                    if let Some(lang) = previous.get(key).cloned() {
-                        item.as_object_mut().unwrap().insert(key.into(), lang);
+                // The copy already on the shelf wins only when it is the newer
+                // word. It used to win always, so a copy that had been reset (or
+                // never had a position) replaced the one saved on disk the moment
+                // a host came back and the shelf was rebuilt.
+                let at = |v: &serde_json::Value| v.get("watchedAt").and_then(|x| x.as_i64()).unwrap_or(0);
+                let sec = |v: &serde_json::Value| v.get("progressSec").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                let newer = at(previous) > at(item) || (at(previous) == at(item) && sec(previous) >= sec(item));
+                // ...and a position at the very start never replaces a real one.
+                let would_reset = sec(previous) < RESET_BELOW_SEC && sec(item) > REAL_ABOVE_SEC;
+                if newer && !would_reset {
+                    if let Some(progress) = previous.get("progressSec").cloned() {
+                        item.as_object_mut().unwrap().insert("progressSec".into(), progress);
+                    }
+                    for key in ["audioLang", "subtitleLang", "watchedAt"] {
+                        if let Some(lang) = previous.get(key).cloned() {
+                            item.as_object_mut().unwrap().insert(key.into(), lang);
+                        }
+                    }
+                } else {
+                    // Languages are not positions: keep the chosen ones either way.
+                    for key in ["audioLang", "subtitleLang"] {
+                        if item.get(key).is_none() {
+                            if let Some(lang) = previous.get(key).cloned() {
+                                item.as_object_mut().unwrap().insert(key.into(), lang);
+                            }
+                        }
                     }
                 }
             }
@@ -1702,6 +1804,104 @@ mod episode_tests {
         assert_eq!(found.len(), 5, "an episode number went missing");
         found.sort_unstable();
         assert_eq!(found, vec![1, 2, 10, 11, 12]);
+    }
+}
+
+#[cfg(test)]
+mod progress_guard_tests {
+    use super::*;
+
+    fn state_with_db() -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lantern-progress-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = AppState::new();
+        let conn = crate::db::open(&dir).unwrap();
+        state.with(|s| s.db = Some(conn));
+        (state, dir)
+    }
+
+    fn at(state: &AppState, id: &str) -> f64 {
+        state.with(|s| {
+            s.db.as_ref()
+                .unwrap()
+                .query_row("SELECT progress_sec FROM progress WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        })
+    }
+
+    #[test]
+    fn a_film_an_hour_in_is_not_sent_back_to_the_start_by_a_stray_zero() {
+        let (state, dir) = state_with_db();
+        assert!(save_progress(&state, "film", 3600.0, 5400.0, Some("film"), false));
+
+        // What a rebuilt element reports after the host dropped.
+        assert!(!save_progress(&state, "film", 0.0, 0.0, None, false));
+        assert!(!save_progress(&state, "film", 2.5, 0.0, None, false));
+        assert_eq!(at(&state, "film"), 3600.0);
+
+        // It is on record, for when this next happens.
+        let refused: i64 = state.with(|s| {
+            s.db.as_ref().unwrap().query_row("SELECT COUNT(*) FROM progress_blocked", [], |r| r.get(0)).unwrap()
+        });
+        assert_eq!(refused, 2);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn starting_over_on_purpose_is_let_through_and_so_is_normal_progress() {
+        let (state, dir) = state_with_db();
+        save_progress(&state, "film", 3600.0, 5400.0, Some("film"), false);
+        assert!(save_progress(&state, "film", 0.0, 5400.0, Some("film"), true));
+        assert_eq!(at(&state, "film"), 0.0);
+
+        // And an ordinary rewind a few minutes is not a regression at all.
+        save_progress(&state, "other", 3600.0, 5400.0, None, false);
+        assert!(save_progress(&state, "other", 3300.0, 5400.0, None, false));
+        // A short film that was only a minute in is below the line to begin with.
+        save_progress(&state, "clip", 30.0, 60.0, None, false);
+        assert!(save_progress(&state, "clip", 0.0, 60.0, None, false));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_save_made_while_the_host_is_away_does_not_blank_what_is_known() {
+        let (state, dir) = state_with_db();
+        save_progress(&state, "film", 1000.0, 5400.0, Some("the film|"), false);
+        // The shelf has no entry for it now, so no length and no key arrive.
+        save_progress(&state, "film", 1200.0, 0.0, None, false);
+        let (duration, key): (f64, Option<String>) = state.with(|s| {
+            s.db.as_ref()
+                .unwrap()
+                .query_row("SELECT duration_sec, title_key FROM progress WHERE id = 'film'", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap()
+        });
+        assert_eq!(duration, 5400.0);
+        assert_eq!(key.as_deref(), Some("the film|"));
+        assert_eq!(at(&state, "film"), 1200.0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_reset_row_never_beats_a_real_position_for_the_same_title() {
+        use std::collections::HashMap;
+        let row = |progress: f64, at: i64| Resume {
+            title_key: Some("k".into()),
+            duration_sec: 5400.0,
+            progress_sec: progress,
+            watched_at: at,
+            ..Default::default()
+        };
+        let mut saved = HashMap::new();
+        saved.insert("a".to_string(), row(0.0, 200)); // newer, reset
+        saved.insert("b".to_string(), row(3000.0, 100)); // older, real
+        let chosen = resume_for(&saved, "a", Some("k"), 5400.0).unwrap();
+        assert_eq!(chosen.progress_sec, 3000.0);
+
+        // Two real positions: the newer one, as before.
+        saved.insert("a".to_string(), row(1200.0, 300));
+        assert_eq!(resume_for(&saved, "a", Some("k"), 5400.0).unwrap().progress_sec, 1200.0);
     }
 }
 

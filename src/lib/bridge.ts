@@ -443,8 +443,12 @@ export const api = {
   /** The shared video library assembled from every peer's media shares. */
   media: {
     list: () => call<MediaItem[]>('media_list'),
-    setProgress: (id: string, progressSec: number) =>
-      call<void>('media_set_progress', { id, progressSec }),
+    /**
+     * `force` is for starting over on purpose. Without it the native side
+     * refuses a position at the very start for a title that is well into it.
+     */
+    setProgress: (id: string, progressSec: number, force = false) =>
+      call<void>('media_set_progress', { id, progressSec, force }),
     scan: () => call<MediaItem[]>('media_scan'),
     /** Whether this device can re-serve a file with a chosen audio track. */
     canSwitchAudio: () => call<boolean>('media_can_switch_audio'),

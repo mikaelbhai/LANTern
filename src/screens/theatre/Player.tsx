@@ -45,6 +45,7 @@ import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
 import { RotationLock } from '../../components/RotationLock';
 import { streamOrigin } from './keyframe';
+import { recoveredPosition, rememberPosition, startPosition } from '../../lib/resumeMirror';
 import { setBoost } from './loudness';
 import { trackNames } from './tracks';
 import { useDetectedSubtitles } from './useDetectedSubtitles';
@@ -518,6 +519,10 @@ export function Player({
   React.useEffect(() => {
     if (shownItem.current === item.id) return;
     shownItem.current = item.id;
+    bestKnown.current = startPosition(item);
+    lastSaved.current = item.progressSec;
+    readyRef.current = false;
+    userSought.current = false;
     setTime(item.progressSec);
     latestTime.current = item.progressSec;
     setDuration(item.durationSec);
@@ -788,6 +793,7 @@ export function Player({
   const seekTo = React.useCallback(
     (next: number) => {
       const clamped = Math.max(0, Math.min(duration, next));
+      userSought.current = true;
       setTime(clamped);
 
       // A remuxed stream has no timeline to seek within — it starts wherever
@@ -816,6 +822,45 @@ export function Player({
     }, 250);
     return () => clearInterval(id);
   }, [unreachable, playing, duration]);
+
+  /*
+   * The other device coming back.
+   *
+   * Once it had been given up on the player stayed on "Can't reach" until
+   * somebody left and opened the film again - and what it opened at was
+   * whatever had last been saved. Now it keeps asking, lightly, and when
+   * something answers it carries on from where the film was when the device
+   * went away (`heldAt`), not from the local clock that kept running without
+   * any picture, which had skipped ahead.
+   */
+  React.useEffect(() => {
+    if (!unreachable) return;
+    heldAt.current = bestKnown.current || latestTime.current;
+    let stopped = false;
+    const id = window.setInterval(() => {
+      // A header-only request that never reads a byte of film. Opaque on
+      // purpose: the page does not need the answer, only that there was one.
+      fetch(item.streamUrl, { method: 'HEAD', mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(3000) })
+        .then(() => {
+          if (stopped) return;
+          retryAt.current = heldAt.current;
+          swapping.current = true;
+          readyRef.current = false;
+          setTime(heldAt.current);
+          setPlainMedia(false);
+          setRelayFailed(null);
+          setUnreachable(false);
+        })
+        .catch(() => {
+          /* Still away. */
+        });
+    }, 4000);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unreachable, item.streamUrl]);
 
   React.useEffect(() => {
     const el = videoRef.current;
@@ -896,6 +941,26 @@ export function Player({
   const latestTime = React.useRef(time);
   latestTime.current = time;
 
+  /*
+   * Where the film really is, for when the stream has to be replaced.
+   *
+   * A new element used to resume from `item.progressSec`, which is the place
+   * the film was left when it was *opened* - not where it has got to since. So
+   * when the other device dropped and the stream was rebuilt, anything that
+   * did not set an explicit place to return to started again from where the
+   * viewing began, and the saver then wrote that down as the new position.
+   * This follows the clock instead, and is only trusted once the stream is up.
+   */
+  const bestKnown = React.useRef(startPosition(item));
+  const readyRef = React.useRef(false);
+  const unreachableRef = React.useRef(false);
+  unreachableRef.current = unreachable;
+  const lastSaved = React.useRef(item.progressSec);
+  /** Somebody moved the playhead on purpose since the last save. */
+  const userSought = React.useRef(false);
+  /** Where the clock was when the other device went away. */
+  const heldAt = React.useRef(0);
+
   /**
    * True while the stream is being replaced.
    *
@@ -909,17 +974,33 @@ export function Player({
   const swapping = React.useRef(false);
   React.useEffect(() => {
     swapping.current = true;
+    readyRef.current = false;
   }, [source]);
 
   // Remember where the viewer got to, so Continue watching is accurate.
   React.useEffect(() => {
     const save = () => {
       if (swapping.current) return;
+      // Several things that are not the film: the other device is away and the
+      // clock is running on its own, or a stream is still being set up and the
+      // element is reporting nothing in particular.
+      if (unreachableRef.current || !readyRef.current) return;
       const at = Math.floor(latestTime.current);
       // A position before the point the stream was asked to start at cannot
       // be real, whatever the element says.
       if (at < Math.floor(streamStart)) return;
-      void api.media.setProgress(item.id, at);
+      // A film does not rewind itself. Minutes backwards happens when somebody
+      // moves the bar (userSought); a drop of more than a minute and a half
+      // without that is the element or the stream losing its place, and it is
+      // not written down.
+      if (!userSought.current && at < lastSaved.current - 90) return;
+      // Deliberately starting over is let through the native guard; anything
+      // else arriving at the very start is not.
+      const startingOver = userSought.current && at < 5;
+      void api.media.setProgress(item.id, at, startingOver);
+      rememberPosition(item, at);
+      lastSaved.current = at;
+      userSought.current = false;
       onProgressRef.current?.(item.id, at);
     };
     const id = setInterval(save, 5000);
@@ -1604,7 +1685,7 @@ export function Player({
               // The stream already begins at the requested offset, so seeking
               // again would jump a second time.
               // (After the element was replaced mid-film, from where it was.)
-              const resumeAt = retryAt.current ?? item.progressSec;
+              const resumeAt = retryAt.current ?? bestKnown.current;
               retryAt.current = null;
               if (audioTrack < 0 && resumeAt > 0) {
                 el.currentTime = resumeAt;
@@ -1615,6 +1696,7 @@ export function Player({
               // what the saver would otherwise have written down.
               if (audioTrack >= 0) setTime(streamStart);
               swapping.current = false;
+              readyRef.current = true;
             }}
             onTimeUpdate={(e) => {
               if (scrubbing) return;
@@ -1622,7 +1704,9 @@ export function Player({
               // element still ticks against the old one. Those readings belong
               // to a position that no longer exists.
               if (swapping.current) return;
-              setTime(streamStart + e.currentTarget.currentTime);
+              const here = streamStart + e.currentTarget.currentTime;
+              setTime(here);
+              if (readyRef.current && here > 0) bestKnown.current = here;
             }}
             onProgress={(e) => {
               const el = e.currentTarget;
@@ -1638,6 +1722,7 @@ export function Player({
               if (upNext) onPlayNext(upNext);
             }}
             onError={() => {
+              readyRef.current = false;
               // The buffer in the middle failing is not the other device being
               // gone: go round it, from where the film had got to.
               if (relayed && relay?.url === playSrc) {

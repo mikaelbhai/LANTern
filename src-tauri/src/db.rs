@@ -72,6 +72,16 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
             updated_at   INTEGER NOT NULL
         );
 
+        -- Writes of a position that the guard in media.rs refused: a film an hour
+        -- in being told it is at the start. Kept so that if the position ever is
+        -- lost again there is a record of what tried to lose it.
+        CREATE TABLE IF NOT EXISTS progress_blocked (
+            at     INTEGER NOT NULL,
+            id     TEXT NOT NULL,
+            wanted REAL NOT NULL,
+            before REAL NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS calls (
             id          TEXT PRIMARY KEY,
             kind        TEXT NOT NULL,

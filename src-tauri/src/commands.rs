@@ -3798,7 +3798,19 @@ pub async fn media_scan(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<s
 }
 
 #[tauri::command]
-pub fn media_set_progress(state: State<'_, AppState>, id: String, progress_sec: f64) {
+pub fn media_set_progress(
+    state: State<'_, AppState>,
+    id: String,
+    progress_sec: f64,
+    force: Option<bool>,
+) {
+    let force = force.unwrap_or(false);
+    // Before anything on the shelf is touched: the in-memory copy is what the
+    // next refresh trusts, so a refused position must not reach it either.
+    if !force && media::regresses(&state, &id, progress_sec) {
+        media::note_blocked(&state, &id, progress_sec);
+        return;
+    }
     let (duration, key) = state.with(|s| {
         let mut duration = 0.0;
         let mut key = None;
@@ -3834,7 +3846,28 @@ pub fn media_set_progress(state: State<'_, AppState>, id: String, progress_sec: 
     // Written through to the database, not just held in memory. Losing your
     // place on restart is the difference between "Continue watching" being a
     // feature and being an empty row.
-    media::save_progress(&state, &id, progress_sec, duration, key.as_deref());
+    media::save_progress(&state, &id, progress_sec, duration, key.as_deref(), force);
+}
+
+/// Positions the guard refused, newest first - what to read if a place in a
+/// film is ever lost again.
+#[tauri::command]
+pub fn media_progress_blocked(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else { return Vec::new() };
+        let Ok(mut stmt) =
+            db.prepare("SELECT at, id, wanted, before FROM progress_blocked ORDER BY at DESC LIMIT 50")
+        else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map([], |r| {
+            Ok(serde_json::json!({
+                "at": r.get::<_, i64>(0)?, "id": r.get::<_, String>(1)?,
+                "wanted": r.get::<_, f64>(2)?, "before": r.get::<_, f64>(3)?,
+            }))
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    })
 }
 
 #[cfg(test)]

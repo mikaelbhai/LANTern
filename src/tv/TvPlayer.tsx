@@ -10,6 +10,7 @@ import { SubtitleOverlay, useSubtitleCues } from '../screens/theatre/Subtitles';
 import { trackNames } from '../screens/theatre/tracks';
 import type { MediaItem } from '../lib/types';
 import { cn } from '../lib/utils';
+import { rememberPosition, startPosition } from '../lib/resumeMirror';
 import { intentOf, scrubbed, type Intent } from './remote';
 import { u } from './units';
 
@@ -141,10 +142,17 @@ export function TvPlayer({
   // Where to go once the video has its metadata: where it was left, or where it
   // was when the stream had to be replaced.
   const resumeAt = React.useRef<number | null>(
-    item.progressSec > 30 && (!item.durationSec || item.progressSec < item.durationSec * 0.95)
-      ? item.progressSec
+    startPosition(item) > 30 && (!item.durationSec || startPosition(item) < item.durationSec * 0.95)
+      ? startPosition(item)
       : null,
   );
+  // Where the film really is, for when the stream has to be replaced: the
+  // open-time position is stale as soon as anything has been watched.
+  const bestKnown = React.useRef(startPosition(item));
+  const ready = React.useRef(false);
+  const lastSaved = React.useRef(item.progressSec);
+  const failedRef = React.useRef(false);
+  failedRef.current = failed;
   const generation = React.useRef(0);
 
   /** Starts a remuxed stream at a position, learning where its clock really begins. */
@@ -179,7 +187,16 @@ export function TvPlayer({
   // Saved as it goes, so a film left half-way is half-way next time.
   React.useEffect(() => {
     const save = () => {
-      if (latest.current.time > 5) void api.media.setProgress(item.id, latest.current.time).catch(() => {});
+      const at = Math.floor(latest.current.time);
+      // Only a position that was really reached: not while the picture is down,
+      // not before the stream is up, not a sudden fall of more than a minute and
+      // a half (which is the clock losing its place, not somebody rewinding by
+      // pressing a button).
+      if (failedRef.current || !ready.current || at <= 5) return;
+      if (at < lastSaved.current - 90) return;
+      void api.media.setProgress(item.id, at).catch(() => {});
+      rememberPosition(item, at);
+      lastSaved.current = at;
     };
     const id = window.setInterval(save, 10_000);
     return () => {
@@ -468,8 +485,13 @@ export function TvPlayer({
             el.currentTime = resumeAt.current;
             resumeAt.current = null;
           }
+          ready.current = true;
         }}
-        onTimeUpdate={(e) => setTime(streamStart + e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          const here = streamStart + e.currentTarget.currentTime;
+          setTime(here);
+          if (ready.current && here > 0) bestKnown.current = here;
+        }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => {
@@ -480,11 +502,15 @@ export function TvPlayer({
         onError={() => {
           // The buffer in the middle failing is not the other device being
           // gone: go round it, from where the film had got to.
+          ready.current = false;
           if (relayed && relay?.url === playSrc) {
-            resumeAt.current = latest.current.time;
+            resumeAt.current = bestKnown.current;
             setRelayFailed(source);
             return;
           }
+          // Remembered, so trying again picks up where the film was and not
+          // where it was opened.
+          resumeAt.current = bestKnown.current;
           setFailed(true);
         }}
       />
