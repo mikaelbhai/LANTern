@@ -76,10 +76,7 @@ jobs:
           grep -nEi "sign|team|provision" project.yml || true
           echo "--- project.pbxproj, signing lines before"
           grep -nE "CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING" lantern.xcodeproj/project.pbxproj || true
-          perl -pi -e 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";
-				CODE_SIGN_STYLE = Manual;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGNING_REQUIRED = NO;/g' lantern.xcodeproj/project.pbxproj
+          perl -pi -e 's/CODE_SIGN_IDENTITY = "iPhone Developer";/CODE_SIGN_IDENTITY = "";\n\t\t\t\tCODE_SIGN_STYLE = Manual;\n\t\t\t\tCODE_SIGNING_ALLOWED = NO;\n\t\t\t\tCODE_SIGNING_REQUIRED = NO;/g' lantern.xcodeproj/project.pbxproj
           echo "--- project.pbxproj, signing lines after"
           grep -nE "CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING" lantern.xcodeproj/project.pbxproj || true
 
