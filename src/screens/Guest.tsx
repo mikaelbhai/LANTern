@@ -195,6 +195,7 @@ function Shell({ g }: { g: GuestSnapshot }) {
   const ensureDm = useStore((s) => s.ensureDm);
   const openRoom = useStore((s) => s.openRoom);
   const activeRoomId = useStore((s) => s.activeRoomId);
+  const playerActive = useStore((s) => s.playerActive);
   React.useEffect(() => {
     if (active === 'chats' && !activeRoomId && g.hostId) openRoom(ensureDm(g.hostId));
   }, [active, activeRoomId, g.hostId, ensureDm, openRoom]);
@@ -271,9 +272,29 @@ function Shell({ g }: { g: GuestSnapshot }) {
       )}
 
       <main className="flex-1 min-h-0 relative">
-        {active === 'theatre' && <Theatre />}
-        {active === 'chats' && <Chats />}
-        {active === 'files' && <GuestFiles hostId={g.hostId} hostName={g.hostName} />}
+        {/* Kept, unseen, while a film is loaded: unmounting it on the way to
+            Chat is how a film kept playing with nothing on screen to stop it.
+            The player pauses itself while it is away and resumes on return. */}
+        {(active === 'theatre' || playerActive) && (
+          <div
+            className={cn(
+              'absolute inset-0',
+              active !== 'theatre' && 'invisible pointer-events-none',
+            )}
+          >
+            <Theatre />
+          </div>
+        )}
+        {active === 'chats' && (
+          <div className="absolute inset-0">
+            <Chats />
+          </div>
+        )}
+        {active === 'files' && (
+          <div className="absolute inset-0">
+            <GuestFiles hostId={g.hostId} hostName={g.hostName} />
+          </div>
+        )}
       </main>
 
       <IncomingFile />

@@ -447,6 +447,8 @@ export function Theatre() {
         }}
         docked={docked}
         mini={mini}
+        // A phone keeps playing as a small window; a desktop pauses.
+        away={!onScreen && !phone}
         onExpand={expand}
       />
     );

@@ -103,6 +103,7 @@ export function Player({
   onProgress,
   docked = false,
   mini = false,
+  away = false,
   onExpand,
 }: {
   item: MediaItem;
@@ -125,6 +126,14 @@ export function Player({
    * a second one - so the controls shown are the few that fit.
    */
   docked?: boolean;
+  /**
+   * Another screen is showing and this player is being kept, out of sight, for
+   * when somebody comes back. On a desktop that means paused - it plays on only
+   * in the operating system's own picture-in-picture window, which is the one
+   * thing that is still visible - and deaf to keys and Back, which belong to
+   * whatever is on screen now. Resumes by itself when the screen returns.
+   */
+  away?: boolean;
   /**
    * Smaller still: a thumbnail over some other screen. No title, and tapping
    * anywhere on it asks for more room.
@@ -641,7 +650,60 @@ export function Player({
   // Back closes the player. Without this it quit the app mid-film.
   // Not while shrunk: Back then belongs to whatever is on screen behind the
   // player, and closing the film from Chats was not what anyone pressed it for.
-  useBackDismiss(!docked, onClose);
+  useBackDismiss(!docked && !away, onClose);
+
+  /*
+   * Leaving for another screen.
+   *
+   * A film left playing with nobody looking at it was the fault: the player was
+   * thrown away on the way out, and a playing media element that has been
+   * removed from the page keeps playing - sound and all - with nothing left to
+   * stop it. Playing something, going elsewhere and playing something else
+   * stacked them up, and only killing the process ended them. So the player is
+   * now kept, and this is what it does while it is kept.
+   */
+  const awayRef = React.useRef(away);
+  awayRef.current = away;
+  const pausedByAway = React.useRef(false);
+  React.useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (away) {
+      // In its own window it is still being watched; leave it alone.
+      if (document.pictureInPictureElement === el) return;
+      if (!el.paused) {
+        pausedByAway.current = true;
+        el.pause();
+      }
+    } else if (pausedByAway.current) {
+      pausedByAway.current = false;
+      void el.play().catch(() => {
+        /* Refused (no gesture yet): the play button is right there. */
+      });
+    }
+  }, [away]);
+
+  /*
+   * Closing the player stops the film, whatever else is true.
+   *
+   * A layout effect, because by the time a passive one runs React has already
+   * let go of the element and there is nothing left to pause.
+   */
+  React.useLayoutEffect(
+    () => () => {
+      const el = videoRef.current;
+      if (!el) return;
+      try {
+        if (document.pictureInPictureElement === el) void document.exitPictureInPicture();
+      } catch {
+        /* nothing out to bring back */
+      }
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+    },
+    [],
+  );
 
   /* ------------------------------------------------------ chrome timing */
 
@@ -846,10 +908,12 @@ export function Player({
   // The arrows seek and set the volume. On a television they would also
   // move focus - off the video and into whatever is behind it - because
   // D-pad navigation listens on the window exactly as this does.
-  React.useEffect(claimArrowKeys, []);
+  React.useEffect(() => (away ? undefined : claimArrowKeys()), [away]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Not while kept out of sight: space in Chats must not play a film.
+      if (awayRef.current) return;
       const target = e.target as HTMLElement | null;
       if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
       // A locked player listens to nothing but the way out of the lock, and
@@ -1192,7 +1256,12 @@ export function Player({
     const el = videoRef.current;
     if (!el) return;
     const enter = () => setPip(true);
-    const leave = () => setPip(false);
+    const leave = () => {
+      setPip(false);
+      // Its window was closed while another screen is showing: nothing is
+      // watching it any more, and the sound would go on without a picture.
+      if (awayRef.current) el.pause();
+    };
     el.addEventListener('enterpictureinpicture', enter);
     el.addEventListener('leavepictureinpicture', leave);
     return () => {

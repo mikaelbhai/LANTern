@@ -373,8 +373,18 @@ export default function App() {
             instance; the player itself is on the page, not in this box, and
             carries on as a small window over whatever is showing.
           */}
-          {(screen === 'theatre' || (playerActive && rotatesWithDevice())) && (
-            <div key="theatre" className={cn('absolute inset-0', screen !== 'theatre' && 'hidden')}>
+          {(screen === 'theatre' || playerActive) && (
+            <div
+              key="theatre"
+              className={cn(
+                'absolute inset-0',
+                // A phone's player lives on the page, outside this box, so the box
+                // can go. A desktop's is inside it: display:none would take the
+                // picture-in-picture source with it, so it is only made unseen.
+                screen !== 'theatre' &&
+                  (rotatesWithDevice() ? 'hidden' : 'invisible pointer-events-none'),
+              )}
+            >
               <Theatre />
             </div>
           )}
