@@ -614,12 +614,17 @@ function FilesTab() {
         </div>
       </Row>
       <Row
-        label="Auto-accept from trusted peers"
-        hint="Saves what they send straight to disk, with no per-file ask. Off by default."
+        label="Save without asking from"
+        hint="Whose files go straight to disk with no per-file ask. Everyone else is asked first."
       >
-        <Toggle
-          checked={s.autoAcceptTrusted}
-          onChange={(v) => upd({ autoAcceptTrusted: v })}
+        <Select
+          value={s.autoAccept}
+          onChange={(v) => upd({ autoAccept: v })}
+          options={[
+            { value: 'never', label: 'Nobody' },
+            { value: 'trusted', label: 'Trusted devices' },
+            { value: 'mine', label: 'My own devices' },
+          ]}
         />
       </Row>
       <Row

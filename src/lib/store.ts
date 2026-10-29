@@ -131,7 +131,13 @@ export interface Settings {
   };
   files: {
     downloadDir: string;
-    autoAcceptTrusted: boolean;
+    /**
+     * Whose files are saved without asking: nobody, devices vouched for, or
+     * this person's own (paired companions). Never "anybody on the network" -
+     * writing to disk before anyone chose to is the one thing this app
+     * promises not to do.
+     */
+    autoAccept: 'never' | 'trusted' | 'mine';
     /** What to do when a received file's name is already in the folder. */
     onConflict: 'ask' | 'keep' | 'replace' | 'skip';
     defaultExpiry: 'never' | '1h' | '6h' | '24h' | '7d';
@@ -195,7 +201,7 @@ const defaultSettings: Settings = {
     // install must not turn it into a standing yes to every transfer that
     // peer ever sends. Opt-in only, from Settings, in plain sight of what it
     // means.
-    autoAcceptTrusted: false,
+    autoAccept: 'never',
     onConflict: 'ask',
     defaultExpiry: 'never',
     zipFolders: true,
@@ -440,18 +446,29 @@ function migrateSettings(settings: Settings): Settings {
   if (settings.accent === OLD_DEFAULT_ACCENT) {
     settings = { ...settings, accent: defaultSettings.accent };
   }
-  // Every existing install has this sitting on `true`, because that used to
-  // be the default rather than anything picked - "auto-accept from trusted
-  // peers" was silently saving whatever a trusted peer sent, with no per-file
-  // ask, which is the one promise this app makes not to break. Indistinguishable
-  // from someone who deliberately turned it on, the same way the old accent
-  // was indistinguishable from gold chosen on purpose - and the same call:
-  // move it, because staying silently on the wrong side of consent is worse
-  // than asking someone who wanted it back to flip one switch.
-  if (settings.files?.autoAcceptTrusted === true) {
-    settings = { ...settings, files: { ...settings.files, autoAcceptTrusted: false } };
-  }
-  return settings;
+  // The old on/off switch for "auto-accept from trusted peers" is gone. It sat
+  // on `true` in every existing install because that used to be the default
+  // rather than anything picked, which silently saved whatever a trusted peer
+  // sent - and a switch whose "on" cannot be told from "never touched" cannot be
+  // carried over. Everybody starts from "ask", and chooses again if they want.
+  // (It also reset itself to off on every start, which is why it is not simply
+  // read: this ran each time the app opened.)
+  const { autoAcceptTrusted: _legacy, ...files } = (settings.files ?? {}) as Record<string, unknown>;
+  void _legacy;
+
+  // Groups are merged one level down. The spread in loadPersisted replaces a
+  // whole group with the saved one, so a setting added to a group later - this
+  // one, and the conflict policy before it - was simply missing from every
+  // install that already had the group saved.
+  return {
+    ...settings,
+    notifications: { ...defaultSettings.notifications, ...settings.notifications },
+    calls: { ...defaultSettings.calls, ...settings.calls },
+    files: { ...defaultSettings.files, ...files } as Settings['files'],
+    network: { ...defaultSettings.network, ...settings.network },
+    privacy: { ...defaultSettings.privacy, ...settings.privacy },
+    playback: { ...defaultSettings.playback, ...settings.playback },
+  };
 }
 
 function loadPersisted(): Partial<State> {
@@ -1217,6 +1234,17 @@ export const useStore = create<State>((set, get) => {
       on('transfer:offer', (t: Transfer) => {
         get().addTransfers([t]);
         const peer = get().peers[t.peerId];
+        // Whether this sender is one whose files are saved without asking, by
+        // the setting. Only "mine" has to look anything up.
+        const comesStraightThrough = async (): Promise<boolean> => {
+          const mode = get().settings.files.autoAccept;
+          if (mode === 'trusted') return !!peer?.trusted;
+          if (mode === 'mine') {
+            const mine = await api.peers.companions().catch(() => []);
+            return (mine ?? []).some((c) => c.deviceId === (peer?.deviceId ?? t.peerId));
+          }
+          return false;
+        };
         /*
          * A file riding a chat message is not unasked - it arrived with the
          * message you can already see, and the bubble is where accepting
@@ -1226,17 +1254,12 @@ export const useStore = create<State>((set, get) => {
          * there. Auto-accept for a trusted peer still applies either way:
          * that decision is about who is sending it, not how it arrived.
          */
-        if (!t.viaChat) {
-          // Ask, unless this peer is trusted and set to come straight through.
-          if (!(peer?.trusted && get().settings.files.autoAcceptTrusted)) {
-            set({ pendingOffer: t });
-          }
-        }
-        // Anything else waits as "queued" for the user to accept, so a device
-        // on the network cannot push files at you unasked.
-        if (peer?.trusted && get().settings.files.autoAcceptTrusted) {
-          void api.files.accept(t.id);
-        }
+        // Anything not waved through waits as "queued" for the user to accept,
+        // so a device on the network cannot push files at you unasked.
+        void comesStraightThrough().then((straight) => {
+          if (straight) void api.files.accept(t.id);
+          else if (!t.viaChat) set({ pendingOffer: t });
+        });
         if (get().settings.notifications.file && !get().settings.notifications.dnd) {
           get().toast({
             kind: 'info',
