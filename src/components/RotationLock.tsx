@@ -49,7 +49,9 @@ export function RotationLock({ className }: { className?: string }) {
       aria-pressed={locked || noFlip}
       title={label}
       className={cn(
-        'relative h-9 w-9 rounded-full grid place-items-center border transition-colors',
+        // shrink-0: in a crowded header bar the flex row squeezed the ring
+        // into a pill.
+        'relative h-9 w-9 shrink-0 rounded-full grid place-items-center border transition-colors',
         locked ? 'border-gold text-gold' : noFlip ? 'border-gold/70 text-white/90' : 'border-current/40',
         className,
       )}

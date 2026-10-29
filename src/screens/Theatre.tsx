@@ -381,6 +381,28 @@ export function Theatre() {
   const docked =
     phone && !!playing && !landscapeNow && !portraitClip.current && !forcedLandscape.current;
 
+  // How far down the library has to start to clear the strip. The shell
+  // already reserves room for its own bar at the top, and the strip sits over
+  // that bar, so only what the strip needs beyond it is added: measured, not
+  // guessed, because the bar's height depends on the phone's status bar.
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const dockRef = React.useRef<HTMLDivElement>(null);
+  const [dockPad, setDockPad] = React.useState(0);
+  React.useLayoutEffect(() => {
+    if (!docked) {
+      setDockPad(0);
+      return;
+    }
+    const measure = () => {
+      const strip = dockRef.current?.offsetHeight ?? 0;
+      const top = rootRef.current?.getBoundingClientRect().top ?? 0;
+      setDockPad(Math.max(0, Math.round(strip - top)));
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [docked, landscapeNow]);
+
   let playerEl: React.ReactNode = null;
   if (playing) {
     const order = seriesOrder(items, playing);
@@ -426,9 +448,10 @@ export function Theatre() {
     // below are dark with it. It used to be a hardcoded #08090C between two
     // white bars. See `.cinema` in index.css.
     <div
+      ref={rootRef}
       className="h-full flex flex-col bg-base"
       // Clear of the strip, which is fixed to the top edge above everything.
-      style={docked ? { paddingTop: 'calc(56.25vw + env(safe-area-inset-top))' } : undefined}
+      style={docked && dockPad ? { paddingTop: dockPad } : undefined}
     >
       <ScreenHeader
         icon={<Film size={15} />}
@@ -680,6 +703,7 @@ export function Theatre() {
         playing &&
         createPortal(
           <div
+            ref={dockRef}
             className={
               docked
                 ? 'fixed top-0 inset-x-0 z-[60] bg-black'
@@ -929,22 +953,32 @@ function Hero({
         <h1 className="text-2xl md:text-[40px] font-bold leading-[1.05] text-white drop-shadow-lg">
           {item.title}
         </h1>
-        <div className="flex items-center gap-2 mt-2.5 text-xs text-white/70 flex-wrap">
-          {item.year && <span>{item.year}</span>}
-          <span>·</span>
-          <span>{runtime(item.durationSec)}</span>
-          {item.quality && (
-            <>
-              <span>·</span>
-              <span className="px-1.5 h-[18px] inline-flex items-center rounded border border-white/25 text-[10px] font-semibold tracking-wide">
+        {/* Only the parts that exist, joined by a dot between neighbours: a
+            title with no year or genre used to read "· 2h 0m · 1080p · · Mikael". */}
+        <div className="flex items-center gap-x-2 gap-y-1 mt-2.5 text-xs text-white/70 flex-wrap">
+          {[
+            item.year ? <span key="year">{item.year}</span> : null,
+            item.durationSec > 0 ? <span key="len">{runtime(item.durationSec)}</span> : null,
+            item.quality ? (
+              <span
+                key="q"
+                className="px-1.5 h-[18px] inline-flex items-center rounded border border-white/25 text-[10px] font-semibold tracking-wide"
+              >
                 {item.quality}
               </span>
-            </>
-          )}
-          <span>·</span>
-          <span>{item.genres.join(' · ')}</span>
-          <span>·</span>
-          <span className="text-cyan">{owner}</span>
+            ) : null,
+            item.genres.length > 0 ? <span key="g">{item.genres.join(' · ')}</span> : null,
+            <span key="o" className="text-cyan">
+              {owner}
+            </span>,
+          ]
+            .filter(Boolean)
+            .map((part, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <span aria-hidden>·</span>}
+                {part}
+              </React.Fragment>
+            ))}
         </div>
         {item.synopsis && (
           <p className="text-sm text-white/80 mt-3 leading-relaxed max-w-lg line-clamp-3">
