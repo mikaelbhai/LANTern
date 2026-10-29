@@ -1,0 +1,124 @@
+# Builds LANTern for iPhone and iPad as an UNSIGNED .ipa, for sideloading.
+#
+# iOS tooling only runs on a Mac, same as macOS, so this lives here for the same
+# reason release.yml does.
+#
+# Nothing here signs the app. A paid Apple developer account is not a
+# reasonable prerequisite for a LAN tool, and an app signed with somebody
+# else's certificate would not install on anyone else's phone anyway. The
+# person installing signs it with their own Apple ID, using SideStore,
+# Sideloadly or AltStore; TrollStore installs it as it is on the iOS versions
+# it supports. The release notes say so.
+#
+# How the unsigned .ipa comes about: `tauri ios build` archives with Xcode and
+# then tries to export, and the export is the step that insists on a signing
+# identity. The archive itself can be made without one if Xcode is told so
+# through an xcconfig, which is the one way to reach the xcodebuild that the
+# Tauri CLI runs rather than one this file runs. So the export is allowed to
+# fail; the .xcarchive it leaves behind already holds the .app, and an .ipa is
+# only that folder renamed to Payload and zipped.
+name: iOS build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  ios:
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # macOS bundles the detached host as a resource, and the shared config
+      # declares nothing for iOS, so this should never be read. It costs a
+      # second to make sure a stray merge cannot fail the build over it.
+      - name: Placeholder for the desktop-only host
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/lantern-host
+
+      # The Xcode project is generated, not committed: it embeds absolute
+      # paths and a team id, and regenerating it keeps it in step with the
+      # Tauri CLI that builds it.
+      - name: Generate the Xcode project
+        run: npx tauri ios init --ci
+
+      - name: Tell Xcode not to sign
+        run: |
+          cat > "$RUNNER_TEMP/unsigned.xcconfig" <<'EOF'
+          CODE_SIGNING_ALLOWED = NO
+          CODE_SIGNING_REQUIRED = NO
+          CODE_SIGN_IDENTITY =
+          DEVELOPMENT_TEAM =
+          PROVISIONING_PROFILE_SPECIFIER =
+          EOF
+          echo "XCODE_XCCONFIG_FILE=$RUNNER_TEMP/unsigned.xcconfig" >> "$GITHUB_ENV"
+
+      # Expected to end in an export error. What matters is whether the
+      # archive exists afterwards, which the next step checks.
+      - name: Archive
+        run: |
+          set -o pipefail
+          npx tauri ios build --ci --export-method debugging -v 2>&1 | tee "$RUNNER_TEMP/ios-build.log" || true
+
+      - name: Package the archive as an .ipa
+        id: named
+        run: |
+          version=$(node -p "require('./package.json').version")
+          archive=$(find src-tauri/gen/apple -name '*.xcarchive' -maxdepth 4 | head -1)
+          if [ -z "$archive" ]; then
+            echo "No .xcarchive was produced; the build log is attached." >&2
+            exit 1
+          fi
+          app=$(find "$archive/Products/Applications" -name '*.app' -maxdepth 1 | head -1)
+          echo "Archive: $archive"
+          echo "App:     $app"
+          rm -rf "$RUNNER_TEMP/ipa" && mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          # A signature left over from the archive would be invalid once the
+          # sideloading tool changes the bundle, and would only confuse it.
+          rm -rf "$RUNNER_TEMP/ipa/Payload/"*.app/_CodeSignature
+          out="LANTern_${version}_ios.ipa"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry -0 "$GITHUB_WORKSPACE/$out" Payload)
+          unzip -l "$out" | head -20
+          echo "path=$out" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-ipa
+          path: ${{ steps.named.outputs.path }}
+
+      # Kept on success too: a green run still tells you which warnings the
+      # next Xcode will turn into errors.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios-build.log
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.named.outputs.path }}

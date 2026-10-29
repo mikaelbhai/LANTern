@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated Info.plist by the Tauri CLI.
+
+	  Without these two keys iOS does not ask about the local network at all: it
+	  silently drops every connection to another device and every mDNS reply, so
+	  the app launches fine and finds nobody - which looks exactly like a Wi-Fi
+	  problem and is not one.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>LANTern talks to other devices on this network: chat, files and the library. Nothing leaves your network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lantern._tcp</string>
+	</array>
+</dict>
+</plist>
