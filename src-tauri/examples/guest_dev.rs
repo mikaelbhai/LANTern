@@ -71,6 +71,34 @@ async fn main() {
         });
     });
 
+    // A plain folder share, to look at the listing page.
+    let nested = library.join("Season 1");
+    let _ = std::fs::create_dir_all(&nested);
+    let _ = std::fs::write(nested.join("Episode 1.mkv"), vec![0u8; 2048]);
+    let _ = std::fs::write(library.join("notes.txt"), b"hello");
+    state.with(|s| {
+        s.shares.push(Share {
+            id: "dev-docs".into(),
+            name: "Docs".into(),
+            path: library.to_string_lossy().to_string(),
+            slug: "docs".into(),
+            mode: ShareMode::Files,
+            running: true,
+            require_phrase: false,
+            phrase: None,
+            allow_upload: false,
+            unlisted: false,
+            audience: Vec::new(),
+            file_count: 2,
+            total_bytes: 2053,
+            created_at: 0,
+            requests: 0,
+            bytes_served: 0,
+            active_viewers: 0,
+            last_request_at: None,
+        });
+    });
+
     let (inbound_tx, mut inbound_rx) = tokio::sync::mpsc::unbounded_channel::<Envelope>();
     guest::attach_with(
         Box::new(|event, payload| println!("[event] {event} {payload}")),
