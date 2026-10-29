@@ -19,9 +19,9 @@
 # only that folder renamed to Payload and zipped.
 name: iOS build
 
+# Manual only. Not built on release tags: it is shelved, and a job that fails on
+# every tag would only be noise. Run it from the Actions tab if iOS comes back.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 jobs:
