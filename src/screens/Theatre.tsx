@@ -992,7 +992,7 @@ function Hero({
 }) {
   const resume = item.progressSec > 30;
   return (
-    <div className="relative h-[220px] md:h-[300px]">
+    <div className="relative h-[320px] md:h-[400px]">
       <Artwork
         title={item.title}
         seed={item.id}
@@ -1003,13 +1003,13 @@ function Hero({
       <div className="absolute inset-0 bg-gradient-to-r from-[#08090C] via-[#08090C]/70 to-transparent" />
       <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#08090C] to-transparent" />
 
-      <div className="relative h-full flex flex-col justify-end p-5 md:p-8 max-w-xl">
+      <div className="relative h-full flex flex-col justify-end p-6 md:p-10 max-w-2xl">
         {item.series && (
           <Badge tone="gold" className="w-fit mb-2">
             {item.series} · S{item.season} E{item.episode}
           </Badge>
         )}
-        <h1 className="text-xl md:text-[30px] font-bold leading-[1.05] text-white drop-shadow-lg">
+        <h1 className="text-2xl md:text-[40px] font-bold leading-[1.05] text-white drop-shadow-lg">
           {item.title}
         </h1>
         {/* Only the parts that exist, joined by a dot between neighbours: a
@@ -1082,17 +1082,6 @@ function Hero({
 
 /* ----------------------------------------------------------------- rows */
 
-/**
- * How wide one tile is.
- *
- * A fixed 208 px was a decent size on a laptop and far too much on anything
- * with more pixels - a television showed four and a half across with the rest
- * of the screen empty - so it follows the width of the screen instead: roughly
- * ten across when there is room, and never so small that a title cannot be
- * read.
- */
-const TILE: React.CSSProperties = { width: 'clamp(8.25rem, calc(100vw / 10.5), 11rem)' };
-
 function Row({
   label,
   entries,
@@ -1143,7 +1132,7 @@ function Row({
   };
 
   return (
-    <section className="mt-4 group/row">
+    <section className="mt-6 group/row">
       <div className="flex items-center gap-2 justify-between px-6 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className={cn('text-sm font-semibold', label === 'Unrated' ? 'text-warn' : 'text-white/90')}>
@@ -1184,7 +1173,7 @@ function Row({
           >
             {entries.map((entry) =>
               entry.type === 'item' ? (
-                <div key={entry.item.id} className="shrink-0" style={TILE}>
+                <div key={entry.item.id} className="w-52 shrink-0">
                   <Card
                     item={entry.item}
                     owner={ownerName(entry.item)}
@@ -1194,7 +1183,7 @@ function Row({
                   />
                 </div>
               ) : (
-                <div key={entry.collection.key} className="shrink-0" style={TILE}>
+                <div key={entry.collection.key} className="w-52 shrink-0">
                   <CollectionCard
                     collection={entry.collection}
                     onOpen={() => {
