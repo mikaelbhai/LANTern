@@ -490,6 +490,9 @@ export async function handle(cmd: string, args: any): Promise<any> {
     case 'chat_typing':
       await post('typing', { roomId: args.roomId, peerId: snapshot.me });
       return null;
+    case 'chat_ack':
+      await post('chat', { ack: { ids: args.ids, status: args.status } });
+      return true;
     case 'chat_react':
       await post('chat', { reaction: { messageId: args.messageId, emoji: args.emoji } });
       return null;

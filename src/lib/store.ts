@@ -95,6 +95,8 @@ interface InboundChat {
   roomId?: string;
   message?: Message;
   reaction?: { messageId: string; emoji: string };
+  /** The far end saying messages of ours arrived, or were read. */
+  ack?: { ids: string[]; status: 'delivered' | 'seen' };
 }
 
 const LS_KEY = 'lantern.state.v1';
@@ -372,6 +374,10 @@ interface State {
   openThread: (messageId: string | null) => void;
 
   sendMessage: (roomId: string, input: Partial<Message>) => void;
+  /** Sends a message that could not be delivered, again. */
+  retryMessage: (roomId: string, messageId: string) => void;
+  /** Tells the senders of what is in this room that it has been read. */
+  acknowledgeSeen: (roomId: string) => void;
   /** Re-sends a message's content into other rooms, marked as forwarded. */
   forwardMessage: (messageId: string, targetRoomIds: string[]) => Promise<void>;
   editMessage: (id: string, body: string) => void;
@@ -661,6 +667,42 @@ export const useStore = create<State>((set, get) => {
    * when it went to sleep belongs to a session that no longer exists, and
    * comparing against it here would silently never match.
    */
+  /** Message ids already reported as read, so they are not reported twice. */
+  const seenSent = new Set<string>();
+
+  /**
+   * Sends one message to its room, and records the outcome.
+   *
+   * "Failed" means nobody could be reached, which for a conversation with one
+   * person is exactly "not sent". A room that broadcasts (no member list) cannot
+   * say, so it is never marked.
+   */
+  const transmit = async (roomId: string, msg: Message) => {
+    const members = get().rooms[roomId]?.members ?? [];
+    const reached = await api.chat.send(roomId, msg, members).catch(() => 0);
+    const failed = members.length > 0 && !reached;
+    set((s) => ({
+      messages: {
+        ...s.messages,
+        [roomId]: (s.messages[roomId] ?? []).map((m) =>
+          m.id === msg.id ? { ...m, failed: failed || undefined } : m,
+        ),
+      },
+    }));
+    persist(get());
+  };
+
+  /** Sends again whatever was waiting for this peer to come back. */
+  const flushFailed = async (deviceId: string) => {
+    for (const [roomId, list] of Object.entries(get().messages)) {
+      const members = get().rooms[roomId]?.members ?? [];
+      if (!members.includes(deviceId)) continue;
+      for (const m of list) {
+        if (m.failed && m.authorId === get().profile.id) await transmit(roomId, m);
+      }
+    }
+  };
+
   const flushPendingSend = async (deviceId: string, peerId: string) => {
     const pending = get().pendingSends[deviceId];
     if (!pending) return;
@@ -980,6 +1022,7 @@ export const useStore = create<State>((set, get) => {
         setTimeout(() => {
           void get().shareProfile(p.id);
           void flushPendingSend(p.deviceId ?? p.id, p.id);
+          void flushFailed(p.deviceId ?? p.id);
         }, 1000);
       });
       on('peer:updated', (p: Peer) => {
@@ -1278,6 +1321,31 @@ export const useStore = create<State>((set, get) => {
       on('message:received', (p: InboundChat) => {
         if (!p?.from) return;
 
+        // Somebody saying our messages arrived, or were read. Not a message.
+        if (p.ack) {
+          const ids = new Set(p.ack.ids ?? []);
+          const seen = p.ack.status === 'seen';
+          set((s) => {
+            let changed = false;
+            const messages = { ...s.messages };
+            for (const rid of Object.keys(messages)) {
+              messages[rid] = messages[rid].map((m) => {
+                if (!ids.has(m.id)) return m;
+                changed = true;
+                return {
+                  ...m,
+                  failed: undefined,
+                  deliveredTo: m.deliveredTo.includes(p.from) ? m.deliveredTo : [...m.deliveredTo, p.from],
+                  seenBy: seen && !m.seenBy.includes(p.from) ? [...m.seenBy, p.from] : m.seenBy,
+                };
+              });
+            }
+            return changed ? { messages } : {};
+          });
+          persist(get());
+          return;
+        }
+
         if (p.reaction) {
           const { messageId, emoji } = p.reaction;
           set((s) => {
@@ -1332,6 +1400,12 @@ export const useStore = create<State>((set, get) => {
         });
 
         if (!accepted) return;
+
+        // It reached this device: say so. And if this is the room somebody is
+        // looking at, say it has been read as well.
+        void api.chat.ack(p.from, [msg.id], 'delivered').catch(() => {});
+        if (get().activeRoomId === roomId) get().acknowledgeSeen(roomId);
+
         const settings = get().settings.notifications;
         if (settings.sound && !settings.dnd) sfx.messageIn();
 
@@ -1629,35 +1703,14 @@ export const useStore = create<State>((set, get) => {
       set((s) => ({
         messages: { ...s.messages, [roomId]: [...(s.messages[roomId] ?? []), msg] },
       }));
-      void api.chat.send(roomId, msg, get().rooms[roomId]?.members ?? []);
       if (get().settings.notifications.sound && !msg.scheduledFor) sfx.messageOut();
       persist(get());
 
-      // Delivery/seen receipts arrive asynchronously from the far side.
-      const memberCount = get().rooms[roomId]?.members.length ?? 0;
-      if (memberCount && !msg.scheduledFor) {
-        const members = get().rooms[roomId].members;
-        setTimeout(() => {
-          set((s) => ({
-            messages: {
-              ...s.messages,
-              [roomId]: (s.messages[roomId] ?? []).map((m) =>
-                m.id === msg.id ? { ...m, deliveredTo: members } : m,
-              ),
-            },
-          }));
-        }, 420);
-        setTimeout(() => {
-          set((s) => ({
-            messages: {
-              ...s.messages,
-              [roomId]: (s.messages[roomId] ?? []).map((m) =>
-                m.id === msg.id ? { ...m, seenBy: members } : m,
-              ),
-            },
-          }));
-        }, 2100);
-      }
+      // Delivered and seen are the other end saying so (see the `ack` handling
+      // in message:received). They used to be a pair of timers that ticked
+      // whatever happened - a message to a device that was off showed "seen".
+      // What is known here is only whether anybody could be reached.
+      if (!msg.scheduledFor) void transmit(roomId, msg);
     },
 
     async forwardMessage(messageId, targetRoomIds) {
@@ -1787,6 +1840,28 @@ export const useStore = create<State>((set, get) => {
           rooms: { ...s.rooms, [roomId]: { ...room, unread: 0, lastReadAt: Date.now() } },
         };
       });
+      get().acknowledgeSeen(roomId);
+    },
+
+    acknowledgeSeen(roomId) {
+      // Only what is actually in front of somebody: a room open in a window that
+      // is hidden has not been read.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const me = get().profile.id;
+      const byAuthor: Record<string, string[]> = {};
+      for (const m of get().messages[roomId] ?? []) {
+        if (m.authorId === me || m.system || m.deleted || seenSent.has(m.id)) continue;
+        seenSent.add(m.id);
+        (byAuthor[m.authorId] ??= []).push(m.id);
+      }
+      for (const [author, ids] of Object.entries(byAuthor)) {
+        void api.chat.ack(author, ids, 'seen').catch(() => {});
+      }
+    },
+
+    retryMessage(roomId, messageId) {
+      const msg = (get().messages[roomId] ?? []).find((m) => m.id === messageId);
+      if (msg) void transmit(roomId, msg);
     },
 
     startCall(kind, peerIds, roomId) {

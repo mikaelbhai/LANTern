@@ -896,9 +896,22 @@ export async function handle(cmd: string, args: any): Promise<any> {
       return null;
     }
 
-    case 'chat_send':
-      // No peers in the browser preview, so nothing is delivered.
-      return 0;
+    case 'chat_send': {
+      // The preview's people answer the way real ones now do: an acknowledgement
+      // when it arrives and another when it has been read.
+      const members: string[] = args.memberIds ?? [];
+      const id = args.payload?.id;
+      if (id) {
+        members.forEach((m) => {
+          setTimeout(() => emit('message:received', { from: m, ack: { ids: [id], status: 'delivered' } }), 420);
+          setTimeout(() => emit('message:received', { from: m, ack: { ids: [id], status: 'seen' } }), 2100);
+        });
+      }
+      return members.length;
+    }
+
+    case 'chat_ack':
+      return true;
 
     case 'chat_typing':
       return null;

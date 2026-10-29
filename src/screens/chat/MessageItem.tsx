@@ -83,6 +83,7 @@ export function MessageItem({
   const transfers = useStore((s) => s.transfers);
   const density = useStore((s) => s.settings.density);
   const toggleReaction = useStore((s) => s.toggleReaction);
+  const retryMessage = useStore((s) => s.retryMessage);
   const togglePin = useStore((s) => s.togglePin);
   const toggleSaved = useStore((s) => s.toggleSaved);
   const editMessage = useStore((s) => s.editMessage);
@@ -170,6 +171,21 @@ export function MessageItem({
 
   const receipts = () => {
     if (!mine || m.scheduledFor) return null;
+    // Nobody could be reached. Said plainly, with the way to try again, in the
+    // place the ticks would have been.
+    if (m.failed) {
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            retryMessage(m.roomId, m.id);
+          }}
+          className="inline-flex items-center gap-1 text-2xs text-danger hover:underline"
+        >
+          Not sent · Retry
+        </button>
+      );
+    }
     const memberCount = room?.members.length ?? 0;
     const seen = memberCount > 0 && m.seenBy.length >= memberCount;
     const delivered = m.deliveredTo.length > 0;

@@ -1568,6 +1568,30 @@ pub fn chat_send(
         .count()
 }
 
+/// Tells one peer that messages of theirs arrived, or were read.
+///
+/// The same "chat" envelope as everything else in a conversation, carrying
+/// `ack` instead of a message. Targeted, unlike a reaction: a receipt for a
+/// direct message is nobody else's business.
+#[tauri::command]
+pub fn chat_ack(state: State<'_, AppState>, peer_id: String, ids: Vec<String>, status: String) -> bool {
+    // Only the two states there are; anything else would be a way to put
+    // arbitrary words into another device's message list.
+    if status != "delivered" && status != "seen" {
+        return false;
+    }
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "chat".into(),
+            payload: serde_json::json!({ "ack": { "ids": ids, "status": status } }),
+        },
+    )
+}
+
 #[tauri::command]
 pub fn chat_typing(state: State<'_, AppState>, room_id: String) {
     let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));

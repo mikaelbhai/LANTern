@@ -301,6 +301,9 @@ export const api = {
     send: (roomId: string, payload: any, memberIds: string[] = []) =>
       call<number>('chat_send', { roomId, payload, memberIds }),
     typing: (roomId: string) => call<void>('chat_typing', { roomId }),
+    /** Says to one peer that their messages arrived ("delivered") or were read ("seen"). */
+    ack: (peerId: string, ids: string[], status: 'delivered' | 'seen') =>
+      call<boolean>('chat_ack', { peerId, ids, status }),
     react: (messageId: string, emoji: string) =>
       call<void>('chat_react', { messageId, emoji }),
   },

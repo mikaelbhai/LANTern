@@ -155,6 +155,11 @@ export interface Message {
   seenBy: string[];
   scheduledFor?: number;
   pending?: boolean;
+  /**
+   * Nobody was reachable when this was sent. Shown as "Not sent" with a way to
+   * try again, and sent again by itself when the person it was for comes back.
+   */
+  failed?: boolean;
   system?: boolean;
 }
 
