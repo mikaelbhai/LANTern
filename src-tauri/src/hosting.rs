@@ -366,6 +366,19 @@ async fn index(
             ));
         }
         body.push_str("</ul>");
+
+        // An iPhone cannot install a package by tapping it, and this one is not
+        // signed: whoever installs it signs it with their own Apple ID, which
+        // is what the sideloading tools below do. Said here because the file
+        // would otherwise download and do nothing.
+        if installers.iter().any(|i| i.platform == "iOS") {
+            body.push_str(
+                "<p class=empty>On an iPhone or iPad, open the downloaded file in \
+                 <b>SideStore</b>, <b>AltStore</b> or <b>Sideloadly</b>; they sign it with \
+                 your own Apple ID, and a free one lasts seven days before it is renewed. \
+                 On iOS 14 to 16.6.1 and on 17.0 exactly, <b>TrollStore</b> installs it permanently.</p>",
+            );
+        }
     }
 
     /*
