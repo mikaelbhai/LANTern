@@ -244,6 +244,13 @@ interface State {
   screen: Screen;
   screenTrail: Screen[];
   navigate: (to: Screen) => void;
+  /**
+   * A film is playing on a phone. Read by the shell, which keeps Theatre
+   * mounted (out of sight) while this is set so the film outlives a visit to
+   * another tab; written by Theatre, the only thing that knows.
+   */
+  playerActive: boolean;
+  setPlayerActive: (on: boolean) => void;
   /** One step back, or Home. False when there was nowhere to go. */
   goBack: () => boolean;
   /**
@@ -707,6 +714,8 @@ export const useStore = create<State>((set, get) => {
 
     screen: 'home',
     screenTrail: [],
+    playerActive: false,
+    setPlayerActive: (on) => set((s) => (s.playerActive === on ? {} : { playerActive: on })),
     navigate: (to) =>
       set((s) => {
         if (s.screen === to) return {};

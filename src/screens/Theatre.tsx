@@ -266,6 +266,8 @@ export function Theatre() {
 
   /** Back to the full screen from the docked strip, without waiting for the phone to turn. */
   const expand = () => {
+    // From a small window over another tab, "bigger" first means back here.
+    if (useStore.getState().screen !== 'theatre') navigate('theatre');
     if (!rotatesWithDevice() || useOrientation.getState().locked) return;
     forcedLandscape.current = true;
     setOrientation('landscape');
@@ -376,10 +378,21 @@ export function Theatre() {
 
   const phone = rotatesWithDevice();
   const landscapeNow = useOrientation((s) => s.landscape);
+  // Theatre stays mounted, out of sight, while a film plays and another tab is
+  // open (see App.tsx). Then the player is a small window, not a strip over a
+  // library nobody is looking at.
+  const onScreen = useStore((s) => s.screen === 'theatre');
+  const navigate = useStore((s) => s.navigate);
+  const setPlayerActive = useStore((s) => s.setPlayerActive);
+  React.useEffect(() => {
+    setPlayerActive(!!playing);
+    return () => setPlayerActive(false);
+  }, [playing, setPlayerActive]);
   // Held upright on a phone with a film going: a strip across the top, the
   // library underneath. A portrait clip is watched upright, full screen.
   const docked =
     phone && !!playing && !landscapeNow && !portraitClip.current && !forcedLandscape.current;
+  const mini = docked && !onScreen;
 
   // How far down the library has to start to clear the strip. The shell
   // already reserves room for its own bar at the top, and the strip sits over
@@ -389,7 +402,7 @@ export function Theatre() {
   const dockRef = React.useRef<HTMLDivElement>(null);
   const [dockPad, setDockPad] = React.useState(0);
   React.useLayoutEffect(() => {
-    if (!docked) {
+    if (!docked || mini) {
       setDockPad(0);
       return;
     }
@@ -401,7 +414,7 @@ export function Theatre() {
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [docked, landscapeNow]);
+  }, [docked, mini, landscapeNow]);
 
   let playerEl: React.ReactNode = null;
   if (playing) {
@@ -433,6 +446,7 @@ export function Theatre() {
           if (portrait && forcedLandscape.current) releaseForcedLandscape();
         }}
         docked={docked}
+        mini={mini}
         onExpand={expand}
       />
     );
@@ -705,17 +719,22 @@ export function Theatre() {
           <div
             ref={dockRef}
             className={
-              docked
-                ? 'fixed top-0 inset-x-0 z-[60] bg-black'
-                : 'fixed inset-0 z-[60] bg-black'
+              mini
+                ? 'fixed right-3 z-[60] w-44 aspect-video rounded-card overflow-hidden border border-white/20 bg-black shadow-2xl'
+                : docked
+                  ? 'fixed top-0 inset-x-0 z-[60] bg-black'
+                  : 'fixed inset-0 z-[60] bg-black'
             }
             style={
-              docked
-                ? {
-                    height: 'calc(56.25vw + env(safe-area-inset-top))',
-                    paddingTop: 'env(safe-area-inset-top)',
-                  }
-                : undefined
+              mini
+                ? // Above the tab bar, clear of the gesture strip.
+                  { bottom: 'calc(env(safe-area-inset-bottom) + 76px)' }
+                : docked
+                  ? {
+                      height: 'calc(56.25vw + env(safe-area-inset-top))',
+                      paddingTop: 'env(safe-area-inset-top)',
+                    }
+                  : undefined
             }
           >
             {playerEl}

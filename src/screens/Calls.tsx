@@ -119,7 +119,7 @@ export function Calls() {
             <Empty
               icon={<Phone size={20} />}
               title="No calls yet"
-              hint="Voice and video calls run peer-to-peer over WebRTC. Up to 16 on voice, 8 cameras on video."
+              hint="Calls with the people on your network show up here. They go straight between devices - up to 16 on voice, 8 cameras on video."
             />
           ) : (
             <ul className="divide-y divide-edge">

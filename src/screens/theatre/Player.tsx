@@ -102,6 +102,7 @@ export function Player({
   onShape,
   onProgress,
   docked = false,
+  mini = false,
   onExpand,
 }: {
   item: MediaItem;
@@ -124,6 +125,11 @@ export function Player({
    * a second one - so the controls shown are the few that fit.
    */
   docked?: boolean;
+  /**
+   * Smaller still: a thumbnail over some other screen. No title, and tapping
+   * anywhere on it asks for more room.
+   */
+  mini?: boolean;
   /** Asks for the full screen back, from the docked strip. */
   onExpand?: () => void;
 }) {
@@ -633,7 +639,9 @@ export function Player({
   const hideTimer = React.useRef<number>();
 
   // Back closes the player. Without this it quit the app mid-film.
-  useBackDismiss(true, onClose);
+  // Not while shrunk: Back then belongs to whatever is on screen behind the
+  // player, and closing the film from Chats was not what anyone pressed it for.
+  useBackDismiss(!docked, onClose);
 
   /* ------------------------------------------------------ chrome timing */
 
@@ -1404,15 +1412,19 @@ export function Player({
               className="h-full w-full opacity-40"
             />
             <div className="absolute inset-0 grid place-items-center">
-              <div className="text-center max-w-sm px-6">
-                <WifiOff size={28} className="mx-auto text-muted mb-3" />
-                <div className="text-sm font-medium text-white">
+              <div className={docked ? 'text-center px-2' : 'text-center max-w-sm px-6'}>
+                <WifiOff size={docked ? 18 : 28} className={docked ? 'mx-auto text-muted mb-1' : 'mx-auto text-muted mb-3'} />
+                <div className={docked ? 'text-[11px] font-medium text-white leading-tight' : 'text-sm font-medium text-white'}>
                   Can't reach {ownerName}
                 </div>
-                <p className="text-xs text-white/60 mt-1.5 leading-relaxed">
-                  The file is served from that device — it needs to be awake and on the
-                  network. Playback controls stay live so you can keep your place.
-                </p>
+                {/* The explanation does not fit a strip or a thumbnail, and the
+                    short line says the part that matters. */}
+                {!docked && (
+                  <p className="text-xs text-white/60 mt-1.5 leading-relaxed">
+                    The file is served from that device — it needs to be awake and on the
+                    network. Playback controls stay live so you can keep your place.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -2305,9 +2317,11 @@ export function Player({
           >
             {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
           </button>
-          <span className="absolute left-14 bottom-4 max-w-[60%] truncate text-xs font-medium text-white drop-shadow">
-            {item.title}
-          </span>
+          {!mini && (
+            <span className="absolute left-14 bottom-4 max-w-[60%] truncate text-xs font-medium text-white drop-shadow">
+              {item.title}
+            </span>
+          )}
           <div className="absolute bottom-0 inset-x-0 h-[3px] bg-white/25">
             <div className="h-full bg-gold" style={{ width: `${pct}%` }} />
           </div>

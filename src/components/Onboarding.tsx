@@ -14,8 +14,8 @@ import { cn } from '../lib/utils';
 type Grant = 'idle' | 'checking' | 'granted' | 'denied';
 
 const EMOJI_CHOICES = [
-  '🏮', '🦊', '🎧', '🚀', '🖥', '🔧', '🌙', '⚡',
-  '🐙', '🍜', '🎲', '🛰', '🌵', '🔭', '🧭', '🪐',
+  '🏮', '🦊', '🎧', '🚀', '🎮', '🔧', '🌙', '⚡',
+  '🐙', '🍜', '🎲', '🦉', '🌵', '🔭', '🧭', '🪐',
 ];
 
 export function Onboarding() {

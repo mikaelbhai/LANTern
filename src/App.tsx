@@ -26,6 +26,7 @@ import { prepareCallAlerts } from './lib/ringer';
 import { useIsMobile } from './lib/hooks';
 import { SCREEN_TITLES, type Screen } from './lib/nav';
 import { cn } from './lib/utils';
+import { rotatesWithDevice } from './lib/orientation';
 import { HeaderSlot } from './components/ScreenHeader';
 import { useBackDismiss } from './lib/hooks';
 import { pushLayer } from './lib/backstack';
@@ -54,6 +55,7 @@ export default function App() {
    * to move between them - accepting a game invitation has to open the game.
    */
   const screen = useStore((s) => s.screen);
+  const playerActive = useStore((s) => s.playerActive);
   const activeRoomId = useStore((s) => s.activeRoomId);
   const navigate = useStore((s) => s.navigate);
   const goBack = useStore((s) => s.goBack);
@@ -349,9 +351,24 @@ export default function App() {
           fade; animation inside screens is unaffected.
         */}
         <main className="flex-1 min-h-0 relative">
-          <div key={screen} className="absolute inset-0">
-            {screens[screen]}
-          </div>
+          {screen !== 'theatre' && (
+            <div key={screen} className="absolute inset-0">
+              {screens[screen]}
+            </div>
+          )}
+          {/*
+            Theatre is the one screen that is not thrown away when it is left,
+            for as long as a film is playing on a phone: the player lives in
+            it, and unmounting it was how switching to Chats ended the film.
+            It stays where it is in the tree, hidden, so React keeps the same
+            instance; the player itself is on the page, not in this box, and
+            carries on as a small window over whatever is showing.
+          */}
+          {(screen === 'theatre' || (playerActive && rotatesWithDevice())) && (
+            <div key="theatre" className={cn('absolute inset-0', screen !== 'theatre' && 'hidden')}>
+              <Theatre />
+            </div>
+          )}
         </main>
 
         {/* Same room-open exception as the header above: a conversation

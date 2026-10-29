@@ -287,6 +287,13 @@ function GamesHub() {
           <GameLobby />
           <NextMatch />
           <SectionTitle>Choose a game</SectionTitle>
+          {/* Said once. It used to sit under every card, eleven times in a row,
+              which made the screen read as eleven separate problems. */}
+          {playable.length === 0 && (
+            <p className="text-xs text-muted -mt-1 mb-3">
+              Nobody else is on the network yet, so games for two or more are waiting for company.
+            </p>
+          )}
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
             {GAMES.map((g, i) => {
               const Icon = g.icon;
@@ -356,12 +363,8 @@ function GamesHub() {
                     )}
                   </div>
 
-                  {playable.length === 0 && (
-                    <p className="text-2xs text-muted mt-1.5">
-                      {g.solo
-                        ? 'Nobody else is around — you can still race the road.'
-                        : 'Nobody else is on the network yet.'}
-                    </p>
+                  {playable.length === 0 && g.solo && (
+                    <p className="text-2xs text-muted mt-1.5">You can still play this one alone.</p>
                   )}
                 </motion.div>
               );
