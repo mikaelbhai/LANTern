@@ -573,7 +573,12 @@ function FilesTab() {
   const upd = (patch: Partial<typeof s>) =>
     set((x) => ({ ...x, files: { ...x.files, ...patch } }));
 
+  const playback = useStore((st) => st.settings.playback);
+  const updPlayback = (patch: Partial<typeof playback>) =>
+    set((x) => ({ ...x, playback: { ...x.playback, ...patch } }));
+
   return (
+    <>
     <Group title="Transfers">
       <Row label="Download folder">
         <div className="flex items-center gap-1.5">
@@ -635,6 +640,25 @@ function FilesTab() {
         <Toggle checked={s.zipFolders} onChange={(v) => upd({ zipFolders: v })} />
       </Row>
     </Group>
+    <Group title="Playback">
+      <Row
+        label="Buffer films ahead"
+        hint="Reading a film from another device a long way ahead of where you are, so a bad second on Wi-Fi does not stall it. Held in memory while it plays; 0 turns it off."
+      >
+        <Select
+          value={String(playback.bufferMb)}
+          onChange={(v) => updPlayback({ bufferMb: Number(v) })}
+          options={[
+            { value: '0', label: 'Off' },
+            { value: '64', label: '64 MB' },
+            { value: '128', label: '128 MB' },
+            { value: '256', label: '256 MB' },
+            { value: '512', label: '512 MB' },
+          ]}
+        />
+      </Row>
+    </Group>
+    </>
   );
 }
 

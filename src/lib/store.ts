@@ -144,6 +144,10 @@ export interface Settings {
     upnp: boolean;
   };
   privacy: { appLock: boolean; pin: string };
+  playback: {
+    /** How much of a film from another device is read ahead, in MB. 0 is off. */
+    bufferMb: number;
+  };
 }
 
 const defaultSettings: Settings = {
@@ -202,6 +206,9 @@ const defaultSettings: Settings = {
     upnp: true,
   },
   privacy: { appLock: false, pin: '' },
+  // Enough to ride out a bad few seconds on Wi-Fi without holding a film in
+  // memory on a phone.
+  playback: { bufferMb: 128 },
 };
 
 export interface Toast {

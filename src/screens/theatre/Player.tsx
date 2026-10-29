@@ -31,7 +31,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { Artwork } from '../../lib/poster';
-import { api, on } from '../../lib/bridge';
+import { api, isGuest, isTauri, on } from '../../lib/bridge';
 import { useStore } from '../../lib/store';
 import {
   rotatesWithDevice,
@@ -600,6 +600,47 @@ export function Player({
         (audioDelay !== 0 ? `&adelay=${audioDelay}` : '')
       : item.streamUrl;
 
+  /*
+   * What the element actually plays: the same stream, read through the local
+   * buffer when it comes from another device (see readahead.rs).
+   *
+   * Opened per stream, so a switch of audio track or a seek in the remux - a
+   * new URL - opens a new one, and the old is closed. If the relay cannot be
+   * had, or the element errors on it, this falls back to the address as it was:
+   * a buffer is an improvement to playback and never a condition of it.
+   */
+  const bufferMb = useStore((s) => s.settings.playback?.bufferMb ?? 128);
+  const relayable =
+    isTauri() && !isGuest() && !!item.peerId && bufferMb > 0 && /^http:\/\//i.test(source);
+  const [relay, setRelay] = React.useState<{ for: string; url: string } | null>(null);
+  const [relayFailed, setRelayFailed] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!relayable) return;
+    let cancelled = false;
+    let opened: string | null = null;
+    api.readahead
+      .open(source, bufferMb)
+      .then((local) => {
+        if (!local) throw new Error('no relay');
+        if (cancelled) {
+          void api.readahead.close(local);
+          return;
+        }
+        opened = local;
+        setRelay({ for: source, url: local });
+      })
+      .catch(() => {
+        if (!cancelled) setRelayFailed(source);
+      });
+    return () => {
+      cancelled = true;
+      if (opened) void api.readahead.close(opened);
+    };
+  }, [relayable, source, bufferMb]);
+  const relayed = relayable && relayFailed !== source;
+  // Nothing to play until the relay answers, which is a few milliseconds on
+  // this machine; setting the direct address meanwhile would start two loads.
+  const playSrc = !relayed ? source : relay?.for === source ? relay.url : undefined;
 
   /**
    * Moves the audio, keeping the place.
@@ -1500,7 +1541,7 @@ export function Player({
         ) : (
           <video
             ref={videoRef}
-            src={source}
+            src={playSrc}
             // The real first frame, not the WebView's own oversized play-glyph
             // placeholder — that generic icon is what shows in the gap between
             // the element mounting and the first frame actually decoding when
@@ -1572,6 +1613,15 @@ export function Player({
               if (upNext) onPlayNext(upNext);
             }}
             onError={() => {
+              // The buffer in the middle failing is not the other device being
+              // gone: go round it, from where the film had got to.
+              if (relayed && relay?.url === playSrc) {
+                retryAt.current = latestTime.current;
+                swapping.current = true;
+                if (audioTrack >= 0) startRemuxAt(latestTime.current);
+                setRelayFailed(source);
+                return;
+              }
               // Requiring the CORS check once turned a reachable file into
               // "Can't reach". Before believing that, ask for it plain: the
               // film plays, just not louder than 100%.

@@ -134,6 +134,19 @@ async fn main() {
         }
     });
 
+    // Optional: relay a stream through the read-ahead buffer and print where it
+    // can be read from, so a browser can be pointed at it.
+    if let Ok(url) = std::env::var("RELAY_URL") {
+        tokio::spawn(async move {
+            // After the server below is answering, or the probe has nothing to ask.
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            match lantern_lib::readahead::open(&url, 64).await {
+                Ok(local) => println!("relay: {local}"),
+                Err(e) => println!("relay refused: {e}"),
+            }
+        });
+    }
+
     println!("guest dev host on http://127.0.0.1:{port}/  (guest page: /guest/)");
     hosting::serve(state, port).await.expect("server stopped");
 }

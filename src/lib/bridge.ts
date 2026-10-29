@@ -255,6 +255,15 @@ export const api = {
     allFiles: () => call<boolean>('storage_all_files'),
     requestAllFiles: () => call<void>('storage_request_all_files'),
   },
+  /**
+   * A deep local buffer between the player and another device's film. See
+   * readahead.rs: the player reads from the address it hands back.
+   */
+  readahead: {
+    open: (url: string, budgetMb: number) =>
+      call<string | null>('readahead_open', { url, budgetMb }),
+    close: (address: string) => call<void>('readahead_close', { address }),
+  },
   /** Letting browsers use this machine as guests. See guest.rs. */
   guest: {
     enabled: () => call<boolean>('guest_enabled'),

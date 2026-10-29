@@ -27,6 +27,7 @@ mod library;
 mod identity;
 mod input;
 mod rating;
+pub mod readahead;
 mod screencap;
 mod wol;
 #[cfg(desktop)]
@@ -232,6 +233,8 @@ pub fn run() {
             guest::guest_list,
             guest::guest_decide,
             guest::guest_remove,
+            readahead::readahead_open,
+            readahead::readahead_close,
             commands::installers_dir,
             commands::service_set,
             commands::service_running,
