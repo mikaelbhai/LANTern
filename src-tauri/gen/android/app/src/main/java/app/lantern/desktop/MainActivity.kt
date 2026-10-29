@@ -300,6 +300,9 @@ class MainActivity : TauriActivity() {
       val activity = activityRef?.get() ?: return
       val requested = when (mode) {
         "sensor" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        // The sensor again, but through the system's own table of allowed
+        // turns, which on a phone leaves out upside-down portrait.
+        "noflip" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
         "locked" -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
         "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         "system" -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED

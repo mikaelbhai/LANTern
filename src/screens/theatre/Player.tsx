@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Gauge,
   Maximize,
+  Maximize2,
   Minimize,
   Pause,
   PictureInPicture2,
@@ -16,6 +17,7 @@ import {
   Subtitles,
   SkipForward,
   Users,
+  X,
   Volume2,
   VolumeX,
   WifiOff,
@@ -41,6 +43,7 @@ import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
 import { browserCanPlay, needsRemux } from '../../lib/audiocap';
 import { claimArrowKeys } from '../../lib/tv';
+import { RotationLock } from '../../components/RotationLock';
 import { streamOrigin } from './keyframe';
 import { setBoost } from './loudness';
 import { trackNames } from './tracks';
@@ -98,6 +101,8 @@ export function Player({
   onPlayNext,
   onShape,
   onProgress,
+  docked = false,
+  onExpand,
 }: {
   item: MediaItem;
   upNext: MediaItem | null;
@@ -113,6 +118,14 @@ export function Player({
   onShape?: (portrait: boolean) => void;
   /** Told each time the position is saved, so the caller can keep a fresh copy. */
   onProgress?: (id: string, sec: number) => void;
+  /**
+   * Shrunk to a strip across the top of a portrait screen, with the library
+   * below it. The film keeps playing - this is the same player, resized, not
+   * a second one - so the controls shown are the few that fit.
+   */
+  docked?: boolean;
+  /** Asks for the full screen back, from the docked strip. */
+  onExpand?: () => void;
 }) {
   // Through a ref: the saving effect is installed once per title and must not
   // be torn down and rebuilt every time the parent makes a new callback.
@@ -1605,6 +1618,7 @@ export function Player({
         occluded window could leave the controls stranded invisible — not
         acceptable for the one surface a viewer needs to reach.
       */}
+      {!docked && (
       <>
             {/*
               top bar
@@ -2244,14 +2258,7 @@ export function Player({
                       ignored here on purpose - this is the only one that
                       counts, and it freezes whichever way up the screen is
                       now, so locking while sideways keeps the player. */}
-                  {rotatesWithDevice() && (
-                    <IconBtn
-                      label={orientationLocked ? 'Unlock rotation' : 'Lock rotation'}
-                      onClick={() => setOrientationLocked(!orientationLocked)}
-                    >
-                      {orientationLocked ? <Lock size={18} className="text-gold" /> : <LockOpen size={18} />}
-                    </IconBtn>
-                  )}
+                  {rotatesWithDevice() && <RotationLock className="text-white/90" />}
                   <IconBtn
                     label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                     onClick={() => void toggleFullscreen()}
@@ -2262,6 +2269,50 @@ export function Player({
               </div>
             </div>
       </>
+      )}
+
+      {/* What is left of the controls when the player is a strip: play and
+          pause, a thin line showing where the film is, and the two ways out -
+          back to the full screen, or stop. */}
+      {docked && (
+        <div className="absolute inset-0 z-20 pointer-events-none">
+          <div className="absolute top-2 right-2 flex gap-2 pointer-events-auto">
+            {onExpand && (
+              <button
+                onClick={onExpand}
+                aria-label="Full screen"
+                className="h-9 w-9 rounded-full bg-black/55 grid place-items-center text-white"
+              >
+                <Maximize2 size={16} />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              aria-label="Stop and close"
+              className="h-9 w-9 rounded-full bg-black/55 grid place-items-center text-white"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              const next = !playing;
+              setPlaying(next);
+              broadcast(next, time);
+            }}
+            aria-label={playing ? 'Pause' : 'Play'}
+            className="absolute left-2 bottom-3 h-10 w-10 rounded-full bg-black/55 grid place-items-center text-white pointer-events-auto"
+          >
+            {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+          </button>
+          <span className="absolute left-14 bottom-4 max-w-[60%] truncate text-xs font-medium text-white drop-shadow">
+            {item.title}
+          </span>
+          <div className="absolute bottom-0 inset-x-0 h-[3px] bg-white/25">
+            <div className="h-full bg-gold" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
 
       <SubtitleOverlay cues={cues} time={time - subDelay} style={subStyle} chromeVisible={chrome} />
 
@@ -2297,7 +2348,7 @@ export function Player({
 
       {/* up-next prompt */}
       <AnimatePresence>
-        {nearEnd && upNext && (
+        {nearEnd && upNext && !docked && (
           <motion.div
             initial={{ opacity: 0, x: 24 }}
             animate={{ opacity: 1, x: 0 }}

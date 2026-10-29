@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, Reorder, motion } from 'framer-motion';
 import {
   Check,
@@ -22,6 +23,7 @@ import {
   Users,
 } from 'lucide-react';
 import { ScreenHeader } from '../components/ScreenHeader';
+import { RotationLock } from '../components/RotationLock';
 import { Avatar } from '../components/Avatar';
 import { LockButton } from '../components/PinUnlock';
 import { canHost } from '../lib/picker';
@@ -201,6 +203,10 @@ export function Theatre() {
   // only reloaded when the player closes, so without this a title watched
   // and then stepped back to opened where the shelf data last had it.
   const latestProgress = React.useRef<Record<string, number>>({});
+  // What was playing most recently this session. The shelf data is only
+  // re-read when the player closes, so on its own it still thought some other
+  // title was the last one watched.
+  const lastPlayedId = React.useRef<string | null>(null);
 
   const releaseForcedLandscape = React.useCallback(() => {
     forcedLandscape.current = false;
@@ -231,6 +237,7 @@ export function Theatre() {
       return;
     }
     setDetail(null);
+    lastPlayedId.current = item.id;
     setPlaying(item);
 
     /*
@@ -255,6 +262,15 @@ export function Theatre() {
       stopTilt.current?.();
       stopTilt.current = whenHeldSideways(releaseForcedLandscape);
     }
+  };
+
+  /** Back to the full screen from the docked strip, without waiting for the phone to turn. */
+  const expand = () => {
+    if (!rotatesWithDevice() || useOrientation.getState().locked) return;
+    forcedLandscape.current = true;
+    setOrientation('landscape');
+    stopTilt.current?.();
+    stopTilt.current = whenHeldSideways(releaseForcedLandscape);
   };
 
   /**
@@ -311,6 +327,10 @@ export function Theatre() {
    */
   const rotationTarget = (): MediaItem | null => {
     if (detail && !detail.locked) return detail;
+    const last = items.find((i) => i.id === lastPlayedId.current);
+    if (last && !last.locked) {
+      return { ...last, progressSec: latestProgress.current[last.id] ?? last.progressSec };
+    }
     const recent = items
       .filter((i) => !i.locked && i.watchedAt && i.progressSec > 0 && i.durationSec - i.progressSec > 40)
       .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))[0];
@@ -341,9 +361,11 @@ export function Theatre() {
       if (s.landscape && !now.playing) {
         const target = now.rotationTarget();
         if (target) now.play(target, true);
-      } else if (!s.landscape && now.playing && !portraitClip.current && !forcedLandscape.current) {
-        now.closePlayer();
       }
+      // Turning upright with something playing is not an instruction to stop
+      // it: the player is docked above the library (see `docked`) and keeps
+      // going. It used to be closed here, which stopped the film, and turning
+      // back opened whatever the shelf data thought was most recent.
     });
     return () => {
       off();
@@ -352,10 +374,18 @@ export function Theatre() {
     };
   }, []);
 
+  const phone = rotatesWithDevice();
+  const landscapeNow = useOrientation((s) => s.landscape);
+  // Held upright on a phone with a film going: a strip across the top, the
+  // library underneath. A portrait clip is watched upright, full screen.
+  const docked =
+    phone && !!playing && !landscapeNow && !portraitClip.current && !forcedLandscape.current;
+
+  let playerEl: React.ReactNode = null;
   if (playing) {
     const order = seriesOrder(items, playing);
     const at = order.findIndex((i) => i.id === playing.id);
-    return (
+    playerEl = (
       <Player
         item={playing}
         upNext={at >= 0 ? (order[at + 1] ?? null) : null}
@@ -380,16 +410,26 @@ export function Theatre() {
           // filmed.
           if (portrait && forcedLandscape.current) releaseForcedLandscape();
         }}
+        docked={docked}
+        onExpand={expand}
       />
     );
   }
+
+  // A computer has no portrait to dock in, and its window already holds the
+  // controls the player replaces the screen with.
+  if (playing && !phone) return playerEl;
 
   return (
     // The palette is redeclared by the shell while this screen is showing, so
     // `bg-base` here is the cinema's near-black and the bar above and tabs
     // below are dark with it. It used to be a hardcoded #08090C between two
     // white bars. See `.cinema` in index.css.
-    <div className="h-full flex flex-col bg-base">
+    <div
+      className="h-full flex flex-col bg-base"
+      // Clear of the strip, which is fixed to the top edge above everything.
+      style={docked ? { paddingTop: 'calc(56.25vw + env(safe-area-inset-top))' } : undefined}
+    >
       <ScreenHeader
         icon={<Film size={15} />}
         title="Theatre"
@@ -407,13 +447,7 @@ export function Theatre() {
               // The app's own rotation lock - the phone's system switch is
               // deliberately not consulted here. Locked upright keeps the
               // gallery however the phone is held.
-              <IconButton
-                label={orientationLocked ? 'Unlock rotation' : 'Lock rotation'}
-                active={orientationLocked}
-                onClick={() => setOrientationLocked(!orientationLocked)}
-              >
-                {orientationLocked ? <Lock size={16} /> : <LockOpen size={16} />}
-              </IconButton>
+              <RotationLock />
             )}
             <IconButton
               label="Rescan the network"
@@ -634,6 +668,36 @@ export function Theatre() {
         </p>
         <Audience compact />
       </Modal>
+
+      {/*
+        The phone's player lives outside the shell, on the page itself.
+        Inside it, "full screen" was the screen minus the sidebar the shell
+        draws in landscape. Out here it is the whole screen, or a strip across
+        the top - and it is one element either way, so turning the phone
+        resizes the player rather than replacing it and the film never stops.
+      */}
+      {phone &&
+        playing &&
+        createPortal(
+          <div
+            className={
+              docked
+                ? 'fixed top-0 inset-x-0 z-[60] bg-black'
+                : 'fixed inset-0 z-[60] bg-black'
+            }
+            style={
+              docked
+                ? {
+                    height: 'calc(56.25vw + env(safe-area-inset-top))',
+                    paddingTop: 'env(safe-area-inset-top)',
+                  }
+                : undefined
+            }
+          >
+            {playerEl}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

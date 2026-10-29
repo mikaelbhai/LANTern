@@ -338,7 +338,7 @@ export const api = {
      * freezes it, `landscape` forces sideways, `system` hands it back. A
      * desktop has nothing to rotate and this does nothing there.
      */
-    setOrientation: (mode: 'sensor' | 'locked' | 'landscape' | 'system') =>
+    setOrientation: (mode: 'sensor' | 'noflip' | 'locked' | 'landscape' | 'system') =>
       call<void>('orientation_set', { mode }),
     /** Keeps an Android screen on while a film plays. */
     keepAwake: (on: boolean) => call<void>('keep_awake_set', { on }),

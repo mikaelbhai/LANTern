@@ -25,13 +25,22 @@ import { isTv } from './tv';
  */
 export const rotatesWithDevice = (): boolean => isAndroid() && !isTv();
 
-export type OrientationMode = 'sensor' | 'locked' | 'landscape' | 'system';
+export type OrientationMode = 'sensor' | 'noflip' | 'locked' | 'landscape' | 'system';
 
 const LOCK_KEY = 'lantern.orientationLock';
+const NOFLIP_KEY = 'lantern.orientationNoFlip';
 
 const readLock = (): boolean => {
   try {
     return localStorage.getItem(LOCK_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const readNoFlip = (): boolean => {
+  try {
+    return localStorage.getItem(NOFLIP_KEY) === '1';
   } catch {
     return false;
   }
@@ -45,11 +54,14 @@ interface OrientationState {
   locked: boolean;
   /** Whether the window is wider than it is tall right now. */
   landscape: boolean;
+  /** Upside-down is not followed, while the sensor is otherwise in charge. */
+  noFlip: boolean;
 }
 
 export const useOrientation = create<OrientationState>(() => ({
   locked: readLock(),
   landscape: landscapeNow(),
+  noFlip: readNoFlip(),
 }));
 
 // One listener for the life of the page. `change` fires on a rotate and on any
@@ -73,7 +85,10 @@ export function setOrientation(mode: OrientationMode) {
 }
 
 /** The mode Theatre wants when nothing else is forcing one. */
-export const restingMode = (): OrientationMode => (useOrientation.getState().locked ? 'locked' : 'sensor');
+export const restingMode = (): OrientationMode => {
+  const { locked, noFlip } = useOrientation.getState();
+  return locked ? 'locked' : noFlip ? 'noflip' : 'sensor';
+};
 
 /**
  * Locks or unlocks, and applies it at once when the screen is already under
@@ -90,7 +105,24 @@ export function setOrientationLocked(locked: boolean) {
     /* the lock still holds for this session */
   }
   useOrientation.setState({ locked });
-  if (current !== 'system') setOrientation(locked ? 'locked' : 'sensor');
+  if (current !== 'system') setOrientation(restingMode());
+}
+
+/**
+ * Turns following the phone upside-down off or on.
+ *
+ * Applied at once when the sensor is in charge; remembered either way, so it
+ * is there when the lock is released. While locked it changes nothing to look
+ * at - the screen is already held still.
+ */
+export function setNoUpsideDown(noFlip: boolean) {
+  try {
+    localStorage.setItem(NOFLIP_KEY, noFlip ? '1' : '0');
+  } catch {
+    /* it still holds for this session */
+  }
+  useOrientation.setState({ noFlip });
+  if (current === 'sensor' || current === 'noflip') setOrientation(restingMode());
 }
 
 /**
