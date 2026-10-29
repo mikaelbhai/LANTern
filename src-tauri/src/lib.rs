@@ -236,6 +236,8 @@ pub fn run() {
             guest::guest_list,
             guest::guest_decide,
             guest::guest_remove,
+            guest::guest_auto_allowed,
+            guest::guest_set_auto,
             readahead::readahead_open,
             readahead::readahead_close,
             commands::installers_dir,

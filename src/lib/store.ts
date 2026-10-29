@@ -134,12 +134,12 @@ export interface Settings {
   files: {
     downloadDir: string;
     /**
-     * Whose files are saved without asking: nobody, devices vouched for, or
-     * this person's own (paired companions). Never "anybody on the network" -
-     * writing to disk before anyone chose to is the one thing this app
-     * promises not to do.
+     * Whose files are saved without asking: nobody, devices vouched for, this
+     * person's own (paired companions), or anybody on the network. The last is
+     * opt-in and never the default: it is the one that writes to disk before
+     * anyone chose to. A browser guest is not covered by it whatever it says.
      */
-    autoAccept: 'never' | 'trusted' | 'mine';
+    autoAccept: 'never' | 'trusted' | 'mine' | 'everyone';
     /** What to do when a received file's name is already in the folder. */
     onConflict: 'ask' | 'keep' | 'replace' | 'skip';
     defaultExpiry: 'never' | '1h' | '6h' | '24h' | '7d';
@@ -1281,6 +1281,10 @@ export const useStore = create<State>((set, get) => {
         // the setting. Only "mine" has to look anything up.
         const comesStraightThrough = async (): Promise<boolean> => {
           const mode = get().settings.files.autoAccept;
+          // Somebody who opened a web page is the one sender this must not
+          // wave through; they have to be let in, and their files asked about.
+          if (t.peerId.startsWith('guest:')) return false;
+          if (mode === 'everyone') return true;
           if (mode === 'trusted') return !!peer?.trusted;
           if (mode === 'mine') {
             const mine = await api.peers.companions().catch(() => []);

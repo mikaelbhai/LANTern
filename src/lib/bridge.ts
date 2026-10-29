@@ -141,6 +141,7 @@ export async function startBridge() {
       'main:away',
       'update:progress',
       'guest:request',
+      'guest:arrived',
       'transfer:conflict',
     ];
 
@@ -282,6 +283,9 @@ export const api = {
         }[]
       >('guest_list'),
     decide: (id: string, allow: boolean) => call<void>('guest_decide', { id, allow }),
+    /** Whether guests are let in without the host being asked. */
+    auto: () => call<boolean>('guest_auto_allowed'),
+    setAuto: (on: boolean) => call<void>('guest_set_auto', { on }),
     remove: (id: string) => call<void>('guest_remove', { id }),
   },
   /** Browsing and pulling from a linked companion's storage. */

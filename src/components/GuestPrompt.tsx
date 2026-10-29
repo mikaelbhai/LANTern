@@ -2,6 +2,7 @@ import React from 'react';
 import { Globe } from 'lucide-react';
 import { Button } from './ui';
 import { api, on } from '../lib/bridge';
+import { useStore } from '../lib/store';
 
 interface Request {
   id: string;
@@ -21,6 +22,20 @@ interface Request {
  */
 export function GuestPrompt() {
   const [queue, setQueue] = React.useState<Request[]>([]);
+  const toast = useStore((s) => s.toast);
+
+  // Let in without being asked: say who, so it is never a surprise.
+  React.useEffect(
+    () =>
+      on('guest:arrived', (r: Request) =>
+        toast({
+          kind: 'info',
+          title: `${r.name} joined as a guest`,
+          body: `${r.agent} · ${r.ip}`,
+        }),
+      ),
+    [toast],
+  );
 
   React.useEffect(
     () =>

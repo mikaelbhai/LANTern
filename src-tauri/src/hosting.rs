@@ -279,6 +279,21 @@ const DOWNLOAD_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='curre
 stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
 <path d='M12 4v11m0 0 4-4m-4 4-4-4M5 19h14'/></svg>";
 
+/// A page with a folded corner, for a file that is neither played nor a folder.
+const FILE_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<path d='M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z'/><path d='M14 3v5h5'/></svg>";
+
+/// A play triangle in a circle, for something the browser will play.
+const PLAY_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<circle cx='12' cy='12' r='9'/><path d='M10.5 8.5v7l5.5-3.5z'/></svg>";
+
+/// An arrow up out of a folder, for the way back.
+const UP_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
+<path d='M12 19V6m0 0-5 5m5-5 5 5'/></svg>";
+
 /// A window with a play triangle, for the card that opens guest mode.
 const BROWSER_GLYPH: &str = "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' \
 stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>\
@@ -1579,18 +1594,54 @@ async fn listing(dir: &Path, rel: &str, slug: &str) -> Response {
         format!("/{}/{}", slug, rel_str)
     };
 
+    // Where each step of the path leads, so any of them can be tapped to go back
+    // to it. The last one is the page's own name and is not a link.
+    let parts: Vec<&str> = base.trim_start_matches('/').split('/').collect();
+    let mut crumbs = String::from("<a href=\"/\">All folders</a>");
+    let mut walked = String::new();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        walked.push('/');
+        walked.push_str(part);
+        crumbs.push_str(&format!(
+            "<span class=sep>/</span><a href=\"{}\">{}</a>",
+            escape(&walked),
+            escape(part)
+        ));
+    }
+    let title = parts.last().copied().unwrap_or("");
+    let folders = entries.iter().filter(|e| e.1).count();
+    let files = entries.len() - folders;
+    let counted = match (folders, files) {
+        (0, 0) => String::from("Empty"),
+        (0, f) => format!("{f} file{}", if f == 1 { "" } else { "s" }),
+        (d, 0) => format!("{d} folder{}", if d == 1 { "" } else { "s" }),
+        (d, f) => format!(
+            "{d} folder{} \u{b7} {f} file{}",
+            if d == 1 { "" } else { "s" },
+            if f == 1 { "" } else { "s" }
+        ),
+    };
+
     let mut body = page_head(&base);
     body.push_str(&format!(
-        "<header><h1>{}</h1><nav class=crumbs><a href=\"/\">All folders</a></nav></header><main><table>",
-        escape(base.trim_start_matches('/')),
+        "<header><nav class=crumbs>{}</nav><h1>{}</h1><p class=sub>{}</p></header><main>",
+        crumbs,
+        escape(title),
+        counted,
     ));
 
+    if entries.is_empty() && rel_str.is_empty() {
+        body.push_str("<p class=empty>Nothing in this folder.</p>");
+    }
+    body.push_str("<ul class=cards>");
     if !rel_str.is_empty() {
         let parent = base.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         body.push_str(&format!(
-            "<tr><td><a href=\"{}\">../</a></td><td class=s></td></tr>",
+            "<li><a class=up href=\"{}\"><span class=ico>{}</span><span class=body>\
+             <span class=name>Up one level</span></span></a></li>",
             // No trailing slash, for the same reason as the cards above.
-            escape(if parent.is_empty() { "/" } else { parent })
+            escape(if parent.is_empty() { "/" } else { parent }),
+            UP_GLYPH,
         ));
     }
     for (name, is_dir, size) in entries {
@@ -1598,21 +1649,32 @@ async fn listing(dir: &Path, rel: &str, slug: &str) -> Response {
         // the file makes the browser download or hand it to whatever it uses
         // for video, which loses the position this remembers - and on a phone
         // usually leaves the tab behind entirely.
-        let href = if !is_dir && is_playable(&name) {
+        let playable = !is_dir && is_playable(&name);
+        let href = if playable {
             format!("/watch{}/{}", base, name)
         } else {
             format!("{}/{}", base, name)
         };
+        let (glyph, meta, chevron) = if is_dir {
+            (FOLDER_GLYPH, String::from("Folder"), "&rsaquo;")
+        } else if playable {
+            (PLAY_GLYPH, format!("{} \u{b7} plays here", human(size)), "&rsaquo;")
+        } else {
+            (FILE_GLYPH, human(size), "&darr;")
+        };
         body.push_str(&format!(
-            "<tr><td><a href=\"{}\">{}{}</a></td><td class=s>{}</td></tr>",
+            "<li><a href=\"{}\"><span class=ico>{}</span><span class=body>\
+             <span class=name>{}</span><span class=meta>{}</span></span>\
+             <span class=chev>{}</span></a></li>",
             escape(&href),
+            glyph,
             escape(&name),
-            if is_dir { "/" } else { "" },
-            if is_dir { String::new() } else { human(size) }
+            meta,
+            chevron,
         ));
     }
     body.push_str(
-        "</table></main><footer>Served straight from the machine holding the files. \
+        "</ul></main><footer>Served straight from the machine holding the files. \
          Nothing here leaves your network.</footer>",
     );
     html(body)

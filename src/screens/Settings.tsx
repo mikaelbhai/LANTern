@@ -615,7 +615,11 @@ function FilesTab() {
       </Row>
       <Row
         label="Save without asking from"
-        hint="Whose files go straight to disk with no per-file ask. Everyone else is asked first."
+        hint={
+          s.autoAccept === 'everyone'
+            ? 'Anything anybody on this network sends is saved straight to disk. Only turn this on at home.'
+            : 'Whose files go straight to disk with no per-file ask. Everyone else is asked first.'
+        }
       >
         <Select
           value={s.autoAccept}
@@ -624,6 +628,7 @@ function FilesTab() {
             { value: 'never', label: 'Nobody' },
             { value: 'trusted', label: 'Trusted devices' },
             { value: 'mine', label: 'My own devices' },
+            { value: 'everyone', label: 'Anybody on this network' },
           ]}
         />
       </Row>

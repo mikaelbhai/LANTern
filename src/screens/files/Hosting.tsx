@@ -360,6 +360,7 @@ function OfferTheApp() {
  */
 function GuestAccess() {
   const [on_, setOn] = React.useState(false);
+  const [auto, setAutoState] = React.useState(false);
   const [guests, setGuests] = React.useState<
     Awaited<ReturnType<typeof api.guest.list>>
   >([]);
@@ -371,6 +372,7 @@ function GuestAccess() {
 
   React.useEffect(() => {
     void api.guest.enabled().then(setOn).catch(() => setOn(false));
+    void api.guest.auto().then(setAutoState).catch(() => setAutoState(false));
   }, []);
 
   // A guest arriving, leaving or being let in changes this list; the prompt
@@ -416,6 +418,29 @@ function GuestAccess() {
 
       {on_ && (
         <div className="mt-2.5 pt-2.5 border-t border-edge">
+          <div className="flex items-start gap-3 mb-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Let guests in without asking</p>
+              <p className="text-2xs text-muted leading-relaxed mt-0.5">
+                Anybody on this network who opens the page joins straight away, and you are told
+                who. Fine at home; leave it off anywhere you do not know everyone.
+              </p>
+            </div>
+            <Toggle
+              checked={auto}
+              onChange={(v) =>
+                void api.guest
+                  .setAuto(v)
+                  .then(() => {
+                    setAutoState(v);
+                    refresh();
+                  })
+                  .catch((err) =>
+                    toast({ kind: 'error', title: 'Could not change that', body: String(err) }),
+                  )
+              }
+            />
+          </div>
           {present.length === 0 ? (
             <p className="text-2xs text-muted">
               No guests right now. They appear here once you let them in.

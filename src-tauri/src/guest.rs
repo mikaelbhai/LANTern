@@ -83,6 +83,12 @@ const FORWARDED: &[&str] = &["chat", "typing", "file"];
 /// browsers is a decision somebody makes, not something an update does to them.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
+/// Whether a guest is let in without the host being asked. Also off by default,
+/// and only meaningful while guest mode itself is on: it turns "who may come in"
+/// from a decision per device into "anybody on this network", which is a fine
+/// answer at home and the wrong one anywhere else.
+static AUTO: AtomicBool = AtomicBool::new(false);
+
 /// Everything this module needs from the application, as closures.
 ///
 /// Not an `AppHandle`, on purpose. The router that serves these routes is also
@@ -403,7 +409,11 @@ async fn join(
                         name: name.clone(),
                         agent: agent.clone(),
                         ip: ip.clone(),
-                        standing: Standing::Pending,
+                        standing: if AUTO.load(Ordering::Relaxed) {
+                            Standing::Allowed
+                        } else {
+                            Standing::Pending
+                        },
                         joined_at: now_ms(),
                         last_seen: Instant::now(),
                         attached: false,
@@ -414,17 +424,25 @@ async fn join(
                         recent: VecDeque::new(),
                     },
                 );
-                (token, true, Standing::Pending, Some(id))
+                let standing = if AUTO.load(Ordering::Relaxed) {
+                    Standing::Allowed
+                } else {
+                    Standing::Pending
+                };
+                (token, true, standing, Some(id))
             }
         }
     };
 
     if let Some(id) = announce {
-        // The host's window shows an Allow / Deny prompt for this.
-        hub.emit(
-            "guest:request",
-            serde_json::json!({ "id": id, "name": name, "agent": agent, "ip": ip }),
-        );
+        let who = serde_json::json!({ "id": id, "name": name, "agent": agent, "ip": ip });
+        if standing == Standing::Allowed {
+            // Let in without asking: the host is told, not asked.
+            hub.emit("guest:arrived", who);
+        } else {
+            // The host's window shows an Allow / Deny prompt for this.
+            hub.emit("guest:request", who);
+        }
     }
     let _ = &state;
 
@@ -895,6 +913,39 @@ pub fn set_enabled(state: &AppState, on: bool) {
     }
 }
 
+#[tauri::command]
+pub fn guest_auto_allowed() -> bool {
+    AUTO.load(Ordering::Relaxed)
+}
+
+/// Lets guests in without asking, and remembers which. Turning it on also lets
+/// in whoever is already waiting: a request that was pending when the host
+/// said "yes to everyone" should not be the one left standing at the door.
+#[tauri::command]
+pub fn guest_set_auto(state: TauriState<'_, AppState>, on: bool) {
+    set_auto(&state, on);
+}
+
+pub fn set_auto(state: &AppState, on: bool) {
+    AUTO.store(on, Ordering::Relaxed);
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('guest_auto', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![if on { "1" } else { "0" }],
+            );
+        }
+    });
+    if on {
+        for g in guests().lock().expect("guests poisoned").values_mut() {
+            if g.standing == Standing::Pending {
+                g.standing = Standing::Allowed;
+            }
+        }
+    }
+}
+
 /// Puts the remembered switch back at startup, before the server answers.
 pub fn load_setting(state: &AppState) {
     let on = state.with(|s| {
@@ -906,6 +957,21 @@ pub fn load_setting(state: &AppState) {
         })
     });
     ENABLED.store(on.as_deref() == Some("1"), Ordering::Relaxed);
+
+    let auto = state.with(|s| {
+        s.db.as_ref().and_then(|db| {
+            db.query_row("SELECT value FROM preferences WHERE key = 'guest_auto'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok()
+        })
+    });
+    AUTO.store(auto.as_deref() == Some("1"), Ordering::Relaxed);
+}
+
+/// For the harness: the same, without a database.
+pub fn force_auto(on: bool) {
+    AUTO.store(on, Ordering::Relaxed);
 }
 
 #[tauri::command]

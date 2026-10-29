@@ -60,7 +60,7 @@ main,
 footer,
 nav {
   width: 100%;
-  max-width: 680px;
+  max-width: 720px;
 }
 
 h1 {
@@ -386,9 +386,40 @@ footer a {
 nav.crumbs {
   font-size: 13px;
   color: var(--dim);
-  margin: 4px 0 14px;
+  margin: 4px 0 10px;
+  /* A long path wraps rather than pushing the page sideways on a phone. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
 }
 
 nav.crumbs a {
   text-decoration: none;
+  padding: 4px 0;
+}
+
+nav.crumbs a:hover {
+  text-decoration: underline;
+}
+
+nav.crumbs .sep {
+  margin: 0 7px;
+  opacity: 0.6;
+}
+
+/* The way back is a card like the rest, but quieter: it is not a destination. */
+.cards a.up {
+  background: transparent;
+  border-style: dashed;
+}
+
+.cards a.up .ico {
+  color: var(--dim);
+}
+
+/* Long names break instead of being cut off mid-word and unreadable. */
+.cards .name {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

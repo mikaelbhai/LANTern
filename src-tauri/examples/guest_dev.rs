@@ -82,11 +82,14 @@ async fn main() {
         inbound_tx,
     );
     guest::force_enabled(true);
+    // GUEST_AUTO=1 lets every guest in at the door instead of the loop below.
+    let auto = std::env::var("GUEST_AUTO").is_ok();
+    guest::force_auto(auto);
 
     // Let every guest in after a beat, as a host clicking Allow would.
     let admit = state.clone();
     tokio::spawn(async move {
-        loop {
+        while !auto {
             tokio::time::sleep(Duration::from_millis(700)).await;
             for g in guest::list() {
                 let v = serde_json::to_value(&g).expect("serialises");
