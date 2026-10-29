@@ -38,14 +38,27 @@ export interface Overrides {
   /** Item ids the user explicitly pulled out of any collection. */
   detached: string[];
   /**
-   * Collection keys, in the order a drag put them in.
+   * Collection keys, in an order somebody once dragged them into.
    *
-   * Only the keys someone has actually dragged are here - a fresh grouping
-   * pass can produce a collection this list has never heard of (a new show
-   * just added), and that one falls in at the end, alphabetically among any
-   * other newcomers, rather than needing an entry it has no way to have.
+   * No longer read: shelves of series and collections are alphabetical and stay
+   * that way, because a show jumping to the front of the shelf on a stray drag
+   * was never something anybody wanted. Kept in the stored shape so older saved
+   * data still loads.
    */
   order: string[];
+  /**
+   * Collection key -> the titles in it, in the order the host put them.
+   *
+   * Only for groups the host made by hand (see `authoredKeys`); a season is
+   * never reordered, it is what the filenames say. Titles added later, and any
+   * not named here, follow in the order they would have had.
+   */
+  memberOrder?: Record<string, string[]>;
+}
+
+/** The collection keys a person created, as opposed to ones worked out from filenames. */
+export function authoredKeys(overrides: Overrides): Set<string> {
+  return new Set(Object.values(overrides.itemToKey));
 }
 
 export const emptyOverrides = (): Overrides => ({
@@ -53,6 +66,7 @@ export const emptyOverrides = (): Overrides => ({
   titles: {},
   detached: [],
   order: [],
+  memberOrder: {},
 });
 
 const ROMAN: Record<string, number> = {
@@ -165,6 +179,20 @@ export function groupLibrary(items: MediaItem[], overrides: Overrides): Grouping
       return a.title.localeCompare(b.title);
     });
 
+    // A group made by hand can be put in the host's own order. Seasons never.
+    const chosen = overrides.memberOrder?.[key];
+    if (chosen?.length && kind === 'saga') {
+      const rank = new Map(chosen.map((id, i) => [id, i]));
+      sorted.sort((a, b) => {
+        const ra = rank.get(a.id);
+        const rb = rank.get(b.id);
+        if (ra !== undefined && rb !== undefined) return ra - rb;
+        if (ra !== undefined) return -1;
+        if (rb !== undefined) return 1;
+        return 0;
+      });
+    }
+
     const seasonMap = new Map<number, MediaItem[]>();
     for (const item of sorted) {
       const season = item.season ?? 1;
@@ -202,23 +230,9 @@ export function groupLibrary(items: MediaItem[], overrides: Overrides): Grouping
     else singles.push(...c.items);
   }
 
-  // Alphabetical first, so anything nobody has dragged yet lands in a stable,
-  // predictable spot; the saved order then overrides positions for the keys
-  // it actually names, in place, leaving newcomers exactly where the
-  // alphabetical pass put them relative to each other.
+  // Alphabetical, always. Shelves of collections used to be draggable and a
+  // saved drag order is deliberately ignored now; see `Overrides.order`.
   kept.sort((a, b) => a.title.localeCompare(b.title));
-  const order = overrides.order ?? [];
-  if (order.length) {
-    const rank = new Map(order.map((key, i) => [key, i]));
-    kept.sort((a, b) => {
-      const ra = rank.get(a.key);
-      const rb = rank.get(b.key);
-      if (ra !== undefined && rb !== undefined) return ra - rb;
-      if (ra !== undefined) return -1;
-      if (rb !== undefined) return 1;
-      return 0;
-    });
-  }
   singles.sort((a, b) => b.addedAt - a.addedAt);
 
   return { collections: kept, singles };

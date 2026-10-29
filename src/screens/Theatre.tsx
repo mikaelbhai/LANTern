@@ -1,12 +1,16 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, Reorder, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft as BackIcon,
   Download,
   Film,
+  FolderOpen,
   HardDrive,
   Info,
   Play,
@@ -44,6 +48,7 @@ import {
 import {
   type Collection,
   type Overrides,
+  authoredKeys,
   describeCollection,
   emptyOverrides,
   groupLibrary,
@@ -96,16 +101,44 @@ export function Theatre() {
   /** Who may watch what this device publishes — the same panel as Settings. */
   const [audienceOpen, setAudienceOpen] = React.useState(false);
   const [collection, setCollection] = React.useState<Collection | null>(null);
+  /** Which season to open the series sheet on, when it was reached from an episode. */
+  const [collectionSeason, setCollectionSeason] = React.useState<number | undefined>(undefined);
   const [overrides, setOverrides] = useLocalStorage<Overrides>(
     'lantern.theatre.grouping',
     emptyOverrides(),
   );
   const [filmSort, setFilmSort] = useLocalStorage<FilmSort>('lantern.theatre.filmSort', 'watched');
 
+  // Where things live on disk, for the buttons that open File Explorer. Only the
+  // host has any: a title served from another device is not here to be found.
+  const shares = useStore((s) => s.shares);
+  const revealPathFor = React.useCallback((item: MediaItem) => diskPath(shares, item), [shares]);
+  const revealFolderFor = React.useCallback(
+    (c: Collection) => {
+      const first = c.items.find((i) => !i.peerId);
+      const file = first ? diskPath(shares, first) : null;
+      return file ? file.replace(/[\\/][^\\/]*$/, '') : null;
+    },
+    [shares],
+  );
+
+  /**
+   * What this device is shown.
+   *
+   * A title the host has restricted for this device is simply not listed. It
+   * used to be listed with a padlock and a rating, which is a conversation
+   * about the host's rules on a screen that is only being served to - nothing
+   * here is this device's to rate or to ask about.
+   */
+  const visible = React.useCallback(
+    (list: MediaItem[]) => list.filter((i) => !(i.peerId && i.locked)),
+    [],
+  );
+
   const load = React.useCallback(async () => {
-    setItems(await api.media.list());
+    setItems(visible(await api.media.list()));
     setLoading(false);
-  }, []);
+  }, [visible]);
 
   /** Deletes a synced copy from its own card; the shelf is re-read by the event that follows. */
   const deleteCopy = React.useCallback(async (item: MediaItem) => {
@@ -145,7 +178,7 @@ export function Theatre() {
     // a title that just finished syncing show its "Synced" state without a
     // manual reload.
     return on('media:changed', (list: MediaItem[]) => {
-      setItems(list);
+      setItems(visible(list));
       loadSynced();
     });
   }, [load, loadSynced]);
@@ -475,13 +508,7 @@ export function Theatre() {
         hint="Everything published on the network, streamed straight from the device holding it"
         actions={
           <>
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search titles…"
-              icon={<Search size={12} />}
-              className="w-44 hidden md:flex"
-            />
+            <SearchBox value={query} onChange={setQuery} />
             {rotatesWithDevice() && (
               // The app's own rotation lock - the phone's system switch is
               // deliberately not consulted here. Locked upright keeps the
@@ -493,7 +520,7 @@ export function Theatre() {
               onClick={() => {
                 setLoading(true);
                 void api.media.scan().then((l) => {
-                  setItems(l);
+                  setItems(visible(l));
                   setLoading(false);
                 });
               }}
@@ -622,12 +649,12 @@ export function Theatre() {
                   ownerName={ownerName}
                   onPlay={play}
                   onInfo={setDetail}
-                  onOpenCollection={setCollection}
-                  onReorder={
-                    row.label === 'Series & collections'
-                      ? (keys) => setOverrides({ ...overrides, order: keys })
-                      : undefined
-                  }
+                  onOpenCollection={(c) => {
+                    setCollectionSeason(undefined);
+                    setCollection(c);
+                  }}
+                  revealPath={revealPathFor}
+                  revealFolder={revealFolderFor}
                   sortControl={
                     row.label === 'Films' ? (
                       <Select
@@ -662,9 +689,20 @@ export function Theatre() {
         onSync={startSync}
         onRemoveSync={removeSync}
         onDeleteCopy={deleteCopy}
+        revealPath={revealPathFor}
+        onOpenSeries={(i, season) => {
+          const c = grouping.collections.find((x) => x.items.some((m) => m.id === i.id));
+          if (!c) return;
+          setDetail(null);
+          setCollectionSeason(season);
+          setCollection(c);
+        }}
       />
 
       <CollectionSheet
+        initialSeason={collectionSeason}
+        revealPath={revealPathFor}
+        revealFolder={revealFolderFor}
         collection={collection}
         ownerName={ownerName}
         overrides={overrides}
@@ -954,7 +992,7 @@ function Hero({
 }) {
   const resume = item.progressSec > 30;
   return (
-    <div className="relative h-[320px] md:h-[400px]">
+    <div className="relative h-[220px] md:h-[300px]">
       <Artwork
         title={item.title}
         seed={item.id}
@@ -965,13 +1003,13 @@ function Hero({
       <div className="absolute inset-0 bg-gradient-to-r from-[#08090C] via-[#08090C]/70 to-transparent" />
       <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#08090C] to-transparent" />
 
-      <div className="relative h-full flex flex-col justify-end p-6 md:p-10 max-w-2xl">
+      <div className="relative h-full flex flex-col justify-end p-5 md:p-8 max-w-xl">
         {item.series && (
           <Badge tone="gold" className="w-fit mb-2">
             {item.series} · S{item.season} E{item.episode}
           </Badge>
         )}
-        <h1 className="text-2xl md:text-[40px] font-bold leading-[1.05] text-white drop-shadow-lg">
+        <h1 className="text-xl md:text-[30px] font-bold leading-[1.05] text-white drop-shadow-lg">
           {item.title}
         </h1>
         {/* Only the parts that exist, joined by a dot between neighbours: a
@@ -1044,6 +1082,17 @@ function Hero({
 
 /* ----------------------------------------------------------------- rows */
 
+/**
+ * How wide one tile is.
+ *
+ * A fixed 208 px was a decent size on a laptop and far too much on anything
+ * with more pixels - a television showed four and a half across with the rest
+ * of the screen empty - so it follows the width of the screen instead: roughly
+ * ten across when there is room, and never so small that a title cannot be
+ * read.
+ */
+const TILE: React.CSSProperties = { width: 'clamp(8.25rem, calc(100vw / 10.5), 11rem)' };
+
 function Row({
   label,
   entries,
@@ -1051,7 +1100,8 @@ function Row({
   onPlay,
   onInfo,
   onOpenCollection,
-  onReorder,
+  revealPath,
+  revealFolder,
   sortControl,
 }: {
   label: string;
@@ -1060,14 +1110,9 @@ function Row({
   onPlay: (i: MediaItem) => void;
   onInfo: (i: MediaItem) => void;
   onOpenCollection: (c: Collection) => void;
-  /**
-   * Present only on the collections shelf. Drag order is meaningful there —
-   * it is how you put the show you actually watch above forty others
-   * fetched once and never opened again — and meaningless everywhere else,
-   * where the row is already ordered by something with its own logic
-   * (progress, recency, the device it came from).
-   */
-  onReorder?: (keys: string[]) => void;
+  /** Where a title lives on this machine's disk, when it is this machine's own. */
+  revealPath: (i: MediaItem) => string | null;
+  revealFolder: (c: Collection) => string | null;
   /** Present only on the Films row, the one shelf with no order of its own. */
   sortControl?: React.ReactNode;
 }) {
@@ -1098,7 +1143,7 @@ function Row({
   };
 
   return (
-    <section className="mt-6 group/row">
+    <section className="mt-4 group/row">
       <div className="flex items-center gap-2 justify-between px-6 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <h2 className={cn('text-sm font-semibold', label === 'Unrated' ? 'text-warn' : 'text-white/90')}>
@@ -1132,33 +1177,6 @@ function Row({
           </button>
         )}
 
-        {onReorder ? (
-          <Reorder.Group
-            as="div"
-            axis="x"
-            ref={scroller}
-            onScroll={measure}
-            values={entries.map((e) => (e.type === 'collection' ? e.collection.key : ''))}
-            onReorder={onReorder}
-            className="flex gap-3 overflow-x-auto no-scrollbar px-6 pb-2"
-          >
-            {entries.map((entry) =>
-              entry.type === 'collection' ? (
-                <Reorder.Item
-                  key={entry.collection.key}
-                  value={entry.collection.key}
-                  className="w-52 shrink-0 cursor-grab active:cursor-grabbing"
-                  whileDrag={{ scale: 1.04, zIndex: 10 }}
-                >
-                  <CollectionCard
-                    collection={entry.collection}
-                    onOpen={() => onOpenCollection(entry.collection)}
-                  />
-                </Reorder.Item>
-              ) : null,
-            )}
-          </Reorder.Group>
-        ) : (
           <div
             ref={scroller}
             onScroll={measure}
@@ -1166,27 +1184,67 @@ function Row({
           >
             {entries.map((entry) =>
               entry.type === 'item' ? (
-                <div key={entry.item.id} className="w-52 shrink-0">
+                <div key={entry.item.id} className="shrink-0" style={TILE}>
                   <Card
                     item={entry.item}
                     owner={ownerName(entry.item)}
                     onPlay={() => onPlay(entry.item)}
                     onInfo={() => onInfo(entry.item)}
+                    revealPath={revealPath(entry.item)}
                   />
                 </div>
               ) : (
-                <div key={entry.collection.key} className="w-52 shrink-0">
+                <div key={entry.collection.key} className="shrink-0" style={TILE}>
                   <CollectionCard
                     collection={entry.collection}
-                    onOpen={() => onOpenCollection(entry.collection)}
+                    onOpen={() => {
+                      onOpenCollection(entry.collection);
+                    }}
+                    revealPath={revealFolder(entry.collection)}
                   />
                 </div>
               ),
             )}
           </div>
-        )}
       </div>
     </section>
+  );
+}
+
+/**
+ * A search field that does nothing until somebody clicks it.
+ *
+ * It sat in the header as a live text box, so a stray Tab, a remote's pad or a
+ * keystroke meant for the player could land in it - and on a television focus
+ * there raises an on-screen keyboard over the library. Now it is a field you
+ * can see and aim at, and only a click turns it into one you can type in; it
+ * goes quiet again when you leave it empty.
+ */
+function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [armed, setArmed] = React.useState(false);
+  const input = React.useRef<HTMLInputElement>(null);
+  return (
+    <div className="w-44 hidden md:flex">
+      <Input
+        ref={input}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search titles…"
+        icon={<Search size={12} />}
+        readOnly={!armed}
+        tabIndex={armed ? 0 : -1}
+        onClick={() => {
+          if (armed) return;
+          setArmed(true);
+          // After the read-only attribute has come off, or focus is refused.
+          requestAnimationFrame(() => input.current?.focus());
+        }}
+        onBlur={() => {
+          if (!value) setArmed(false);
+        }}
+        className={armed ? undefined : 'cursor-pointer caret-transparent'}
+      />
+    </div>
   );
 }
 
@@ -1194,16 +1252,48 @@ function Row({
 export const isSyncedCopy = (item: MediaItem): boolean =>
   (!!item.streamUrl && item.streamUrl.includes('/lantern-synced/')) || item.id.startsWith('synced:');
 
+/**
+ * The absolute path of a title on this machine, or null when it is not one of
+ * this machine's own. The share holds the folder; the item says where inside it.
+ */
+function diskPath(shares: { id: string; path: string }[], item: MediaItem): string | null {
+  if (item.peerId || !item.relPath) return null;
+  const share = shares.find((s) => s.id === item.shareId);
+  if (!share?.path) return null;
+  const sep = share.path.includes('\\') ? '\\' : '/';
+  return share.path.replace(/[\\/]+$/, '') + sep + item.relPath.split('/').join(sep);
+}
+
+/** Opens File Explorer (or the file manager) at the file. Host only. */
+function RevealButton({ path, label = 'Show in folder' }: { path: string; label?: string }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        void api.files.reveal(path);
+      }}
+      aria-label={label}
+      title={label}
+      className="h-6 w-6 rounded-full bg-white/90 text-black grid place-items-center hover:bg-white"
+    >
+      <FolderOpen size={12} />
+    </button>
+  );
+}
+
 function Card({
   item,
   owner,
   onPlay,
   onInfo,
+  revealPath,
 }: {
   item: MediaItem;
   owner: string;
   onPlay: () => void;
   onInfo: () => void;
+  /** Where the file is on this machine's disk, when this machine is the host. */
+  revealPath?: string | null;
 }) {
   const pct = item.durationSec ? (item.progressSec / item.durationSec) * 100 : 0;
   // Within the last few percent, or the last 40 seconds - the credits - counts
@@ -1248,26 +1338,6 @@ function Card({
         className="aspect-video"
       />
 
-      {/* What it is rated, where a rating exists. On the card rather than
-          only in the details, because the question "can the children see
-          this" is asked while looking at the shelf, not after opening one. */}
-      {item.minAge !== undefined && (
-        <span
-          className="absolute top-1.5 left-1.5 px-1.5 h-[18px] rounded-[4px] bg-black/70 border border-white/20 text-[10px] font-medium text-white/90 grid place-items-center"
-          title={item.ratedByHost ? 'Rated by you' : 'Guessed from the filename'}
-        >
-          {ratingLabel(item.minAge)}
-        </span>
-      )}
-
-      {/* Restricted above the watching device's allowance: it is listed, and
-          the bytes do not move. A door somebody can see. */}
-      {item.locked && (
-        <span className="absolute top-1.5 right-1.5 h-[18px] w-[18px] rounded-full bg-black/70 border border-white/20 grid place-items-center">
-          <Lock size={9} className="text-white/80" />
-        </span>
-      )}
-
       {/* A copy that lives on this device. It plays with nobody else awake,
           which is the thing worth knowing about it from the shelf. */}
       {isSyncedCopy(item) && (
@@ -1302,15 +1372,18 @@ function Card({
         <span className="h-11 w-11 rounded-full bg-white/95 grid place-items-center">
           <Play size={18} className="text-black ml-0.5" fill="currentColor" />
         </span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onInfo();
-          }}
-          className="text-[10px] text-white/90 underline underline-offset-2"
-        >
-          More info
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onInfo();
+            }}
+            className="text-[10px] text-white/90 underline underline-offset-2"
+          >
+            More info
+          </button>
+          {revealPath && <RevealButton path={revealPath} />}
+        </div>
       </div>
     </motion.div>
   );
@@ -1334,10 +1407,15 @@ function DetailSheet({
   onSync,
   onRemoveSync,
   onDeleteCopy,
+  onOpenSeries,
+  revealPath,
 }: {
   item: MediaItem | null;
   owner: string;
   collections: Collection[];
+  /** Back to the series this episode belongs to, optionally at one season. */
+  onOpenSeries: (item: MediaItem, season?: number) => void;
+  revealPath: (i: MediaItem) => string | null;
   overrides: Overrides;
   /** Starts everyone online on this title at once. */
   onWatchTogether?: (i: MediaItem) => void;
@@ -1356,6 +1434,12 @@ function DetailSheet({
   onDeleteCopy: (i: MediaItem) => void;
 }) {
   const peers = useStore((s) => s.peers);
+  // The series this title is an episode of, so there is a way back to its
+  // seasons rather than a dead end at one episode.
+  const series = item?.series
+    ? collections.find((c) => c.kind === 'series' && c.items.some((i) => i.id === item.id))
+    : undefined;
+  const here = item ? revealPath(item) : null;
 
   return (
     <AnimatePresence>
@@ -1373,6 +1457,33 @@ function DetailSheet({
             exit={{ scale: 0.97, opacity: 0 }}
             className="w-full max-w-2xl bg-surface border border-edge-strong rounded-modal overflow-hidden shadow-2xl"
           >
+            {series && (
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-edge overflow-x-auto no-scrollbar">
+                <button
+                  onClick={() => onOpenSeries(item)}
+                  className="shrink-0 h-7 pl-1.5 pr-2.5 rounded-input bg-raised border border-edge text-xs flex items-center gap-1 hover:border-gold/50"
+                  title={`Back to ${series.title}`}
+                >
+                  <BackIcon size={14} />
+                  <span className="max-w-[10rem] truncate">{series.title}</span>
+                </button>
+                {series.seasons.length > 1 &&
+                  series.seasons.map((s) => (
+                    <button
+                      key={s.season}
+                      onClick={() => onOpenSeries(item, s.season)}
+                      className={cn(
+                        'shrink-0 h-7 px-2.5 rounded-input text-xs border transition-colors',
+                        s.season === (item.season ?? 1)
+                          ? 'bg-gold/15 border-gold/50 text-gold'
+                          : 'bg-transparent border-edge text-dim hover:text-txt',
+                      )}
+                    >
+                      Season {s.season}
+                    </button>
+                  ))}
+              </div>
+            )}
             <div className="relative h-52">
               <Artwork
                 title={item.title}
@@ -1426,11 +1537,18 @@ function DetailSheet({
                   </span>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs">Streaming from {owner}</div>
-                  <div className="text-[10px] font-mono text-muted truncate">
-                    {item.streamUrl}
+                  {/* Where it comes from, in words. The address is not a thing a
+                      person watching somebody else's library has any use for. */}
+                  <div className="text-xs">
+                    {item.peerId ? `Shared by ${owner}` : 'In your library'}
                   </div>
+                  {here && (
+                    <div className="text-[10px] font-mono text-muted truncate" title={here}>
+                      {here}
+                    </div>
+                  )}
                 </div>
+                {here && <RevealButton path={here} />}
               </div>
 
               {/* Ours to rate; a peer's is set on the device holding it. */}
@@ -1455,12 +1573,10 @@ function DetailSheet({
               <div className="flex gap-2 flex-wrap">
                 {/* Listed, not served. Saying so here beats a Play button
                     that opens a player which cannot be filled. */}
-                {item.locked ? (
+                {item.locked && !item.peerId ? (
                   <div className="h-9 px-4 rounded-input bg-raised border border-edge flex items-center gap-2 text-sm text-muted">
                     <Lock size={14} className="text-gold shrink-0" />
-                    <span>
-                      Rated {ratingLabel(item.minAge) || 'above this device'} — {owner} decides
-                    </span>
+                    <span>Not available</span>
                   </div>
                 ) : (
                   <button
@@ -1775,9 +1891,12 @@ function ApproveControl({
 function CollectionCard({
   collection,
   onOpen,
+  revealPath,
 }: {
   collection: Collection;
   onOpen: () => void;
+  /** The folder on this machine's disk, when this machine is the host. */
+  revealPath?: string | null;
 }) {
   // The first member that has a picture, rather than simply the first.
   //
@@ -1816,9 +1935,12 @@ function CollectionCard({
         </Badge>
       </span>
       <div className="absolute inset-0 bg-black/45 opacity-0 group-hover/card:opacity-100 transition-opacity grid place-items-center">
-        <span className="text-[11px] text-white font-medium">
-          {collection.kind === 'series' ? 'Browse episodes' : 'Browse films'}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-white font-medium">
+            {collection.kind === 'series' ? 'Browse episodes' : 'Browse films'}
+          </span>
+          {revealPath && <RevealButton path={revealPath} label="Show folder" />}
+        </div>
       </div>
     </motion.div>
   );
@@ -1838,8 +1960,15 @@ function CollectionSheet({
   syncTransfers,
   onSync,
   onRemoveSync,
+  initialSeason,
+  revealPath,
+  revealFolder,
 }: {
   collection: Collection | null;
+  /** Open on this season instead of the first. */
+  initialSeason?: number;
+  revealPath: (i: MediaItem) => string | null;
+  revealFolder: (c: Collection) => string | null;
   ownerName: (i: MediaItem) => string;
   overrides: Overrides;
   onOverrides: (o: Overrides) => void;
@@ -1855,13 +1984,15 @@ function CollectionSheet({
 }) {
   const [renaming, setRenaming] = React.useState(false);
   const [draft, setDraft] = React.useState('');
+  const [activeSeason, setActiveSeason] = React.useState<number | null>(null);
 
   React.useEffect(() => {
     if (collection) {
       setDraft(collection.title);
       setRenaming(false);
+      setActiveSeason(initialSeason ?? collection.seasons[0]?.season ?? null);
     }
-  }, [collection?.key]);
+  }, [collection?.key, initialSeason]);
 
   // How many of these were put here by hand rather than by the filename.
   // Nothing to undo when the answer is none, and a button offering to undo
@@ -1873,6 +2004,24 @@ function CollectionSheet({
     : 0;
 
   if (!collection) return null;
+
+  // Only a group the host made by hand, on the host's own titles, can be put in
+  // a different order. A season is what the filenames say it is.
+  const orderable =
+    collection.kind === 'saga' &&
+    authoredKeys(overrides).has(collection.key) &&
+    collection.items.every((i) => !i.peerId);
+  const move = (id: string, by: -1 | 1) => {
+    const ids = collection.items.map((i) => i.id);
+    const at = ids.indexOf(id);
+    const to = at + by;
+    if (at < 0 || to < 0 || to >= ids.length) return;
+    [ids[at], ids[to]] = [ids[to], ids[at]];
+    onOverrides({
+      ...overrides,
+      memberOrder: { ...(overrides.memberOrder ?? {}), [collection.key]: ids },
+    });
+  };
 
   // Peers' episodes not already synced or mid-sync — what a "Sync" button
   // for a whole season or the whole collection actually has left to do.
@@ -1976,11 +2125,43 @@ function CollectionSheet({
               />
             )}
 
-            {collection.seasons.map(({ season, items }) => (
+            {/* Season tabs: one press to be at the season you want, instead of
+                scrolling past every episode of the ones before it. */}
+            {collection.kind === 'series' && collection.seasons.length > 1 && (
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mt-1">
+                {collection.seasons.map(({ season }) => (
+                  <button
+                    key={season}
+                    onClick={() => setActiveSeason(season)}
+                    className={cn(
+                      'shrink-0 h-8 px-3 rounded-input text-xs border transition-colors',
+                      season === activeSeason
+                        ? 'bg-gold/15 border-gold/50 text-gold'
+                        : 'border-edge text-dim hover:text-txt',
+                    )}
+                  >
+                    Season {season}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {collection.seasons
+              .filter(
+                ({ season }) =>
+                  collection.kind !== 'series' ||
+                  collection.seasons.length < 2 ||
+                  season === activeSeason,
+              )
+              .map(({ season, items }) => (
               <section key={season}>
                 {collection.kind === 'series' && collection.seasons.length > 1 && (
                   <div className="flex items-center gap-2 mb-2">
                     <h3 className="label !mb-0">Season {season}</h3>
+                    {(() => {
+                      const folder = revealFolder({ ...collection, items });
+                      return folder ? <RevealButton path={folder} label="Show season folder" /> : null;
+                    })()}
                     {syncTargets(items).length > 0 && (
                       <button
                         onClick={() => syncMany(items)}
@@ -2046,6 +2227,29 @@ function CollectionSheet({
                         </div>
                       </div>
 
+                      {orderable && !item.peerId && (
+                        <span className="flex flex-col shrink-0">
+                          <button
+                            aria-label="Move up"
+                            disabled={collection.items[0]?.id === item.id}
+                            onClick={() => move(item.id, -1)}
+                            className="h-4 w-6 grid place-items-center text-dim hover:text-txt disabled:opacity-25"
+                          >
+                            <ArrowUp size={12} />
+                          </button>
+                          <button
+                            aria-label="Move down"
+                            disabled={collection.items[collection.items.length - 1]?.id === item.id}
+                            onClick={() => move(item.id, 1)}
+                            className="h-4 w-6 grid place-items-center text-dim hover:text-txt disabled:opacity-25"
+                          >
+                            <ArrowDown size={12} />
+                          </button>
+                        </span>
+                      )}
+                      {revealPath(item) && (
+                        <RevealButton path={revealPath(item) as string} />
+                      )}
                       <SyncControl
                         item={item}
                         synced={syncedIds.has(item.id)}
