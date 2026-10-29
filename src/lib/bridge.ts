@@ -141,6 +141,7 @@ export async function startBridge() {
       'main:away',
       'update:progress',
       'guest:request',
+      'transfer:conflict',
     ];
 
     await Promise.all(
@@ -322,6 +323,12 @@ export const api = {
         source,
       }),
     clearOutbox: () => call<void>('files_clear_outbox'),
+    /** Ask, keep both, replace or skip, when a received file's name is taken. */
+    setConflictPolicy: (policy: 'ask' | 'keep' | 'replace' | 'skip') =>
+      call<void>('files_set_conflict_policy', { policy }),
+    /** The answer to a "this file already exists" question. */
+    resolveConflict: (id: string, choice: 'keep' | 'replace' | 'skip', all: boolean) =>
+      call<void>('files_resolve_conflict', { id, choice, all }),
     /**
      * Starts pulling an offered file, resuming from whatever is on disk.
      *

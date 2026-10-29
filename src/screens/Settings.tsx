@@ -622,6 +622,21 @@ function FilesTab() {
           onChange={(v) => upd({ autoAcceptTrusted: v })}
         />
       </Row>
+      <Row
+        label="If a file is already there"
+        hint="What to do when something arrives with the name of a file already in the download folder."
+      >
+        <Select
+          value={s.onConflict}
+          onChange={(v) => upd({ onConflict: v })}
+          options={[
+            { value: 'ask', label: 'Ask me' },
+            { value: 'keep', label: 'Keep both' },
+            { value: 'replace', label: 'Replace it' },
+            { value: 'skip', label: 'Skip it' },
+          ]}
+        />
+      </Row>
       <Row label="Default expiry" hint="Received files delete themselves after this long">
         <Select
           value={s.defaultExpiry}

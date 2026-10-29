@@ -132,6 +132,8 @@ export interface Settings {
   files: {
     downloadDir: string;
     autoAcceptTrusted: boolean;
+    /** What to do when a received file's name is already in the folder. */
+    onConflict: 'ask' | 'keep' | 'replace' | 'skip';
     defaultExpiry: 'never' | '1h' | '6h' | '24h' | '7d';
     zipFolders: boolean;
   };
@@ -194,6 +196,7 @@ const defaultSettings: Settings = {
     // peer ever sends. Opt-in only, from Settings, in plain sight of what it
     // means.
     autoAcceptTrusted: false,
+    onConflict: 'ask',
     defaultExpiry: 'never',
     zipFolders: true,
   },
@@ -1442,6 +1445,7 @@ export const useStore = create<State>((set, get) => {
       // The name lives here and the announcement lives natively, so the two
       // have to be introduced on every start.
       announceName(get().profile.name);
+      void api.files.setConflictPolicy(get().settings.files.onConflict).catch(() => {});
 
       // Expire stale typing indicators.
       setInterval(() => {
@@ -1513,6 +1517,9 @@ export const useStore = create<State>((set, get) => {
     setSettings(fn) {
       set((s) => ({ settings: fn(s.settings) }));
       persist(get());
+      // The transfer that needs it may start while no window is looking, so the
+      // native side holds its own copy.
+      void api.files.setConflictPolicy(get().settings.files.onConflict).catch(() => {});
     },
 
     ensureDm(peerId) {

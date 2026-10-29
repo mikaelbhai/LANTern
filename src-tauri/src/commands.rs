@@ -1722,32 +1722,23 @@ pub fn files_resume(app: AppHandle, state: State<'_, AppState>, id: String) {
 
 #[tauri::command]
 pub fn files_cancel(app: AppHandle, state: State<'_, AppState>, id: String) {
-    let peer = state.with(|s| {
-        s.offers.revoke(&id);
-        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
-            t.state = "cancelled".into();
-            return Some(t.peer_id.clone());
-        }
-        None
-    });
-    crate::transfers::emit_one(&app, &state, &id);
-
-    // Tell the other end, so a sender stops holding the file open and a
+    // Tells the other end too, so a sender stops holding the file open and a
     // receiver stops fetching.
-    if let Some(peer) = peer {
-        let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
-        links.send(
-            &peer,
-            &Envelope {
-                v: 1,
-                from: me,
-                kind: "file".into(),
-                payload: serde_json::json!({
-                    "control": { "transferId": id, "action": "cancel" }
-                }),
-            },
-        );
-    }
+    crate::transfers::cancel_transfer(&app, &state, &id);
+}
+
+/// What to do when a received file's name is already taken: ask, keep both,
+/// replace, or skip. Pushed from Settings, because the transfer that needs it
+/// may start while no window is looking.
+#[tauri::command]
+pub fn files_set_conflict_policy(policy: String) {
+    crate::transfers::set_conflict_policy(&policy);
+}
+
+/// The answer to a "this file already exists" question.
+#[tauri::command]
+pub fn files_resolve_conflict(id: String, choice: String, all: bool) {
+    crate::transfers::resolve_conflict(&id, &choice, all);
 }
 
 /// Names and sizes for a set of absolute paths.

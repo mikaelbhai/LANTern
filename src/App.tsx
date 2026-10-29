@@ -23,6 +23,7 @@ import { useStore } from './lib/store';
 import { isGuest, startBridge } from './lib/bridge';
 import { GuestApp } from './screens/Guest';
 import { GuestPrompt } from './components/GuestPrompt';
+import { ConflictPrompt } from './components/ConflictPrompt';
 import { setSoundEnabled } from './lib/audio';
 import { prepareCallAlerts } from './lib/ringer';
 import { useIsMobile } from './lib/hooks';
@@ -299,6 +300,7 @@ export default function App() {
         */}
         {call && <CallOverlay />}
         <IncomingFile />
+        <ConflictPrompt />
         <IncomingGame />
         <SystemPromptHost />
         <ControlConsent />
@@ -401,6 +403,7 @@ export default function App() {
 
       {/* Follows you across screens: a file offer should not wait behind one. */}
       <IncomingFile />
+      <ConflictPrompt />
       <IncomingGame />
       <RejoinBanner />
       {/* A browser asking to be let in. Over everything, like a call. */}

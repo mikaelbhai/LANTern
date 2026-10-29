@@ -228,6 +228,8 @@ pub fn run() {
             commands::installers_held,
             commands::installers_fetch,
             commands::installers_remove,
+            commands::files_set_conflict_policy,
+            commands::files_resolve_conflict,
             guest::guest_enabled,
             guest::guest_set_enabled,
             guest::guest_list,

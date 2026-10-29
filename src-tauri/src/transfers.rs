@@ -353,7 +353,39 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
             .map(|t| (t.name.clone(), t.size))
             .unwrap_or_else(|| (transfer_id.clone(), 0))
     });
-    let target = unique_path(&dir, &name);
+    let resuming = conflicts()
+        .lock()
+        .expect("conflicts poisoned")
+        .partial
+        .get(&transfer_id)
+        .cloned()
+        .filter(|p| p.is_file());
+    let target = match resuming {
+        Some(path) => path,
+        None => {
+            let wanted = dir.join(&name);
+            if wanted.exists() {
+                let existing = std::fs::metadata(&wanted).map(|m| m.len()).unwrap_or(0);
+                match decide(&app, &transfer_id, &name, existing, size).await.as_str() {
+                    "skip" => {
+                        cancel_transfer(&app, &state, &transfer_id);
+                        return;
+                    }
+                    // A file that cannot be removed (open elsewhere) is not
+                    // replaced; the new one is kept beside it instead.
+                    "replace" if std::fs::remove_file(&wanted).is_ok() => wanted,
+                    _ => unique_path(&dir, &name),
+                }
+            } else {
+                wanted
+            }
+        }
+    };
+    conflicts()
+        .lock()
+        .expect("conflicts poisoned")
+        .partial
+        .insert(transfer_id.clone(), target.clone());
 
     let mut have = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
     if have > size {
@@ -376,6 +408,7 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
                     t.local_path = Some(target.to_string_lossy().to_string());
                 }
             });
+            conflicts().lock().expect("conflicts poisoned").partial.remove(&transfer_id);
             emit_one(&app, &state, &transfer_id);
 
             // Let the sender stop holding the file open.
@@ -549,6 +582,141 @@ fn split_url(url: &str) -> Option<(String, u16, String)> {
     Some((host, port, path.to_string()))
 }
 
+/*
+ * A file with this name is already where this one is going.
+ *
+ * Until now the answer was always "keep both", chosen silently: the new one
+ * became "name (2)". That is the safe default and stays one of the choices, but
+ * it is not the only reasonable one - somebody sending the same document again
+ * after fixing it wants it replaced, and somebody receiving two hundred photos
+ * does not want to be asked two hundred times. So there is a standing policy
+ * (Settings), a question when the policy is to ask, and an "apply to the rest"
+ * on that question.
+ */
+struct Conflicts {
+    /// "ask", "keep", "replace" or "skip".
+    policy: String,
+    /// An answer given to "do this for the rest", and when - it lapses, so a
+    /// choice made for one batch does not quietly govern tomorrow's.
+    all: Option<(String, u64)>,
+    waiters: HashMap<String, tokio::sync::oneshot::Sender<String>>,
+    /// Where each transfer that has started is writing. A paused one resumes
+    /// into the same file: asking for a free name again would find its own
+    /// half-written file in the way and start over under another.
+    partial: HashMap<String, PathBuf>,
+}
+
+const ALL_LIFE_MS: u64 = 2 * 60 * 1000;
+/// How long a question may sit unanswered before the safe choice is made.
+const ASK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+fn conflicts() -> &'static Mutex<Conflicts> {
+    static C: std::sync::OnceLock<Mutex<Conflicts>> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        Mutex::new(Conflicts {
+            policy: "ask".into(),
+            all: None,
+            waiters: HashMap::new(),
+            partial: HashMap::new(),
+        })
+    })
+}
+
+pub fn set_conflict_policy(policy: &str) {
+    if matches!(policy, "ask" | "keep" | "replace" | "skip") {
+        conflicts().lock().expect("conflicts poisoned").policy = policy.to_string();
+    }
+}
+
+/// What to do without asking, if the policy or an earlier "for the rest" says.
+fn settled(policy: &str, all: &Option<(String, u64)>, now: u64) -> Option<String> {
+    if let Some((choice, at)) = all {
+        if now.saturating_sub(*at) < ALL_LIFE_MS {
+            return Some(choice.clone());
+        }
+    }
+    (policy != "ask").then(|| policy.to_string())
+}
+
+/// The person's answer to a question put by `decide`.
+pub fn resolve_conflict(transfer_id: &str, choice: &str, all: bool) {
+    if !matches!(choice, "keep" | "replace" | "skip") {
+        return;
+    }
+    let mut c = conflicts().lock().expect("conflicts poisoned");
+    if all {
+        c.all = Some((choice.to_string(), now_ms()));
+    }
+    if let Some(waiter) = c.waiters.remove(transfer_id) {
+        let _ = waiter.send(choice.to_string());
+    }
+}
+
+async fn decide(
+    app: &AppHandle,
+    transfer_id: &str,
+    name: &str,
+    existing: u64,
+    incoming: u64,
+) -> String {
+    let (rx, immediate) = {
+        let mut c = conflicts().lock().expect("conflicts poisoned");
+        if let Some(choice) = settled(&c.policy, &c.all, now_ms()) {
+            (None, Some(choice))
+        } else {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            c.waiters.insert(transfer_id.to_string(), tx);
+            (Some(rx), None)
+        }
+    };
+    if let Some(choice) = immediate {
+        return choice;
+    }
+    let _ = app.emit(
+        "transfer:conflict",
+        serde_json::json!({
+            "id": transfer_id, "name": name, "existingSize": existing, "size": incoming,
+        }),
+    );
+    let answer = match rx {
+        Some(rx) => tokio::time::timeout(ASK_PATIENCE, rx).await.ok().and_then(Result::ok),
+        None => None,
+    };
+    conflicts().lock().expect("conflicts poisoned").waiters.remove(transfer_id);
+    // Nobody answered: keep both, which loses nothing.
+    answer.unwrap_or_else(|| "keep".to_string())
+}
+
+/// Stops an incoming transfer and tells the sender, for the receiver's own
+/// reasons - declined, or skipped because the file is already there.
+pub fn cancel_transfer(app: &AppHandle, state: &AppState, id: &str) {
+    let peer = state.with(|s| {
+        s.offers.revoke(id);
+        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
+            t.state = "cancelled".into();
+            return Some(t.peer_id.clone());
+        }
+        None
+    });
+    emit_one(app, state, id);
+    conflicts().lock().expect("conflicts poisoned").partial.remove(id);
+
+    if let Some(peer) = peer {
+        let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+        links.send(
+            &peer,
+            &Envelope {
+                v: 1,
+                from: me,
+                kind: "file".into(),
+                payload: serde_json::json!({
+                    "control": { "transferId": id, "action": "cancel" }
+                }),
+            },
+        );
+    }
+}
+
 /// Never silently overwrite something already downloaded.
 pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
@@ -709,6 +877,43 @@ pub fn load_history(conn: &rusqlite::Connection) -> Vec<Transfer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_standing_policy_or_a_recent_for_the_rest_answers_without_asking() {
+        let now = 10_000_000;
+        assert_eq!(settled("ask", &None, now), None);
+        assert_eq!(settled("keep", &None, now), Some("keep".to_string()));
+        assert_eq!(settled("replace", &None, now), Some("replace".to_string()));
+        // An answer to "for the rest" beats the policy while it is fresh...
+        let fresh = Some(("skip".to_string(), now - 1_000));
+        assert_eq!(settled("ask", &fresh, now), Some("skip".to_string()));
+        // ...and lapses, so one batch's choice does not govern the next.
+        let stale = Some(("skip".to_string(), now - ALL_LIFE_MS - 1));
+        assert_eq!(settled("ask", &stale, now), None);
+    }
+
+    #[test]
+    fn an_answer_reaches_the_transfer_that_asked() {
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        conflicts().lock().unwrap().waiters.insert("conflict-test-a".into(), tx);
+        resolve_conflict("conflict-test-a", "replace", false);
+        assert_eq!(rx.try_recv().ok().as_deref(), Some("replace"));
+
+        // Not a choice this knows: nothing is delivered and nothing remembered.
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        conflicts().lock().unwrap().waiters.insert("conflict-test-b".into(), tx);
+        resolve_conflict("conflict-test-b", "delete-everything", true);
+        assert!(rx.try_recv().is_err());
+        conflicts().lock().unwrap().waiters.remove("conflict-test-b");
+    }
+
+    #[test]
+    fn an_unknown_policy_changes_nothing() {
+        set_conflict_policy("keep");
+        set_conflict_policy("whatever");
+        assert_eq!(conflicts().lock().unwrap().policy, "keep");
+        set_conflict_policy("ask");
+    }
 
     #[test]
     fn save_copy_leaves_the_original_where_it_was() {
