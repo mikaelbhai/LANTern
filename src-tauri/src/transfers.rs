@@ -1045,6 +1045,7 @@ pub async fn sync_media(
     video_rel_path: String,
     size: u64,
     subtitle_urls: Vec<String>,
+    min_age: Option<u8>,
 ) -> Result<(), String> {
     let share = ensure_synced_share(&app, &state)?;
     let root = PathBuf::from(&share.path);
@@ -1123,6 +1124,24 @@ pub async fn sync_media(
     }
 
     save_synced(&state, &item_id, &target);
+
+    // The host's rating goes with the file. The copy is a title of its own on
+    // a share of its own, so nothing linked it to the original and it came out
+    // unrated - listed with no age on it, and playable by anyone holding the
+    // phone, whatever the host had decided about the film it was copied from.
+    if let Some(age) = min_age {
+        let path = synced_stream_path(&video_rel_path);
+        state.with(|s| {
+            s.title_ages.insert(path.clone(), age);
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "INSERT INTO title_ages (stream_path, min_age) VALUES (?1, ?2)
+                     ON CONFLICT(stream_path) DO UPDATE SET min_age = ?2",
+                    rusqlite::params![path, age as i64],
+                );
+            }
+        });
+    }
 
     let items = crate::media::refresh(&state);
     let _ = app.emit("media:changed", &items);
@@ -1220,6 +1239,13 @@ pub fn remove_synced(state: &AppState, item_id: &str) -> bool {
     true
 }
 
+/// The path a synced copy is streamed from, in the form ratings are keyed by:
+/// decoded, with the share's slug in front.
+fn synced_stream_path(video_rel_path: &str) -> String {
+    let rel = safe_relative(video_rel_path);
+    format!("/lantern-synced/{}", rel.to_string_lossy().replace('\\', "/"))
+}
+
 /// Deletes the synced copy that lives at `rel_path` inside the synced share.
 ///
 /// Matched on the end of the stored path with separators normalised: the row
@@ -1250,7 +1276,17 @@ pub fn remove_synced_copy(state: &AppState, rel_path: &str) -> bool {
 
 #[cfg(test)]
 mod sync_tests {
-    use super::safe_relative;
+    use super::{safe_relative, synced_stream_path};
+
+    /// The rating is looked up by the path a viewer's request resolves to, so
+    /// the one written at sync time has to come out identical.
+    #[test]
+    fn a_copy_is_rated_under_the_path_it_is_served_from() {
+        assert_eq!(
+            synced_stream_path("Movies/Deadpool 2016.mp4"),
+            crate::rating::stream_path("http://192.168.1.5:7981/lantern-synced/Movies/Deadpool%202016.mp4"),
+        );
+    }
     use std::path::Path;
 
     #[test]

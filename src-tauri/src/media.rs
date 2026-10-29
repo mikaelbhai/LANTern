@@ -287,6 +287,9 @@ pub fn items_for_share(
 /// carry to the next episode; "jpn" survives both.
 #[derive(Clone, Debug, Default)]
 pub struct Resume {
+    /// The title as it reads, not where it is kept. See `title_key`.
+    pub title_key: Option<String>,
+    pub duration_sec: f64,
     pub progress_sec: f64,
     pub audio_lang: Option<String>,
     pub subtitle_lang: Option<String>,
@@ -304,7 +307,10 @@ pub fn stored_progress(state: &AppState) -> std::collections::HashMap<String, Re
         let mut out = std::collections::HashMap::new();
         let Some(db) = s.db.as_ref() else { return out };
         let Ok(mut stmt) = db
-            .prepare("SELECT id, progress_sec, audio_lang, subtitle_lang, updated_at FROM progress")
+            .prepare(
+                "SELECT id, progress_sec, audio_lang, subtitle_lang, updated_at, title_key, duration_sec
+                 FROM progress",
+            )
         else {
             return out;
         };
@@ -312,6 +318,8 @@ pub fn stored_progress(state: &AppState) -> std::collections::HashMap<String, Re
             Ok((
                 r.get::<_, String>(0)?,
                 Resume {
+                    title_key: r.get::<_, Option<String>>(5).unwrap_or(None),
+                    duration_sec: r.get::<_, f64>(6).unwrap_or(0.0),
                     progress_sec: r.get::<_, f64>(1)?,
                     audio_lang: r.get::<_, Option<String>>(2).unwrap_or(None),
                     subtitle_lang: r.get::<_, Option<String>>(3).unwrap_or(None),
@@ -374,16 +382,83 @@ pub fn preferred_languages(state: &AppState) -> (Option<String>, Option<String>)
     })
 }
 
+/// What a title is, independent of where it is kept.
+///
+/// Positions were keyed by the item's id - the sharing device's id and a path.
+/// That is a name for a *place*: the same film on another network, from another
+/// device, or as the copy synced onto this phone has a different id and so a
+/// different, empty position. The name and the episode number are the same
+/// wherever the file is, and the length (see `SAME_LENGTH_SEC`) tells one cut
+/// of a title from another.
+pub fn title_key(item: &serde_json::Value) -> Option<String> {
+    let name = item
+        .get("series")
+        .and_then(|v| v.as_str())
+        .or_else(|| item.get("title").and_then(|v| v.as_str()))?;
+    let plain: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    if plain.is_empty() {
+        return None;
+    }
+    match (
+        item.get("season").and_then(|v| v.as_u64()),
+        item.get("episode").and_then(|v| v.as_u64()),
+    ) {
+        (Some(s), Some(e)) => Some(format!("{plain}|s{s}e{e}")),
+        _ => Some(plain),
+    }
+}
+
+/// How far apart two lengths of the same title can be and still be the same
+/// cut. Container rounding and a second of credits differ between releases of
+/// one file; a director's cut does not hide inside half a minute.
+pub const SAME_LENGTH_SEC: f64 = 30.0;
+
+/// The saved position that applies to a title: its own, or the most recent one
+/// recorded for the same title at the same length anywhere else.
+pub fn resume_for<'a>(
+    saved: &'a std::collections::HashMap<String, Resume>,
+    id: &str,
+    key: Option<&str>,
+    duration_sec: f64,
+) -> Option<&'a Resume> {
+    let own = saved.get(id);
+    let (Some(key), true) = (key, duration_sec > 0.0) else {
+        return own;
+    };
+    let elsewhere = saved
+        .values()
+        .filter(|r| {
+            r.title_key.as_deref() == Some(key)
+                && r.duration_sec > 0.0
+                && (r.duration_sec - duration_sec).abs() <= SAME_LENGTH_SEC
+        })
+        .max_by_key(|r| r.watched_at);
+    match (own, elsewhere) {
+        (Some(a), Some(b)) => Some(if b.watched_at > a.watched_at { b } else { a }),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Records where the viewer got to, so it survives a restart.
-pub fn save_progress(state: &AppState, id: &str, progress_sec: f64, duration_sec: f64) {
+pub fn save_progress(
+    state: &AppState,
+    id: &str,
+    progress_sec: f64,
+    duration_sec: f64,
+    key: Option<&str>,
+) {
     state.with(|s| {
         let Some(db) = s.db.as_ref() else { return };
         let _ = db.execute(
-            "INSERT INTO progress (id, progress_sec, duration_sec, updated_at)
-             VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO progress (id, progress_sec, duration_sec, updated_at, title_key)
+             VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(id) DO UPDATE SET
-                progress_sec = ?2, duration_sec = ?3, updated_at = ?4",
-            rusqlite::params![id, progress_sec, duration_sec, crate::model::now_ms() as i64],
+                progress_sec = ?2, duration_sec = ?3, updated_at = ?4, title_key = ?5",
+            rusqlite::params![id, progress_sec, duration_sec, crate::model::now_ms() as i64, key],
         );
     });
 }
@@ -396,11 +471,22 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
     // right now.
     let saved = stored_progress(state);
     let (default_audio, default_subtitle) = preferred_languages(state);
+    // Rows written before positions carried a title key. Given one the first
+    // time their own title is seen, so the history already on this device
+    // starts matching copies elsewhere without anyone having to rewatch.
+    let mut unkeyed: Vec<(String, String)> = Vec::new();
     for item in built.iter_mut() {
         let Some(id) = item.get("id").and_then(|v| v.as_str()).map(str::to_string) else {
             continue;
         };
-        let resume = saved.get(&id);
+        let key = title_key(item);
+        let length = item.get("durationSec").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let resume = resume_for(&saved, &id, key.as_deref(), length);
+        if let (Some(row), Some(k)) = (saved.get(&id), key.as_ref()) {
+            if row.title_key.is_none() {
+                unkeyed.push((id.clone(), k.clone()));
+            }
+        }
         let Some(obj) = item.as_object_mut() else { continue };
 
         if let Some(resume) = resume {
@@ -429,6 +515,19 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
         if let Some(lang) = subtitle {
             obj.insert("subtitleLang".into(), serde_json::Value::from(lang));
         }
+    }
+
+    if !unkeyed.is_empty() {
+        state.with(|s| {
+            if let Some(db) = s.db.as_ref() {
+                for (id, key) in &unkeyed {
+                    let _ = db.execute(
+                        "UPDATE progress SET title_key = ?2 WHERE id = ?1 AND title_key IS NULL",
+                        rusqlite::params![id, key],
+                    );
+                }
+            }
+        });
     }
 
     state.with(|s| {
@@ -501,6 +600,51 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
             }
         }
         for (path, age) in inherited {
+            s.title_ages.insert(path, age);
+        }
+
+        // A copy synced onto this device before ratings travelled with it has
+        // none, and reads as unrated. Where the same title - same name, same
+        // length - is on the shelf with a rating from its host, the copy takes
+        // that, and keeps it once the host is off the network.
+        let mut adopted: Vec<(String, u8)> = Vec::new();
+        for copy in &built {
+            let Some(url) = copy.get("streamUrl").and_then(|v| v.as_str()) else { continue };
+            if !url.contains("/lantern-synced/") {
+                continue;
+            }
+            let path = crate::rating::stream_path(url);
+            if s.title_ages.contains_key(&path) {
+                continue;
+            }
+            let key = title_key(copy);
+            let length = copy.get("durationSec").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if key.is_none() || length <= 0.0 {
+                continue;
+            }
+            let age = built.iter().find_map(|other| {
+                let other_url = other.get("streamUrl").and_then(|v| v.as_str())?;
+                if other_url.contains("/lantern-synced/") || title_key(other) != key {
+                    return None;
+                }
+                let other_length = other.get("durationSec").and_then(|v| v.as_f64())?;
+                if (other_length - length).abs() > SAME_LENGTH_SEC {
+                    return None;
+                }
+                other.get("minAge").and_then(|v| v.as_u64()).map(|a| a as u8)
+            });
+            if let Some(age) = age {
+                adopted.push((path, age));
+            }
+        }
+        for (path, age) in adopted {
+            if let Some(db) = s.db.as_ref() {
+                let _ = db.execute(
+                    "INSERT INTO title_ages (stream_path, min_age) VALUES (?1, ?2)
+                     ON CONFLICT(stream_path) DO UPDATE SET min_age = ?2",
+                    rusqlite::params![path, age as i64],
+                );
+            }
             s.title_ages.insert(path, age);
         }
 
@@ -1558,5 +1702,71 @@ mod episode_tests {
         assert_eq!(found.len(), 5, "an episode number went missing");
         found.sort_unstable();
         assert_eq!(found, vec![1, 2, 10, 11, 12]);
+    }
+}
+
+#[cfg(test)]
+mod title_key_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn row(key: &str, duration: f64, progress: f64, at: i64) -> Resume {
+        Resume {
+            title_key: Some(key.into()),
+            duration_sec: duration,
+            progress_sec: progress,
+            watched_at: at,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_title_is_the_same_wherever_it_is_kept() {
+        let a = json!({"id": "dev1:media:Movies/Deadpool.2016.mp4", "title": "Deadpool"});
+        let b = json!({"id": "dev2:media:Film/deadpool (2016).mkv", "title": "DEADPOOL"});
+        assert_eq!(title_key(&a), title_key(&b));
+        assert_ne!(title_key(&a), title_key(&json!({"title": "Deadpool 2"})));
+    }
+
+    #[test]
+    fn an_episode_is_its_series_and_its_number() {
+        let e1 = json!({"title": "Pilot", "series": "Lanterns", "season": 1, "episode": 1});
+        let e2 = json!({"title": "Other", "series": "Lanterns", "season": 1, "episode": 2});
+        assert_ne!(title_key(&e1), title_key(&e2));
+        assert_eq!(title_key(&e1).as_deref(), Some("lanterns|s1e1"));
+    }
+
+    #[test]
+    fn a_copy_elsewhere_gives_its_place_to_a_title_with_none() {
+        let mut saved = HashMap::new();
+        saved.insert("synced:deadpool".to_string(), row("deadpool", 6486.0, 1170.0, 100));
+        // A different id, a length a few seconds off: the same film.
+        let found = resume_for(&saved, "peer:deadpool", Some("deadpool"), 6490.0).unwrap();
+        assert_eq!(found.progress_sec, 1170.0);
+    }
+
+    #[test]
+    fn a_different_cut_is_not_the_same_title() {
+        let mut saved = HashMap::new();
+        saved.insert("a".to_string(), row("deadpool", 6486.0, 1170.0, 100));
+        assert!(resume_for(&saved, "b", Some("deadpool"), 8040.0).is_none());
+    }
+
+    #[test]
+    fn the_most_recent_watch_wins() {
+        let mut saved = HashMap::new();
+        saved.insert("a".to_string(), row("film", 5000.0, 100.0, 10));
+        saved.insert("b".to_string(), row("film", 5001.0, 900.0, 20));
+        assert_eq!(resume_for(&saved, "a", Some("film"), 5000.0).unwrap().progress_sec, 900.0);
+        assert_eq!(resume_for(&saved, "c", Some("film"), 5000.0).unwrap().progress_sec, 900.0);
+    }
+
+    #[test]
+    fn an_unknown_length_only_matches_its_own_id() {
+        let mut saved = HashMap::new();
+        saved.insert("a".to_string(), row("film", 5000.0, 100.0, 10));
+        assert!(resume_for(&saved, "b", Some("film"), 0.0).is_none());
+        assert!(resume_for(&saved, "a", Some("film"), 0.0).is_some());
     }
 }

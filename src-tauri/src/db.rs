@@ -189,7 +189,7 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
     // chosen at. Added after the table shipped, so this runs as an alteration
     // rather than a column in the CREATE above — an existing library must keep
     // the positions it already has.
-    for column in ["audio_lang", "subtitle_lang"] {
+    for column in ["audio_lang", "subtitle_lang", "title_key"] {
         // A duplicate-column error is the expected outcome on every run after
         // the first, and means the schema is already current.
         let _ = conn.execute(

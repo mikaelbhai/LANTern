@@ -1625,6 +1625,7 @@ pub fn media_sync_start(
     video_rel_path: String,
     size: u64,
     subtitle_urls: Vec<String>,
+    min_age: Option<u8>,
 ) -> String {
     let transfer_id = uid();
     let owned = (*state).clone();
@@ -1637,6 +1638,7 @@ pub fn media_sync_start(
         video_rel_path,
         size,
         subtitle_urls,
+        min_age,
     ));
     transfer_id
 }
@@ -3781,26 +3783,42 @@ pub async fn media_scan(app: AppHandle, state: State<'_, AppState>) -> Res<Vec<s
 
 #[tauri::command]
 pub fn media_set_progress(state: State<'_, AppState>, id: String, progress_sec: f64) {
-    let duration = state.with(|s| {
+    let (duration, key) = state.with(|s| {
         let mut duration = 0.0;
-        for item in s.media.iter_mut() {
+        let mut key = None;
+        for item in s.media.iter() {
             if item.get("id").and_then(|v| v.as_str()) == Some(id.as_str()) {
                 duration = item
                     .get("durationSec")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
+                key = media::title_key(item);
+            }
+        }
+        // Every copy of the title on the shelf, not just the one being played:
+        // the network entry and the copy synced onto this device are one
+        // title, and the other should not still say it is unwatched.
+        for item in s.media.iter_mut() {
+            let same_id = item.get("id").and_then(|v| v.as_str()) == Some(id.as_str());
+            let same_title = key.is_some()
+                && duration > 0.0
+                && media::title_key(item) == key
+                && (item.get("durationSec").and_then(|v| v.as_f64()).unwrap_or(0.0) - duration).abs()
+                    <= media::SAME_LENGTH_SEC;
+            if same_id || same_title {
                 if let Some(obj) = item.as_object_mut() {
                     obj.insert("progressSec".into(), serde_json::Value::from(progress_sec));
+                    obj.insert("watchedAt".into(), serde_json::Value::from(crate::model::now_ms() as i64));
                 }
             }
         }
-        duration
+        (duration, key)
     });
 
     // Written through to the database, not just held in memory. Losing your
     // place on restart is the difference between "Continue watching" being a
     // feature and being an empty row.
-    media::save_progress(&state, &id, progress_sec, duration);
+    media::save_progress(&state, &id, progress_sec, duration, key.as_deref());
 }
 
 #[cfg(test)]

@@ -413,6 +413,8 @@ export const api = {
         videoRelPath: item.relPath,
         size: item.sizeBytes,
         subtitleUrls: (item.subtitles ?? []).map((s) => s.url),
+        // The host's rating travels with the copy.
+        minAge: item.minAge ?? null,
       }),
     /** Original item ids that already have a local, synced copy. */
     syncedIds: () => call<string[]>('media_synced_ids'),
