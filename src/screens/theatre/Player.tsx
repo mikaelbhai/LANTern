@@ -89,6 +89,26 @@ function matchLanguage(
   return tracks.findIndex((t) => (t.lang ?? '').trim().toLowerCase() === want);
 }
 
+/** Turns the app's own rotation lock off, from the middle of the picture. */
+function UnlockRotation({ compact = false }: { compact?: boolean }) {
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        setOrientationLocked(false);
+      }}
+      className={cn(
+        'pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/70 backdrop-blur',
+        'border border-gold/60 text-gold font-medium active:scale-95 transition-transform',
+        compact ? 'h-8 px-3 text-xs' : 'h-11 px-4 text-sm',
+      )}
+    >
+      <LockOpen size={compact ? 13 : 16} />
+      Unlock rotation
+    </button>
+  );
+}
+
 export function Player({
   item,
   upNext,
@@ -1128,6 +1148,11 @@ export function Player({
   }, [playing]);
 
   const orientationLocked = useOrientation((s) => s.locked);
+  const portraitNow = useOrientation((s) => !s.landscape);
+  // Locked upright on a phone. The lock itself is a small ring in the corner; a
+  // film that will not turn is the moment somebody needs the way out of it in
+  // plain view, so it is also spelled out in the middle of the picture.
+  const showUnlock = rotatesWithDevice() && orientationLocked && portraitNow;
 
   /* --------------------------------------------- subtitle delay, sleep, lock */
 
@@ -1751,6 +1776,19 @@ export function Player({
       */}
       {!docked && (
       <>
+            {showUnlock && (
+              <div
+                className={cn(
+                  'absolute inset-x-0 z-20 flex justify-center transition-opacity duration-200',
+                  chrome ? 'opacity-100' : 'opacity-0 pointer-events-none',
+                )}
+                // Above the middle of the screen, where the play and pause
+                // controls sit, rather than on top of them.
+                style={{ top: 'calc(50% - 64px)' }}
+              >
+                <UnlockRotation />
+              </div>
+            )}
             {/*
               top bar
 
@@ -2430,6 +2468,11 @@ export function Player({
               <X size={16} />
             </button>
           </div>
+          {showUnlock && (
+            <div className="absolute inset-x-0 bottom-16 flex justify-center pointer-events-none">
+              <UnlockRotation compact />
+            </div>
+          )}
           <button
             onClick={() => {
               const next = !playing;
