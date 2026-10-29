@@ -797,7 +797,7 @@ export function Theatre() {
  * Anything missing a number sorts last rather than as zero, so an unnumbered
  * special does not jump to the front of the run.
  */
-function seriesOrder(items: MediaItem[], of: MediaItem): MediaItem[] {
+export function seriesOrder(items: MediaItem[], of: MediaItem): MediaItem[] {
   if (!of.series) return [of];
   const rank = (n: number | undefined) => (typeof n === 'number' ? n : Number.MAX_SAFE_INTEGER);
   return items
@@ -821,7 +821,7 @@ function seriesOrder(items: MediaItem[], of: MediaItem): MediaItem[] {
  * two are behind you, whatever their own progress bars say. Films are
  * untouched; each is its own thing and belongs on the shelf in its own right.
  */
-function oneEpisodePerSeries(items: MediaItem[]): MediaItem[] {
+export function oneEpisodePerSeries(items: MediaItem[]): MediaItem[] {
   const furthest = new Map<string, MediaItem>();
   const out: MediaItem[] = [];
 
@@ -845,7 +845,7 @@ function isLater(a: MediaItem, b: MediaItem): boolean {
   return episode(a) > episode(b);
 }
 
-function pickHero(items: MediaItem[]): MediaItem | null {
+export function pickHero(items: MediaItem[]): MediaItem | null {
   if (!items.length) return null;
   // Prefer something part-watched, then the newest full-length title.
   const resumable = items.find((i) => i.progressSec > 60 && i.progressSec < i.durationSec * 0.95);

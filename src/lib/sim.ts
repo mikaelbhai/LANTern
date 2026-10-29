@@ -994,7 +994,12 @@ function buildLibrary(): MediaItem[] {
       id: `media-${i}`,
       shareId: owner.shareId,
       peerId: owner.peerId,
-      streamUrl: `http://${owner.ip}:${net.hostPort}/theatre/${seed.relPath}`,
+      // `?sim_stream=<url>` points every title at one real file, so the players can
+      // be driven against something that plays: the simulator's own addresses
+      // lead nowhere. Development only; nothing reads it in the app.
+      streamUrl:
+        (typeof location !== 'undefined' && new URLSearchParams(location.search).get('sim_stream')) ||
+        `http://${owner.ip}:${net.hostPort}/theatre/${seed.relPath}`,
       addedAt: Date.now() - i * 86_400_000,
       // A couple of part-watched titles so Continue watching is populated.
       progressSec: i === 1 ? 2140 : i === 3 ? 900 : 0,

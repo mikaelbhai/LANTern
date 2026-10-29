@@ -1,3 +1,4 @@
+import { isTv } from './tv';
 import { create } from 'zustand';
 import { api, emit, on } from './bridge';
 import { sfx } from './audio';
@@ -1122,6 +1123,7 @@ export const useStore = create<State>((set, get) => {
        * are not talking to is another matter entirely.
        */
       on('game:session', (session: (GameSession & { from?: string }) | null) => {
+        if (isTv()) return;
         // The host clearing the session out.
         if (!session) {
           set({ gameSession: null, nearbyGame: null });
@@ -1230,6 +1232,7 @@ export const useStore = create<State>((set, get) => {
        * change and ignores it.
        */
       on('game:lobby', (msg: { from?: string; t?: string; game?: GameKind }) => {
+        if (isTv()) return;
         const session = get().gameSession;
         const me = seatId(get());
         if (!session || !msg?.from) return;
@@ -1275,6 +1278,12 @@ export const useStore = create<State>((set, get) => {
       }),
 
       on('transfer:offer', (t: Transfer) => {
+        // Nobody sends files to a television, and nobody is there to be asked.
+        // Turned away at once so the sender is told, rather than left waiting.
+        if (isTv()) {
+          void api.files.cancel(t.id).catch(() => {});
+          return;
+        }
         get().addTransfers([t]);
         const peer = get().peers[t.peerId];
         // Whether this sender is one whose files are saved without asking, by
@@ -1323,6 +1332,9 @@ export const useStore = create<State>((set, get) => {
       // side received messages correctly and emitted them to nobody, which
       // made chat look send-only from both ends.
       on('message:received', (p: InboundChat) => {
+        // A television is not somebody to message. It keeps nothing, shows
+        // nothing and acknowledges nothing, so a chat to it simply goes unread.
+        if (isTv()) return;
         if (!p?.from) return;
 
         // Somebody saying our messages arrived, or were read. Not a message.
@@ -1426,8 +1438,10 @@ export const useStore = create<State>((set, get) => {
       // and the ringer raises an OS notification alongside it.
       rtc.startCallSignalling();
       rtc.onIncomingCall((msg) => {
-        // Already busy: decline rather than leaving the caller ringing out.
-        if (get().call) {
+        // A television does not take calls: it has no microphone to offer and
+        // nothing to answer with. Declined, so the caller is not left ringing.
+        // Already busy is the same answer.
+        if (isTv() || get().call) {
           rtc.declineCall(msg.from, msg.callId, msg.kind);
           return;
         }
@@ -1494,6 +1508,7 @@ export const useStore = create<State>((set, get) => {
       });
 
       on('typing', ({ peerId }: { peerId: string }) => {
+        if (isTv()) return;
         const rid = Object.values(get().rooms).find(
           (r) => r.kind === 'dm' && r.members.includes(peerId),
         )?.id;
@@ -2075,7 +2090,11 @@ export const useStore = create<State>((set, get) => {
       persist(get());
     },
 
-    toast: notify,
+    // No toasts on a television: nothing on it is read from a sofa in the corner
+    // of the screen, and a message over the film is worse than none.
+    toast: (t) => {
+      if (!isTv()) notify(t);
+    },
 
     dismissToast(id) {
       set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));

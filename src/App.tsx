@@ -33,7 +33,8 @@ import { rotatesWithDevice } from './lib/orientation';
 import { HeaderSlot } from './components/ScreenHeader';
 import { useBackDismiss } from './lib/hooks';
 import { pushLayer } from './lib/backstack';
-import { enableDpadNavigation, focusFirst, isTv } from './lib/tv';
+import { isTv } from './lib/tv';
+import { TvApp } from './tv/TvApp';
 import { IncomingFile } from './components/IncomingFile';
 import { IncomingGame } from './components/IncomingGame';
 import { NetworkStrip } from './components/NetworkStrip';
@@ -74,17 +75,9 @@ export default function App() {
   const [tv] = React.useState(isTv);
 
   React.useEffect(() => {
-    if (!tv) return;
-    // The arrows only become navigation on a device whose only input is a
-    // four-way pad; anywhere else they belong to the focused control.
-    document.documentElement.dataset.tv = 'true';
-    const stop = enableDpadNavigation();
-    // After the first render has produced something to land on.
-    const settle = window.setTimeout(focusFirst, 400);
-    return () => {
-      window.clearTimeout(settle);
-      stop();
-    };
+    // CSS hooks for the television layout. Everything else about it lives in
+    // src/tv/, which has its own focus handling.
+    if (tv) document.documentElement.dataset.tv = 'true';
   }, [tv]);
   const [profileOpen, setProfileOpen] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -164,9 +157,9 @@ export default function App() {
   React.useEffect(() => {
     // Not for a guest: it would put a permission prompt on a page that is not
     // allowed notifications anyway, before they have done anything.
-    if (isGuest() || !settings.notifications.call) return;
+    if (isGuest() || tv || !settings.notifications.call) return;
     void prepareCallAlerts();
-  }, [settings.notifications.call]);
+  }, [settings.notifications.call, tv]);
 
   // Navigating during a call minimises it rather than blocking the app — the
   // session keeps running in the floating window.
@@ -228,86 +221,12 @@ export default function App() {
   // and is never shown the setup screens.
   if (isGuest()) return <GuestApp />;
 
+  // A television is a library and a player and nothing else, with its own
+  // remote-first interface. It has no profile to fill in and none of the
+  // phone's screens to be shown, so it comes before both.
+  if (tv) return <TvApp />;
+
   if (!onboarded) return <Onboarding />;
-
-  if (tv) {
-    /*
-      Theatre and Games, and nothing else.
-
-      Chats, Files and Settings all want a keyboard that a remote control is
-      not. Games do not: every one of them is a grid you move around with a
-      pad and select with a button, which is exactly what a television has.
-      Leaving them off meant a room full of people around a TV could watch
-      something together but not play anything together, which is a strange
-      thing for this application to be unable to do.
-
-      Two buttons rather than a sidebar: a rail the pad has to cross on the way
-      to everything is a tax on every single press.
-    */
-    return (
-      /*
-        The cinema palette, for the same reason Theatre has it on a phone:
-        this branch IS Theatre and Games, and it returns before the shell
-        column that would otherwise apply it. Without this the bar carrying
-        the two buttons was `bg-surface` against Theatre's own near-black -
-        a lighter strip across the top of a dark room.
-      */
-      <div className="cinema h-full w-full flex flex-col bg-base text-txt overflow-hidden">
-        <div className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-edge">
-          <button
-            onClick={() => navigate('theatre')}
-            className={cn(
-              'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
-              screen === 'games' ? 'text-dim hover:text-txt' : 'bg-gold/15 text-gold',
-            )}
-          >
-            Theatre
-          </button>
-          <button
-            onClick={() => navigate('games')}
-            className={cn(
-              'px-4 py-1.5 rounded-input text-sm font-medium transition-colors',
-              screen === 'games' ? 'bg-gold/15 text-gold' : 'text-dim hover:text-txt',
-            )}
-          >
-            Games
-          </button>
-        </div>
-        <div className="flex-1 min-h-0">{screen === 'games' ? <Games /> : <Theatre />}</div>
-        <RejoinBanner />
-        {/*
-          The four things a television needs that are not screens.
-
-          Leaving these out was not a decision about televisions; they simply
-          live at the bottom of the other branch and this one returns before
-          reaching them. Each absence was its own fault:
-
-          Toasts are how the application says anything went wrong, so without
-          them a TV failed in complete silence - no unreachable peer, no
-          library that could not be read, nothing.
-
-          A call arrives on any device that is on the network, whether or not
-          it can start one. With no overlay it rang with nothing on screen and
-          no way to answer or refuse, and - worse - the call stayed set, so
-          every later call was turned away as busy until the app restarted. A
-          television is exactly the device somebody calls to say come and
-          watch this.
-
-          A file offered to a TV could not be accepted, which is the obvious
-          way to get a video onto one.
-
-          And the primer, because a call on a TV still asks for a microphone.
-        */}
-        {call && <CallOverlay />}
-        <IncomingFile />
-        <ConflictPrompt />
-        <IncomingGame />
-        <SystemPromptHost />
-        <ControlConsent />
-        <Toasts />
-      </div>
-    );
-  }
 
   const screens: Record<Screen, React.ReactNode> = {
     home: <Home onNavigate={go} />,
