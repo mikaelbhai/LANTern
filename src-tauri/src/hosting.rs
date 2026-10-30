@@ -762,6 +762,15 @@ async fn serve_path(
     if let Some(at) = params.get("keyframe").and_then(|t| t.parse::<f64>().ok()) {
         return serve_keyframe(&state, &slug, &path, at).await;
     }
+    // `?syncaudio=1` is a copy being made for another device to keep: the same
+    // file with its sound converted to something that device can play.
+    if params.contains_key("syncaudio") {
+        let range = headers
+            .get(header::RANGE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        return serve_converted(&state, &slug, &path, range.as_deref()).await;
+    }
     if let Some(index) = params.get("audio").and_then(|n| n.parse::<u64>().ok()) {
         let seek = params
             .get("t")
@@ -1043,6 +1052,132 @@ async fn serve_audio_selection(
         .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
         .body(Body::from_stream(stream))
         .unwrap()
+}
+
+/// One conversion at a time per file, so two requests for the same film (a
+/// resumed sync, a second phone) share the work instead of racing it.
+fn conversion_gate(key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    use std::sync::{Mutex, OnceLock};
+    static GATES: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut gates = GATES.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    gates.entry(key.to_string()).or_default().clone()
+}
+
+/// A copy of the file with its sound converted, for syncing to a device that
+/// cannot play the original's.
+///
+/// The conversion is a whole file on disk, written once and kept for a few
+/// hours, so a transfer that is paused or retried does not run it again and a
+/// second device gets it for free. Nothing is sent until it is finished: the
+/// request simply waits, which is what the other end's "preparing" label is for.
+async fn serve_converted(state: &AppState, slug: &str, rel: &str, range: Option<&str>) -> Response {
+    let Some(ffmpeg) = crate::audiotrack::ffmpeg_path() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "Converting a film's sound needs ffmpeg on this device.",
+        )
+            .into_response();
+    };
+    let Some((root, running)) = state.with(|s| {
+        s.shares
+            .iter()
+            .find(|sh| sh.slug == slug)
+            .map(|sh| (PathBuf::from(&sh.path), sh.running))
+    }) else {
+        return not_found("No such share");
+    };
+    if !running {
+        return not_found("No such share");
+    }
+    let Some(target) = resolve(&root, rel) else {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    };
+    let Ok(meta) = tokio::fs::metadata(&target).await else {
+        return not_found("Not found");
+    };
+
+    // Beside the app's data when there is one - the system temp folder is
+    // often on the small drive, and this is the size of a film.
+    let dir = state
+        .with(|s| s.thumb_dir.clone())
+        .and_then(|d| d.parent().map(|p| p.join("sync-cache")))
+        .unwrap_or_else(|| std::env::temp_dir().join("lantern-sync-cache"));
+    if tokio::fs::create_dir_all(&dir).await.is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "no place to work").into_response();
+    }
+
+    // Keyed by what the file is, so replacing it with another release does not
+    // serve the old conversion.
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        target.to_string_lossy().hash(&mut h);
+        meta.len().hash(&mut h);
+        meta.modified().ok().hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let ext = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mkv")
+        .to_string();
+    let done = dir.join(format!("{key}.{ext}"));
+    let part = dir.join(format!("{key}.part"));
+
+    {
+        let gate = conversion_gate(&key);
+        let _one_at_a_time = gate.lock().await;
+        if !done.exists() {
+            purge_old_conversions(&dir).await;
+            let args = crate::audiotrack::sync_arguments(
+                &target.to_string_lossy(),
+                &part.to_string_lossy(),
+            );
+            // Dropping the request kills the conversion: nobody is waiting for
+            // it, and a half-written film is not worth keeping.
+            let status = ffmpeg_command(ffmpeg)
+                .args(&args)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null())
+                .kill_on_drop(true)
+                .status()
+                .await;
+            let ok = matches!(&status, Ok(s) if s.success());
+            if !ok || tokio::fs::rename(&part, &done).await.is_err() {
+                let _ = tokio::fs::remove_file(&part).await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "could not convert this file's sound",
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    send_file(state, slug, &done, range).await
+}
+
+/// Conversions nobody has asked for in a while. A film is large, and this is a
+/// cache: the originals are untouched and the work can be done again.
+async fn purge_old_conversions(dir: &Path) {
+    const KEEP: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+    let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let old = entry
+            .metadata()
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age > KEEP)
+            .unwrap_or(false);
+        if old {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
 }
 
 /// Extracts one subtitle track out of a Matroska file and returns it as VTT.

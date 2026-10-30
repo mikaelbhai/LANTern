@@ -67,6 +67,45 @@ pub fn pip_video_set(playing: bool, width: i32, height: i32) {
     set_video(playing, width, height);
 }
 
+/// Opens a video in whichever other app will take it - VLC first, when it is
+/// there. Android only; returns whether anything was found to open it.
+///
+/// For a film whose sound this device cannot decode: another player brings its
+/// own decoders. See `MainActivity.openInExternalPlayer`.
+pub fn open_external(url: &str, title: &str, position_ms: i64) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        return crate::apkinstall::with_activity(|env, class| {
+            let (Ok(url), Ok(title)) = (env.new_string(url), env.new_string(title)) else {
+                return false;
+            };
+            env.call_static_method(
+                class,
+                "openInExternalPlayer",
+                "(Ljava/lang/String;Ljava/lang/String;J)Z",
+                &[
+                    (&url).into(),
+                    (&title).into(),
+                    jni::objects::JValue::Long(position_ms),
+                ],
+            )
+            .and_then(|v| v.z())
+            .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (url, title, position_ms);
+        false
+    }
+}
+
+#[tauri::command]
+pub fn player_open_external(url: String, title: String, position_ms: i64) -> bool {
+    open_external(&url, &title, position_ms)
+}
+
 /// Tells Android who decides which way up the screen is.
 ///
 /// `sensor` rotates from the accelerometer whatever the system's auto-rotate

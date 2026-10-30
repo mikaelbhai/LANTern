@@ -155,6 +155,7 @@ pub fn run() {
             pip::keep_awake_set,
             pip::player_screen_set,
             pip::pip_video_set,
+            pip::player_open_external,
             storage::storage_all_files,
             storage::storage_request_all_files,
             commands::call_audio_earpiece,

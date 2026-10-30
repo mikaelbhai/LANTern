@@ -403,6 +403,31 @@ class MainActivity : TauriActivity() {
       activity.runOnUiThread { activity.refreshPipParams() }
     }
 
+    /**
+     * Hands a video to another app, VLC by preference.
+     *
+     * For a film whose sound this phone's WebView cannot decode and which nothing
+     * on the phone can convert: VLC brings its own decoders. The address is
+     * played where it is - the copy's own loopback address plays with no
+     * network at all. `position` is the milliseconds to resume from, which VLC
+     * reads from an extra of that name. Returns false when nothing could take it.
+     */
+    @JvmStatic
+    fun openInExternalPlayer(url: String, title: String, positionMs: Long): Boolean {
+      val activity = activityRef?.get() ?: return false
+      val build = {
+        Intent(Intent.ACTION_VIEW)
+          .setDataAndType(Uri.parse(url), "video/*")
+          .putExtra("title", title)
+          .putExtra("position", positionMs)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      // VLC itself first, so a phone with several players does not ask which.
+      return runCatching { activity.startActivity(build().setPackage("org.videolan.vlc")); true }
+        .recoverCatching { activity.startActivity(build()); true }
+        .getOrDefault(false)
+    }
+
     /** Whether the film is running right now, as opposed to merely open. */
     @Volatile
     private var videoPlaying = false

@@ -1842,7 +1842,7 @@ export function Player({
                   title: 'This film will play without its sound',
                   body: item.peerId
                     ? 'The device sharing it could not re-encode the audio.'
-                    : 'Its audio format cannot be played on this device, and re-encoding it needs ffmpeg. The picture is here; the sound is with the original.',
+                    : 'Its audio format cannot be played on this device. The picture is here; for the sound, open it in VLC from the Audio menu, or sync it again from the device that has the original.',
                 });
                 return;
               }
@@ -2441,6 +2441,34 @@ export function Player({
                               </button>
                             ))}
                           </div>
+                          )}
+                          {rotatesWithDevice() && (
+                            <div className="shrink-0">
+                              <div className="my-1 border-t border-edge" />
+                              <button
+                                onClick={() => {
+                                  setAudioOpen(false);
+                                  setPlaying(false);
+                                  void api.pip
+                                    .openExternal(item.streamUrl, item.title, Math.floor(time * 1000))
+                                    .then((found) => {
+                                      if (!found) {
+                                        setPlaying(true);
+                                        useStore.getState().toast({
+                                          kind: 'info',
+                                          title: 'No other video player found',
+                                          body: 'Install VLC to play films whose sound this device cannot decode.',
+                                        });
+                                      }
+                                    })
+                                    .catch(() => setPlaying(true));
+                                }}
+                                title="Opens the film in VLC or another player, which brings its own decoders. Where you stop there is not saved here."
+                                className="track-row w-full text-left px-2 h-7 rounded-input text-2xs hover:bg-raised"
+                              >
+                                Play in another app (VLC)
+                              </button>
+                            </div>
                           )}
                           {audioTracks.length > 0 && (
                             <div className="shrink-0">

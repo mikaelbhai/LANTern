@@ -165,18 +165,18 @@ export function Theatre() {
     // copy will have a picture and no sound - said now, while the original is
     // still one tap away, and not found out on a plane.
     const tracks = (item.audioTracks ?? []) as { codec?: string; webSafe?: boolean }[];
-    if (
+    const needsConverting =
       tracks.length > 0 &&
       tracks.every((t) => needsRemux(t.codec ?? '', t.webSafe !== false, browserCanPlay)) &&
-      !(await api.media.canSwitchAudio().catch(() => false))
-    ) {
+      !(await api.media.canSwitchAudio().catch(() => false));
+    if (needsConverting) {
       useStore.getState().toast({
         kind: 'info',
-        title: `${item.title} will have no sound offline`,
-        body: 'Its audio format cannot be played here and this device cannot re-encode it. The picture will play; the sound needs the original.',
+        title: `Preparing ${item.title}'s sound`,
+        body: 'This device cannot play its audio format, so the other device converts it first - a minute or two before the copy starts arriving. If it cannot, the copy will play without sound.',
       });
     }
-    const transferId = await api.media.sync(item);
+    const transferId = await api.media.sync(item, needsConverting);
     setSyncTransfers((prev) => ({ ...prev, [item.id]: transferId }));
   }, []);
   const removeSync = React.useCallback(async (item: MediaItem) => {

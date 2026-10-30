@@ -205,6 +205,56 @@ pub fn arguments(
     args
 }
 
+/// The container a converted copy is written in: the one the file already had.
+///
+/// Matroska keeps every subtitle track and the order of the tracks as they
+/// were; MP4 is only offered for files that were MP4 to begin with, because
+/// writing an MKV's subtitles into one fails outright on the picture-based ones.
+pub fn sync_container(path: &str) -> &'static str {
+    match Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mp4" | "m4v" | "mov") => "mp4",
+        _ => "matroska",
+    }
+}
+
+/// Arguments for a copy of a film whose sound the receiving device cannot play.
+///
+/// For syncing, not streaming: the result is a whole, seekable file. The video
+/// and the subtitles are copied byte for byte, so this costs about what reading
+/// the file costs; every audio track is re-encoded to stereo AAC, which every
+/// browser and every phone can play. Written to a file and not to a pipe
+/// because a pipe has no length and cannot be seeked, and a copy that cannot
+/// be seeked is not one anybody would keep.
+pub fn sync_arguments(path: &str, out: &str) -> Vec<String> {
+    let container = sync_container(path);
+    let mut args: Vec<String> = ["-y", "-nostdin", "-i", path]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    for part in [
+        "-map", "0:v:0", "-map", "0:a", "-map", "0:s?",
+        "-c:v", "copy", "-c:s", "copy",
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+    ] {
+        args.push(part.into());
+    }
+    if container == "mp4" {
+        // The index first, so the copy can start playing before it has all
+        // arrived and seeks without reading to the end.
+        args.push("-movflags".into());
+        args.push("+faststart".into());
+    }
+    args.push("-f".into());
+    args.push(container.into());
+    args.push(out.into());
+    args
+}
+
 /// Arguments for a single still frame, encoded as JPEG on stdout.
 ///
 /// One frame, scaled down, at a point far enough in to be past the studio
@@ -508,5 +558,129 @@ mod tests {
         assert!(!is_web_safe("DTS"));
         // AC-3 is not playable in Chromium even though many players handle it.
         assert!(!is_web_safe("AC-3"));
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    #[test]
+    fn a_synced_copy_keeps_the_picture_and_subtitles_untouched() {
+        let args = sync_arguments("/films/Loki.mkv", "/cache/x.part");
+        let at = |flag: &str| args.iter().position(|a| a == flag).map(|i| args[i + 1].clone());
+        // Getting either of these wrong would re-encode a 20 GB film.
+        assert_eq!(at("-c:v").as_deref(), Some("copy"));
+        assert_eq!(at("-c:s").as_deref(), Some("copy"));
+        assert_eq!(at("-c:a").as_deref(), Some("aac"));
+        assert!(args.windows(2).any(|w| w == ["-map", "0:a"]), "every audio track is kept");
+        assert_eq!(args.last().map(String::as_str), Some("/cache/x.part"));
+    }
+
+    #[test]
+    fn the_container_follows_the_file() {
+        assert_eq!(sync_container("a/b/Film.mkv"), "matroska");
+        assert_eq!(sync_container("Film.MP4"), "mp4");
+        assert_eq!(sync_container("Film.m4v"), "mp4");
+        assert_eq!(sync_container("Film.webm"), "matroska");
+        let mp4 = sync_arguments("Film.mp4", "out.part");
+        assert!(mp4.contains(&"+faststart".to_string()), "an MP4 copy has its index first");
+        let mkv = sync_arguments("Film.mkv", "out.part");
+        assert!(!mkv.contains(&"+faststart".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod sample_film_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn scan(dir: &Path) -> Vec<serde_json::Value> {
+        crate::media::items_for_share("t", "t", dir, "127.0.0.1:1")
+    }
+
+    fn track_of(url: &str) -> Option<u64> {
+        url.split("?subtitle=").nth(1)?.split('&').next()?.parse().ok()
+    }
+
+    fn cues(path: &Path, track: u64) -> usize {
+        let vtt = if crate::ebml::is_matroska(path) {
+            crate::ebml::extract_subtitles(path, track)
+        } else {
+            crate::mp4::extract_subtitles(path, track)
+        }
+        .unwrap_or_default();
+        vtt.lines().filter(|l| l.contains("-->")).count()
+    }
+
+    /// Converts real films' excerpts the way syncing does and checks what a
+    /// viewer would check: the subtitles are still listed, still say the same
+    /// thing, and the sound is now something a browser can play.
+    ///
+    /// Ignored: it needs ffmpeg and sample files (`LANTERN_SAMPLE_DIR` holds a
+    /// \`src\` folder of them, and an empty \`out\` for the results).
+    #[test]
+    #[ignore = "needs ffmpeg and sample films"]
+    fn converted_copies_keep_their_subtitles_and_gain_playable_sound() {
+        let base = PathBuf::from(std::env::var("LANTERN_SAMPLE_DIR").expect("LANTERN_SAMPLE_DIR"));
+        let (src, out) = (base.join("src"), base.join("out"));
+        let ffmpeg = ffmpeg_path().expect("ffmpeg");
+
+        for entry in std::fs::read_dir(&src).unwrap().flatten() {
+            let name = entry.file_name();
+            let target = out.join(&name);
+            let args = sync_arguments(&entry.path().to_string_lossy(), &target.to_string_lossy());
+            let status = std::process::Command::new(ffmpeg).args(&args).output().unwrap();
+            assert!(status.status.success(), "{name:?}: {}", String::from_utf8_lossy(&status.stderr));
+        }
+
+        let before = scan(&src);
+        let after = scan(&out);
+        assert_eq!(before.len(), after.len());
+        for b in &before {
+            let rel = b["relPath"].as_str().unwrap();
+            let a = after.iter().find(|a| a["relPath"] == b["relPath"]).expect(rel);
+            let subs = |i: &serde_json::Value| -> Vec<(String, String)> {
+                i["subtitles"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|s| (s["label"].as_str().unwrap_or("").to_string(), s["lang"].as_str().unwrap_or("").to_string()))
+                    .collect()
+            };
+            println!("{rel}: {} subtitle tracks before, {} after", subs(b).len(), subs(a).len());
+            assert!(!subs(b).is_empty(), "{rel}: the sample has no subtitles to lose");
+            assert_eq!(subs(b), subs(a), "{rel}: the subtitle list changed");
+
+            // Playable sound: every listed track must now be web-safe.
+            for t in a["audioTracks"].as_array().cloned().unwrap_or_default() {
+                assert_ne!(t["webSafe"], false, "{rel}: {t} is still not playable");
+            }
+            println!("{rel}: audio tracks after: {}", a["audioTracks"]);
+
+            // The words themselves, for the first few tracks.
+            let urls = |i: &serde_json::Value| -> Vec<u64> {
+                i["subtitles"].as_array().cloned().unwrap_or_default().iter().filter_map(|s| s["url"].as_str().and_then(track_of)).collect()
+            };
+            let (bt, at) = (urls(b), urls(a));
+            // Tracks with nothing in a short excerpt (a "forced" track, mostly)
+            // prove nothing either way; the rest must come out word for word.
+            let mut compared = 0;
+            for (x, y) in bt.iter().zip(at.iter()) {
+                let n_before = cues(&src.join(rel), *x);
+                if n_before == 0 {
+                    continue;
+                }
+                let n_after = cues(&out.join(rel), *y);
+                println!("{rel}: track {x}->{y}: {n_before} cues before, {n_after} after");
+                assert_eq!(n_before, n_after, "{rel}: cue count changed for track {x}");
+                compared += 1;
+                if compared == 4 {
+                    break;
+                }
+            }
+            assert!(compared > 0, "{rel}: no track had any cues to compare");
+        }
     }
 }

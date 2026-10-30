@@ -417,6 +417,12 @@ export const api = {
      * What the floating window needs: whether the film is running and how big
      * its picture is, for the window's shape and its play/pause button.
      */
+    /**
+     * Opens a video in another app (VLC first). Android only; resolves false
+     * when nothing was found to take it.
+     */
+    openExternal: (url: string, title: string, positionMs: number) =>
+      call<boolean>('player_open_external', { url, title, positionMs }),
     setVideo: (playing: boolean, width: number, height: number) =>
       call<void>('pip_video_set', { playing, width, height }),
     playerScreen: (player: boolean, bars: boolean) =>
@@ -489,8 +495,11 @@ export const api = {
      * already had rather than syncing only the one the player happened to
      * be on.
      */
-    sync: (item: MediaItem) =>
+    sync: (item: MediaItem, convertAudio = false) =>
       call<string>('media_sync_start', {
+        // Ask the sharing device to convert the film's sound first. Only set
+        // by a receiver that cannot play it and cannot convert it itself.
+        convertAudio,
         itemId: item.id,
         videoUrl: item.streamUrl,
         videoRelPath: item.relPath,

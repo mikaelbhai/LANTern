@@ -396,7 +396,7 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
 
     set_state(&app, &state, &transfer_id, "active", have);
 
-    let result = stream_to_file(&app, &state, &transfer_id, &url, &target, have, size).await;
+    let result = stream_to_file(&app, &state, &transfer_id, &url, &target, have, size, None).await;
 
     match result {
         Ok(total) => {
@@ -463,6 +463,9 @@ async fn stream_to_file(
     target: &Path,
     from: u64,
     size: u64,
+    // The name to put back on the transfer once the sender has started
+    // sending, for a transfer that was labelled while it waited.
+    ready_name: Option<String>,
 ) -> std::io::Result<u64> {
     let (host, port, path) = split_url(url)
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad offer url"))?;
@@ -489,6 +492,7 @@ async fn stream_to_file(
             format!("sender answered: {}", line.trim()),
         ));
     }
+    let mut content_length: Option<u64> = None;
     loop {
         let mut header = String::new();
         if reader.read_line(&mut header).await? == 0 {
@@ -497,7 +501,29 @@ async fn stream_to_file(
         if header.trim().is_empty() {
             break;
         }
+        if let Some(v) = header.to_ascii_lowercase().strip_prefix("content-length:") {
+            content_length = v.trim().parse().ok();
+        }
     }
+
+    // What the sender says it is sending beats what the listing said it would
+    // be. They differ for a converted copy - same film, different size - and
+    // going by the listing made a finished copy look unfinished, or run past
+    // 100%.
+    let size = match content_length {
+        Some(c) if c > 0 => from + c,
+        _ => size,
+    };
+    state.with(|s| {
+        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
+            if size > 0 {
+                t.size = size;
+            }
+            if let Some(name) = ready_name.clone() {
+                t.name = name;
+            }
+        }
+    });
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -1254,6 +1280,9 @@ pub async fn sync_media(
     size: u64,
     subtitle_urls: Vec<String>,
     min_age: Option<u8>,
+    // Ask the sharing device to convert the film's sound first. Set by the
+    // receiver, which is the only one that knows what it cannot play.
+    convert_audio: bool,
 ) -> Result<(), String> {
     let share = ensure_synced_share(&app, &state)?;
     let root = PathBuf::from(&share.path);
@@ -1268,9 +1297,21 @@ pub async fn sync_media(
         .unwrap_or("video")
         .to_string();
 
+    // The address that asks for the conversion. It is the same file at the same
+    // path with one more word on the end.
+    let converted_url = format!(
+        "{video_url}{}syncaudio=1",
+        if video_url.contains('?') { '&' } else { '?' }
+    );
+    let shown_name = if convert_audio {
+        format!("{name} (preparing the sound)")
+    } else {
+        name.clone()
+    };
+
     let transfer = Transfer {
         id: transfer_id.clone(),
-        name,
+        name: shown_name,
         size,
         sent: 0,
         peer_id: String::new(),
@@ -1283,13 +1324,42 @@ pub async fn sync_media(
         local_path: None,
         expires_at: None,
         bundle_id: None,
-        url: Some(video_url.clone()),
+        url: Some(if convert_audio { converted_url.clone() } else { video_url.clone() }),
         via_chat: false,
     };
     state.with(|s| s.transfers.push(transfer));
     emit_one(&app, &state, &transfer_id);
 
-    let result = stream_to_file(&app, &state, &transfer_id, &video_url, &target, 0, size).await;
+    let ready = convert_audio.then(|| name.clone());
+    let mut result = stream_to_file(
+        &app,
+        &state,
+        &transfer_id,
+        if convert_audio { &converted_url } else { &video_url },
+        &target,
+        0,
+        // The size of the original means nothing for a converted copy; the
+        // sender's own length is read from its answer.
+        if convert_audio { 0 } else { size },
+        ready,
+    )
+    .await;
+    // The sharing device cannot convert (no ffmpeg there): the copy is made
+    // from the file as it is, which is what syncing did before this existed.
+    // It plays, without its sound, and says so.
+    if convert_audio {
+        if let Err(e) = &result {
+            if e.to_string().contains("501") {
+                state.with(|s| {
+                    if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
+                        t.name = name.clone();
+                        t.url = Some(video_url.clone());
+                    }
+                });
+                result = stream_to_file(&app, &state, &transfer_id, &video_url, &target, 0, size, None).await;
+            }
+        }
+    }
     match &result {
         Ok(total) => {
             state.with(|s| {
