@@ -55,6 +55,7 @@ import {
   sagaKey,
 } from '../lib/collections';
 import { useLocalStorage } from '../lib/hooks';
+import { isAndroid } from '../lib/picker';
 import { useStore } from '../lib/store';
 import { cn, formatBytes } from '../lib/utils';
 import type { MediaItem, RatingsStatus, WatchParty } from '../lib/types';
@@ -1246,7 +1247,9 @@ export const isSyncedCopy = (item: MediaItem): boolean =>
  * this machine's own. The share holds the folder; the item says where inside it.
  */
 function diskPath(shares: { id: string; path: string }[], item: MediaItem): string | null {
-  if (item.peerId || !item.relPath) return null;
+  // A phone has no File Explorer to open, and a copy synced onto it is not a
+  // folder anybody can be taken to; the button is for a computer's own library.
+  if (isAndroid() || item.peerId || !item.relPath) return null;
   const share = shares.find((s) => s.id === item.shareId);
   if (!share?.path) return null;
   const sep = share.path.includes('\\') ? '\\' : '/';
@@ -2166,11 +2169,11 @@ function CollectionSheet({
                   {items.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center gap-3 p-2 rounded-card bg-raised border border-edge hover:border-gold/40 transition-colors"
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 p-2 rounded-card bg-raised border border-edge hover:border-gold/40 transition-colors"
                     >
                       <button
                         onClick={() => onPlay(item)}
-                        className="relative w-28 shrink-0 rounded-input overflow-hidden group/thumb"
+                        className="relative w-28 max-md:w-24 shrink-0 rounded-input overflow-hidden group/thumb"
                       >
                         <Thumbnail
                           title={item.title}
@@ -2194,7 +2197,7 @@ function CollectionSheet({
                         )}
                       </button>
 
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 basis-32">
                         <div className="text-xs font-medium truncate">
                           {/* An episode with no name of its own carried the
                               series name, so every row in a collection read
@@ -2216,6 +2219,10 @@ function CollectionSheet({
                         </div>
                       </div>
 
+                      {/* The controls. On a phone they take their own line, right
+                          aligned, so the title above has the width of the row
+                          instead of being cut to "Epis…". */}
+                      <div className="flex items-center gap-1.5 shrink-0 max-md:basis-full max-md:justify-end">
                       {orderable && !item.peerId && (
                         <span className="flex flex-col shrink-0">
                           <button
@@ -2267,6 +2274,7 @@ function CollectionSheet({
                       >
                         Remove
                       </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

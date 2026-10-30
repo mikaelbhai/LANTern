@@ -153,7 +153,9 @@ export function Thumbnail({
   className?: string;
 }) {
   const thumb = useThumbnail(seed ?? title, streamUrl, posterUrl);
-  if (!thumb) {
+  const [broken, setBroken] = React.useState(false);
+  React.useEffect(() => setBroken(false), [thumb]);
+  if (!thumb || broken) {
     return <Artwork title={title} seed={seed} variant="backdrop" className={className} />;
   }
   return (
@@ -162,11 +164,10 @@ export function Thumbnail({
       alt={title}
       loading="lazy"
       className={`object-cover ${className ?? ''}`}
-      // A poster that 404s falls back to nothing rather than leaving a broken
-      // image behind, exactly as it does on a card.
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = 'none';
-      }}
+      // A picture that will not load is replaced by the generated artwork. It
+      // used to be hidden, which left a blank hole where the episode's picture
+      // should be - every copy synced onto a phone, which cannot cut a frame.
+      onError={() => setBroken(true)}
     />
   );
 }
@@ -191,20 +192,20 @@ export function TitleCard({
   posterUrl?: string;
 }) {
   const thumb = useThumbnail(seed ?? title, streamUrl, posterUrl);
+  const [broken, setBroken] = React.useState(false);
+  React.useEffect(() => setBroken(false), [thumb]);
 
   return (
     <div className={`relative overflow-hidden ${className ?? ''}`}>
-      {thumb ? (
+      {thumb && !broken ? (
         <img
           src={thumb}
           alt={title}
           loading="lazy"
           className="h-full w-full object-cover"
-          // A poster that 404s should fall back to the generated art rather
-          // than leaving a broken image in the row.
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = 'none';
-          }}
+          // A poster that 404s falls back to the generated art rather than
+          // leaving a hole in the row.
+          onError={() => setBroken(true)}
         />
       ) : (
         <Artwork title={title} seed={seed} variant="backdrop" className="h-full w-full" />
