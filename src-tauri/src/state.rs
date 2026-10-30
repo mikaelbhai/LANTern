@@ -52,6 +52,12 @@ pub struct Inner {
     pub avatar: Option<Vec<u8>>,
     /// Where generated still frames are kept between runs.
     pub thumb_dir: Option<std::path::PathBuf>,
+    /// How this device's Theatre groups its library, as its page last said (names
+    /// it gave collections, ones it made by hand). Published to other devices;
+    /// see `collections_sync`.
+    pub collections: Option<serde_json::Value>,
+    /// What each peer published, in ids this device's library uses.
+    pub peer_collections: std::collections::HashMap<String, serde_json::Value>,
     /// Peers that are linked but whose library could not be read.
     pub library_unreachable: Vec<String>,
     /// Where a given transfer should be saved, when the receiver chose.
@@ -208,6 +214,8 @@ impl AppState {
             transfers: Vec::new(),
             avatar: None,
             thumb_dir: None,
+            collections: None,
+            peer_collections: std::collections::HashMap::new(),
             library_unreachable: Vec::new(),
             download_into: std::collections::HashMap::new(),
             host_error: None,

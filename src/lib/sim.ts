@@ -227,6 +227,7 @@ let mappings: PortMapping[] = [
 const transfers = new Map<string, Transfer>();
 /** Original item ids synced to a local copy, for media_synced_ids. */
 const syncedIds = new Set<string>();
+let simStartedAt: number | undefined;
 // Devices the simulated user has unlinked, so the list can be seen emptying.
 const simCompanionsUnlinked = new Set<string>();
 let shares: Share[] = [];
@@ -661,6 +662,14 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'media_list':
     case 'media_scan': {
+      // `?sim_empty=<seconds>` answers with nothing for that long, as a device
+      // does that has only just started and has found nobody: the way to look at
+      // the "looking" and "nothing found" screens without a television.
+      if (typeof location !== 'undefined') {
+        const wait = Number(new URLSearchParams(location.search).get('sim_empty'));
+        simStartedAt ??= Date.now();
+        if (wait > 0 && Date.now() - simStartedAt < wait * 1000) return [];
+      }
       if (!media.length) media = buildLibrary();
       return media.map((m) => ({ ...m }));
     }

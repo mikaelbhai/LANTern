@@ -151,6 +151,10 @@ export async function startBridge() {
       'pip:mode',
       // A paired device announced the address it can be woken by.
       'wake:changed',
+      // Back held down on a television remote (see MainActivity.onKeyLongPress).
+      'tv:backhold',
+      // Another device published how it groups its library.
+      'library:collections',
     ];
 
     await Promise.all(
@@ -421,6 +425,8 @@ export const api = {
      * Opens a video in another app (VLC first). Android only; resolves false
      * when nothing was found to take it.
      */
+    /** Leaves the app. Android only - the television's "Leave" button. */
+    exitApp: () => call<void>('app_exit'),
     openExternal: (url: string, title: string, positionMs: number) =>
       call<boolean>('player_open_external', { url, title, positionMs }),
     setVideo: (playing: boolean, width: number, height: number) =>
@@ -477,6 +483,10 @@ export const api = {
     setProgress: (id: string, progressSec: number, force = false) =>
       call<void>('media_set_progress', { id, progressSec, force }),
     scan: () => call<MediaItem[]>('media_scan'),
+    /** Hands over how this device groups its library, for other devices to show. */
+    publishCollections: (overrides: unknown) => call<void>('media_publish_collections', { overrides }),
+    /** How other devices group theirs, by device, in ids this library uses. */
+    peerCollections: () => call<Record<string, unknown>>('media_peer_collections'),
     /** Whether this device can re-serve a file with a chosen audio track. */
     canSwitchAudio: () => call<boolean>('media_can_switch_audio'),
     /**

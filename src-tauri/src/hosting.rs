@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/speedtest", get(speedtest))
         // What a peer reads to discover what this device publishes.
         .route("/shares.json", get(shares_json))
+        .route("/collections.json", get(collections_json))
         .route("/get/:name", get(serve_installer))
         .route("/unlock", get(unlock))
         .route("/watch/:slug/*path", get(watch))
@@ -698,6 +699,81 @@ async fn serve_root(
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
     respond(state, slug, String::new(), &headers, key, params.contains_key("json")).await
+}
+
+/// How this device groups its library, for the devices that read it.
+///
+/// Only the choices about titles the asker may see, in ids anybody can
+/// recognise - see `collections_sync::export`.
+async fn collections_json(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(from): ConnectInfo<SocketAddr>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let caller = crate::rating::requester(&state, params.get("k").map(String::as_str))
+        .or_else(|| browser_id(&headers));
+    let local = from_this_machine(&state, from);
+
+    let (overrides, items, shares) = state.with(|s| {
+        // Read back from the database the first time, for a server started with
+        // no window to have said anything yet.
+        if s.collections.is_none() {
+            let stored = s.db.as_ref().and_then(|db| {
+                db.query_row(
+                    "SELECT value FROM preferences WHERE key = 'collections'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok()
+            });
+            s.collections = stored.and_then(|text| serde_json::from_str(&text).ok());
+        }
+        (
+            s.collections.clone().unwrap_or(serde_json::Value::Null),
+            s.media
+                .iter()
+                .filter(|m| m.get("peerId").map(|v| v.is_null()).unwrap_or(true))
+                .cloned()
+                .collect::<Vec<_>>(),
+            // Only folders that are published at all: the synced copies live in
+            // one that is not, and are nobody else's to name.
+            s.shares
+                .iter()
+                .filter(|sh| !sh.unlisted)
+                .map(|sh| (sh.id.clone(), sh.slug.clone()))
+                .collect::<HashMap<_, _>>(),
+        )
+    });
+
+    let allowed = |item: &serde_json::Value| {
+        if local {
+            return true;
+        }
+        let path = item
+            .get("streamUrl")
+            .and_then(|v| v.as_str())
+            .map(crate::rating::stream_path)
+            .unwrap_or_default();
+        let name = item.get("relPath").and_then(|v| v.as_str()).unwrap_or_default();
+        crate::rating::may_serve_as(&state, caller.clone(), &path, name)
+    };
+    let body = crate::collections_sync::export(
+        &overrides,
+        &items,
+        &|share| shares.get(share).cloned(),
+        &allowed,
+    );
+
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8")),
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        body.to_string(),
+    )
+        .into_response()
 }
 
 async fn serve_path(
@@ -2036,6 +2112,14 @@ mod tests {
 
     /// Serves a temp directory and returns the address it is reachable on.
     async fn serve_fixture(mode: ShareMode) -> (std::net::SocketAddr, std::path::PathBuf) {
+        serve_fixture_with(mode, |_| {}).await
+    }
+
+    /// The same, after the test has had its say about the state the server holds.
+    async fn serve_fixture_with(
+        mode: ShareMode,
+        setup: impl FnOnce(&AppState),
+    ) -> (std::net::SocketAddr, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!("lantern-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("nested")).unwrap();
         std::fs::write(root.join("hello.txt"), b"0123456789").unwrap();
@@ -2045,6 +2129,7 @@ mod tests {
         std::fs::write(root.parent().unwrap().join("secret.txt"), b"do not serve").unwrap();
 
         let state = AppState::new();
+        setup(&state);
         state.with(|s| {
             s.shares.push(Share {
                 id: "t".into(),
@@ -2587,6 +2672,38 @@ mod tests {
             response.contains("http://192.168.100.141:7981/test/clip.mp4"),
             "{response}"
         );
+    }
+
+    /// How the host has grouped its library reaches the devices that ask.
+    ///
+    /// The names it gave a collection and the ones it made by hand were kept on
+    /// its own screen, so every other device showed the same titles under the
+    /// names the filenames suggested.
+    #[tokio::test]
+    async fn the_hosts_collections_are_published_in_ids_anybody_can_use() {
+        let (addr, _root) = serve_fixture_with(ShareMode::Media, |state| {
+            state.with(|s| {
+                s.collections = Some(serde_json::json!({
+                    "itemToKey": { "t:clip.mp4": "custom:amazing" },
+                    "titles": {
+                        "saga:spiderman": "Sam Raimi Spider-Man",
+                        "custom:amazing": "The Amazing Spider-Man",
+                    },
+                    "detached": [],
+                }));
+                s.media = vec![serde_json::json!({
+                    "id": "t:clip.mp4", "shareId": "t", "relPath": "clip.mp4",
+                    "streamUrl": "http://127.0.0.1:1/test/clip.mp4",
+                })];
+            });
+        })
+        .await;
+
+        let response = get_as(addr, "/collections.json", "127.0.0.1:7981", "").await;
+        assert!(response.contains("Sam Raimi Spider-Man"), "{response}");
+        assert!(response.contains("The Amazing Spider-Man"), "{response}");
+        // The device-independent form of the title's id: share name and path.
+        assert!(response.contains("test:clip.mp4"), "{response}");
     }
 
     /// A media folder can be listed, not only played.

@@ -1,4 +1,5 @@
 import type { MediaItem } from './types';
+import { resumeAt } from './watched';
 
 /**
  * A second, independent copy of where each title was left.
@@ -80,7 +81,10 @@ export function recoveredPosition(item: MediaItem): number | null {
   return entry.at > shelfAt && entry.sec > item.progressSec + 30 ? entry.sec : null;
 }
 
-/** Where to begin: the shelf's position, or the better one this remembers. */
+/**
+ * Where to begin: the shelf's position, or the better one this remembers - and
+ * the start, for a title that was left in its credits (see `watched.ts`).
+ */
 export function startPosition(item: MediaItem): number {
-  return Math.max(item.progressSec, recoveredPosition(item) ?? 0);
+  return resumeAt(item, Math.max(item.progressSec, recoveredPosition(item) ?? 0));
 }

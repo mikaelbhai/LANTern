@@ -30,6 +30,7 @@ mod rating;
 pub mod readahead;
 mod screencap;
 mod wol;
+mod collections_sync;
 #[cfg(desktop)]
 mod wifi;
 mod media;
@@ -156,6 +157,9 @@ pub fn run() {
             pip::player_screen_set,
             pip::pip_video_set,
             pip::player_open_external,
+            pip::app_exit,
+            commands::media_publish_collections,
+            commands::media_peer_collections,
             storage::storage_all_files,
             storage::storage_request_all_files,
             commands::call_audio_earpiece,

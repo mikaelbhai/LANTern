@@ -52,13 +52,18 @@ export function TvPlayer({
   items,
   onPlay,
   onClose,
+  suspended = false,
 }: {
   item: MediaItem;
   /** The whole library, for what comes before and after in a series. */
   items: MediaItem[];
   onPlay: (next: MediaItem) => void;
   onClose: () => void;
+  /** Something else (the exit prompt) has the remote; this one stands down. */
+  suspended?: boolean;
 }) {
+  const suspendedRef = React.useRef(suspended);
+  suspendedRef.current = suspended;
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const bufferMb = useStore((s) => s.settings.playback?.bufferMb ?? 128);
 
@@ -141,16 +146,13 @@ export function TvPlayer({
   latest.current = { time, duration };
   // Where to go once the video has its metadata: where it was left, or where it
   // was when the stream had to be replaced.
-  const resumeAt = React.useRef<number | null>(
-    startPosition(item) > 30 && (!item.durationSec || startPosition(item) < item.durationSec * 0.95)
-      ? startPosition(item)
-      : null,
-  );
+  // startPosition is already the start for a title left in its credits.
+  const resumeAt = React.useRef<number | null>(startPosition(item) > 30 ? startPosition(item) : null);
   // Where the film really is, for when the stream has to be replaced: the
   // open-time position is stale as soon as anything has been watched.
   const bestKnown = React.useRef(startPosition(item));
   const ready = React.useRef(false);
-  const lastSaved = React.useRef(item.progressSec);
+  const lastSaved = React.useRef(startPosition(item));
   const failedRef = React.useRef(false);
   failedRef.current = failed;
   const generation = React.useRef(0);
@@ -396,6 +398,7 @@ export function TvPlayer({
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (suspendedRef.current) return;
       const intent = intentOf(e);
       if (!intent) return;
       // The page must not scroll or move focus on its own: this is the only

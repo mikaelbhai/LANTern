@@ -1,10 +1,12 @@
 import React from 'react';
-import { Check, Layers, Play } from 'lucide-react';
+import { Check, Layers, Loader2, Play, RefreshCw } from 'lucide-react';
 
 import { Thumbnail } from '../lib/poster';
 import { emptyOverrides, groupLibrary, type Collection } from '../lib/collections';
+import { mergeOverrides, usePeerOverrides } from '../lib/peerCollections';
 import { oneEpisodePerSeries, runtime } from '../screens/Theatre';
 import { useBackDismiss } from '../lib/hooks';
+import { isContinuing, isFinished } from '../lib/watched';
 import type { MediaItem } from '../lib/types';
 import { cn } from '../lib/utils';
 import { intentOf } from './remote';
@@ -34,13 +36,12 @@ interface Shelf {
 const item = (i: MediaItem): Tile => ({ kind: 'item', key: i.id, item: i });
 const show = (c: Collection): Tile => ({ kind: 'show', key: c.key, collection: c });
 
-const finishedWatching = (i: MediaItem) =>
-  i.durationSec > 0 && i.progressSec > 0 && i.durationSec - i.progressSec < Math.max(40, i.durationSec * 0.03);
+const finishedWatching = isFinished;
 
 /** Which episode of a series to offer first: the one being watched, else the first. */
 function whereToStart(c: Collection): MediaItem {
   const watching = c.items
-    .filter((i) => i.progressSec > 30 && !finishedWatching(i))
+    .filter(isContinuing)
     .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))[0];
   if (watching) return watching;
   // Otherwise the first one not yet seen to the end.
@@ -50,23 +51,42 @@ function whereToStart(c: Collection): MediaItem {
 export function TvLibrary({
   items,
   loading,
+  devices,
   active,
   onPlay,
+  onRescan,
 }: {
   items: MediaItem[];
+  /** Still looking: nothing has been found yet, and it is too soon to say so. */
   loading: boolean;
+  /** Names of the devices that have been found, which is most of what a viewer wants to know while waiting. */
+  devices: string[];
   /** False while a film is playing over this: the keys are the player's then. */
   active: boolean;
   onPlay: (i: MediaItem) => void;
+  /** Asks the network again. Resolves when it has been asked. */
+  onRescan: () => Promise<void> | void;
 }) {
-  const grouping = React.useMemo(() => groupLibrary(items, emptyOverrides()), [items]);
+  // The collections the hosts have made, which a television cannot make for itself.
+  const peerOverrides = usePeerOverrides();
+  const grouping = React.useMemo(
+    () => groupLibrary(items, mergeOverrides(peerOverrides, emptyOverrides())),
+    [items, peerOverrides],
+  );
 
   const shelves = React.useMemo<Shelf[]>(() => {
     const out: Shelf[] = [];
     const continued = oneEpisodePerSeries(
-      items.filter((i) => i.progressSec > 30 && !finishedWatching(i)),
+      items.filter(isContinuing),
     ).sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0));
     if (continued.length) out.push({ label: 'Continue watching', tiles: continued.map(item) });
+
+    // Films seen to the end, for watching again from the start.
+    const again = items
+      .filter((i) => i.kind !== 'episode' && !i.series && isFinished(i))
+      .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))
+      .slice(0, 20);
+    if (again.length) out.push({ label: 'Watch again', tiles: again.map(item) });
 
     if (grouping.collections.length) {
       out.push({ label: 'Shows & collections', tiles: grouping.collections.map(show) });
@@ -85,13 +105,32 @@ export function TvLibrary({
     return out;
   }, [items, grouping]);
 
+  // `r` of -1 is the bar along the top, which holds the one button there is.
   const [focus, setFocus] = React.useState({ r: 0, c: 0 });
   const remembered = React.useRef<number[]>([]);
   const [picker, setPicker] = React.useState<Picker | null>(null);
 
+  const [busy, setBusy] = React.useState(false);
+  const busyRef = React.useRef(false);
+  const rescan = React.useCallback(() => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    // Never shorter than a moment, or a refresh that answers at once looks like a
+    // press that did nothing.
+    const minimum = new Promise((done) => window.setTimeout(done, 700));
+    void Promise.all([Promise.resolve(onRescan()).catch(() => undefined), minimum]).finally(() => {
+      busyRef.current = false;
+      setBusy(false);
+    });
+  }, [onRescan]);
+  const rescanRef = React.useRef(rescan);
+  rescanRef.current = rescan;
+
   // Keep the focus on something that exists when the shelves change under it.
   React.useEffect(() => {
     setFocus((f) => {
+      if (f.r < 0) return f;
       const r = Math.min(f.r, Math.max(0, shelves.length - 1));
       const c = Math.min(f.c, Math.max(0, (shelves[r]?.tiles.length ?? 1) - 1));
       return r === f.r && c === f.c ? f : { r, c };
@@ -101,11 +140,13 @@ export function TvLibrary({
   // The system's Back closes the episode list rather than leaving the app.
   useBackDismiss(!!picker, () => setPicker(null));
 
-  const current = shelves[focus.r]?.tiles[focus.c] ?? null;
+  // On the top bar the spotlight stays on the tile that was being looked at.
+  const current =
+    shelves[Math.max(0, focus.r)]?.tiles[focus.r < 0 ? (remembered.current[0] ?? 0) : focus.c] ?? null;
   const root = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
-    if (!active) return;
+    if (!active || focus.r < 0) return;
     root.current
       ?.querySelector<HTMLElement>(`[data-tile="${focus.r}-${focus.c}"]`)
       ?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
@@ -148,7 +189,22 @@ export function TvLibrary({
         setPicker(stepPicker(p, intent, onPlay));
         return;
       }
-      if (!rows.length) return;
+      // Nothing on the shelf: the refresh button in the middle is all there is.
+      if (!rows.length) {
+        if (intent === 'ok') rescanRef.current();
+        return;
+      }
+      // The bar along the top.
+      if (f.r < 0) {
+        if (intent === 'down') setFocus({ r: 0, c: Math.min(remembered.current[0] ?? 0, rows[0].tiles.length - 1) });
+        else if (intent === 'ok') rescanRef.current();
+        return;
+      }
+      if (intent === 'up' && f.r === 0) {
+        remembered.current[0] = f.c;
+        setFocus({ r: -1, c: 0 });
+        return;
+      }
 
       if (intent === 'left') setFocus({ r: f.r, c: Math.max(0, f.c - 1) });
       else if (intent === 'right') setFocus({ r: f.r, c: Math.min(rows[f.r].tiles.length - 1, f.c + 1) });
@@ -173,42 +229,90 @@ export function TvLibrary({
   }, [picker]);
 
   if (!items.length) {
+    const found = devices.length;
+    const searching = loading || busy;
     return (
       <div className="h-full grid place-items-center text-center" style={{ padding: u(6) }}>
-        <div>
-          <div className="font-semibold" style={{ fontSize: u(3.4) }}>
-            {loading ? 'Looking for films on your network…' : 'Nothing to watch yet'}
-          </div>
-          {!loading && (
-            <p className="text-white/60" style={{ fontSize: u(2), marginTop: u(1.2), maxWidth: u(70) }}>
-              Publish a media folder from LANTern on a computer or phone on this network and it appears here.
-            </p>
+        <div className="flex flex-col items-center">
+          {searching && (
+            <Loader2 className="animate-spin text-white/70" style={{ width: u(6.5), height: u(6.5), marginBottom: u(2.2) }} />
           )}
+          <div className="font-semibold" style={{ fontSize: u(3.4) }}>
+            {busy
+              ? 'Refreshing…'
+              : loading
+                ? found
+                  ? `Reading the library on ${devices[0]}…`
+                  : 'Looking for films on your network…'
+                : found
+                  ? 'Nothing to watch yet'
+                  : 'No devices found'}
+          </div>
+          <p className="text-white/60" style={{ fontSize: u(2), marginTop: u(1.2), maxWidth: u(70) }}>
+            {searching
+              ? found
+                ? 'This can take a few seconds.'
+                : 'Searching for computers and phones that are sharing films.'
+              : found
+                ? `${devices.slice(0, 3).join(', ')} ${found === 1 ? 'has' : 'have'} not published a media folder yet.`
+                : 'Open LANTern on a computer or phone on this Wi-Fi and publish a media folder, and it appears here.'}
+          </p>
+          <div style={{ marginTop: u(3.4) }}>
+            <RefreshButton focused busy={busy} />
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div ref={root} className="h-full flex flex-col">
+    <div ref={root} className="relative h-full flex flex-col">
       <Spotlight tile={current} />
 
+      {/* The top of the theatre: one button, reached with Up from the first shelf. */}
+      <div className="absolute z-20" style={{ top: u(2), right: u(5) }}>
+        <RefreshButton focused={active && focus.r < 0} busy={busy} small />
+      </div>
+
       <div className="flex-1 min-h-0 overflow-hidden" style={{ paddingBottom: u(3) }}>
-        {shelves.map((shelf, r) => (
-          <section key={shelf.label} style={{ marginTop: r === 0 ? 0 : u(1.8) }}>
-            <h2
-              className="font-semibold text-white/85"
-              style={{ fontSize: u(1.9), padding: `0 ${u(5)}`, marginBottom: u(0.9) }}
-            >
-              {shelf.label}
-            </h2>
-            <div className="flex overflow-hidden" style={{ padding: `${u(0.9)} ${u(5)}`, gap: u(1.4) }}>
-              {shelf.tiles.map((tile, c) => (
-                <TileView key={tile.key} tile={tile} focused={active && r === focus.r && c === focus.c} at={`${r}-${c}`} />
-              ))}
-            </div>
-          </section>
-        ))}
+        {shelves.map((shelf, r) => {
+          /*
+           * Only the tiles near where the viewer is are drawn.
+           *
+           * Every tile of every shelf used to be, with its picture requested -
+           * a hundred and fifty of them at once on a television's processor, all
+           * asking another device to cut a frame, before the first one could be
+           * looked at. A short run around the focus is drawn instead, with empty
+           * space where the rest are so scrolling to them still works.
+           */
+          const centre = r === focus.r ? focus.c : (remembered.current[r] ?? 0);
+          const from = Math.max(0, centre - TILES_BEHIND);
+          const to = Math.min(shelf.tiles.length, Math.max(centre + TILES_AHEAD, TILES_FIRST));
+          return (
+            <section key={shelf.label} style={{ marginTop: r === 0 ? 0 : u(1.8) }}>
+              <h2
+                className="font-semibold text-white/85"
+                style={{ fontSize: u(1.9), padding: `0 ${u(5)}`, marginBottom: u(0.9) }}
+              >
+                {shelf.label}
+              </h2>
+              <div className="flex overflow-hidden" style={{ padding: `${u(0.9)} ${u(5)}`, gap: u(1.4) }}>
+                {from > 0 && <div className="shrink-0" style={{ width: `calc(${from} * ${TILE_STEP})` }} />}
+                {shelf.tiles.slice(from, to).map((tile, i) => (
+                  <TileView
+                    key={tile.key}
+                    tile={tile}
+                    focused={active && r === focus.r && from + i === focus.c}
+                    at={`${r}-${from + i}`}
+                  />
+                ))}
+                {to < shelf.tiles.length && (
+                  <div className="shrink-0" style={{ width: `calc(${shelf.tiles.length - to} * ${TILE_STEP})` }} />
+                )}
+              </div>
+            </section>
+          );
+        })}
       </div>
 
       {picker && <EpisodePicker picker={picker} />}
@@ -219,6 +323,34 @@ export function TvLibrary({
 /* ------------------------------------------------------------- the tiles */
 
 const TILE_W = `calc((100vw - ${u(10)}) / 7.3 - ${u(1.4)})`;
+/** One tile and the gap after it. */
+const TILE_STEP = `calc((100vw - ${u(10)}) / 7.3)`;
+const TILES_BEHIND = 4;
+const TILES_AHEAD = 12;
+/** A shelf the viewer is not on still shows this many, so it is not empty when they arrive. */
+const TILES_FIRST = 14;
+
+function RefreshButton({ focused, busy, small = false }: { focused: boolean; busy: boolean; small?: boolean }) {
+  return (
+    <div
+      className={cn(
+        'inline-flex items-center rounded-full font-semibold transition-transform duration-150',
+        focused ? 'bg-white text-black scale-105' : 'bg-white/10 text-white/80',
+      )}
+      style={{
+        gap: u(small ? 0.8 : 1.1),
+        height: u(small ? 3.6 : 5),
+        paddingInline: u(small ? 1.8 : 3),
+        fontSize: u(small ? 1.6 : 2.1),
+        outline: focused ? `${u(0.3)} solid rgba(255,255,255,0.6)` : undefined,
+        outlineOffset: focused ? u(0.2) : undefined,
+      }}
+    >
+      <RefreshCw className={busy ? 'animate-spin' : undefined} style={{ width: u(small ? 1.7 : 2.3), height: u(small ? 1.7 : 2.3) }} />
+      {busy ? 'Refreshing…' : 'Refresh'}
+    </div>
+  );
+}
 
 function TileView({ tile, focused, at }: { tile: Tile; focused: boolean; at: string }) {
   const cover =
@@ -319,7 +451,7 @@ function Spotlight({ tile }: { tile: Tile | null }) {
     bits.push(col.kind === 'series' ? (seasons > 1 ? `${seasons} seasons` : 'Series') : 'Collection');
     bits.push(`${col.items.length} ${col.kind === 'series' ? 'episodes' : 'films'}`);
   }
-  const resume = it && it.progressSec > 30 && !finishedWatching(it);
+  const resume = !!it && isContinuing(it);
 
   return (
     <div className="relative shrink-0 overflow-hidden" style={{ height: '36vh' }}>
@@ -352,7 +484,7 @@ function Spotlight({ tile }: { tile: Tile | null }) {
             style={{ height: u(3.6), paddingInline: u(2), gap: u(0.8) }}
           >
             <Play style={{ width: u(1.7), height: u(1.7) }} fill="currentColor" />
-            {col ? 'Open' : resume ? 'Resume' : 'Play'}
+            {col ? 'Open' : resume ? 'Resume' : it && isFinished(it) ? 'Watch again' : 'Play'}
           </span>
           {resume && it && (
             <span className="text-white/60">{runtime(Math.max(0, it.durationSec - it.progressSec))} left</span>

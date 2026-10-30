@@ -1674,6 +1674,32 @@ pub fn media_sync_start(
     transfer_id
 }
 
+/// This device's own grouping of its library, handed over by Theatre whenever it
+/// changes, so other devices can show the same names and collections.
+///
+/// Kept in the database as well as in memory: the file server answers for it
+/// with no window open.
+#[tauri::command]
+pub fn media_publish_collections(state: State<'_, AppState>, overrides: serde_json::Value) {
+    let text = overrides.to_string();
+    state.with(|s| {
+        s.collections = Some(overrides);
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('collections', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![text],
+            );
+        }
+    });
+}
+
+/// What the other devices have published, keyed by device, ready to merge.
+#[tauri::command]
+pub fn media_peer_collections(state: State<'_, AppState>) -> serde_json::Value {
+    state.with(|s| serde_json::to_value(&s.peer_collections).unwrap_or_default())
+}
+
 /// Titles that already have a local copy, by their original id.
 #[tauri::command]
 pub fn media_synced_ids(state: State<'_, AppState>) -> Vec<String> {
@@ -3786,7 +3812,15 @@ pub fn media_list(state: State<'_, AppState>) -> Vec<serde_json::Value> {
     if cached.is_empty() {
         // Nothing scanned yet this session — build it now so a freshly opened
         // Theatre is never empty when shares exist.
-        media::refresh(&state)
+        let mut built = media::refresh(&state);
+        // And what the other devices had the last time they were read, until
+        // they answer again; see `media::remembered_library`.
+        let remembered = media::remembered_library(&state);
+        if !remembered.is_empty() {
+            state.with(|s| s.media.extend(remembered.clone()));
+            built.extend(remembered);
+        }
+        built
     } else {
         cached
     }

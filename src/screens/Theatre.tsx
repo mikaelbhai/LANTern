@@ -57,6 +57,8 @@ import {
 import { useLocalStorage } from '../lib/hooks';
 import { isAndroid } from '../lib/picker';
 import { useStore } from '../lib/store';
+import { isContinuing, isFinished } from '../lib/watched';
+import { mergeOverrides, ownChoices, usePeerOverrides } from '../lib/peerCollections';
 import { browserCanPlay, needsRemux } from '../lib/audiocap';
 import { cn, formatBytes } from '../lib/utils';
 import type { MediaItem, RatingsStatus, WatchParty } from '../lib/types';
@@ -224,10 +226,21 @@ export function Theatre() {
     );
   }, [items, query]);
 
+  // What the hosts have named and gathered, under what was chosen here.
+  const peerOverrides = usePeerOverrides();
   const grouping = React.useMemo(
-    () => groupLibrary(items, overrides),
-    [items, overrides],
+    () => groupLibrary(items, mergeOverrides(peerOverrides, overrides)),
+    [items, overrides, peerOverrides],
   );
+
+  // And this device's own choices go the other way, so that whoever else is
+  // looking at this library sees it grouped the way it was set up here.
+  React.useEffect(() => {
+    const id = window.setTimeout(() => {
+      void api.media.publishCollections(ownChoices(overrides, items)).catch(() => undefined);
+    }, 600);
+    return () => window.clearTimeout(id);
+  }, [overrides, items]);
   const rows = React.useMemo(
     () => buildRows(items, grouping, ownerName, filmSort),
     [items, grouping, ownerName, filmSort],
@@ -288,6 +301,10 @@ export function Theatre() {
       return;
     }
     setDetail(null);
+    // The sheet a film was picked from closes with it. It stayed open over the
+    // player - the film playing underneath a card of the very episodes it was
+    // chosen from, with a Close button to press before anything could be watched.
+    setCollection(null);
     lastPlayedId.current = item.id;
     setPlaying(item);
 
@@ -385,7 +402,7 @@ export function Theatre() {
       return { ...last, progressSec: latestProgress.current[last.id] ?? last.progressSec };
     }
     const recent = items
-      .filter((i) => !i.locked && i.watchedAt && i.progressSec > 0 && i.durationSec - i.progressSec > 40)
+      .filter((i) => !i.locked && i.watchedAt && isContinuing(i))
       .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))[0];
     return recent ?? (hero && !hero.locked ? hero : null);
   };
@@ -866,7 +883,7 @@ function isLater(a: MediaItem, b: MediaItem): boolean {
 export function pickHero(items: MediaItem[]): MediaItem | null {
   if (!items.length) return null;
   // Prefer something part-watched, then the newest full-length title.
-  const resumable = items.find((i) => i.progressSec > 60 && i.progressSec < i.durationSec * 0.95);
+  const resumable = items.find((i) => i.progressSec > 60 && isContinuing(i));
   if (resumable) return resumable;
   const films = items.filter((i) => i.kind === 'film');
   return (films.length ? films : items).reduce((a, b) => (b.addedAt > a.addedAt ? b : a));
@@ -934,12 +951,22 @@ function buildRows(
   // got, which is a guess but a better one than the order it happened to be
   // added in.
   const continued = oneEpisodePerSeries(
-    items.filter((i) => i.progressSec > 30 && i.progressSec < i.durationSec * 0.95),
+    items.filter(isContinuing),
   ).sort(
     (a, b) => (b.watchedAt ?? b.progressSec / b.durationSec) - (a.watchedAt ?? a.progressSec / a.durationSec),
   );
   if (continued.length) {
     rows.push({ label: 'Continue watching', entries: continued.map(asItem) });
+  }
+
+  // Films already seen to the end, for the evening somebody wants one again.
+  // Playing one begins at the start, not in the credits it was left in.
+  const seenAgain = items
+    .filter((i) => i.kind !== 'episode' && !i.series && !i.locked && isFinished(i))
+    .sort((a, b) => (b.watchedAt ?? 0) - (a.watchedAt ?? 0))
+    .slice(0, 20);
+  if (seenAgain.length) {
+    rows.push({ label: 'Watch again', entries: seenAgain.map(asItem) });
   }
 
   if (grouping.collections.length) {
@@ -1008,7 +1035,7 @@ function Hero({
   onPlay: () => void;
   onInfo: () => void;
 }) {
-  const resume = item.progressSec > 30;
+  const resume = isContinuing(item);
   return (
     <div className="relative h-[320px] md:h-[400px]">
       <Artwork
@@ -1339,12 +1366,9 @@ function Card({
   revealPath?: string | null;
 }) {
   const pct = item.durationSec ? (item.progressSec / item.durationSec) * 100 : 0;
-  // Within the last few percent, or the last 40 seconds - the credits - counts
-  // as seen; nobody stops a film at the exact final frame.
-  const finished =
-    item.durationSec > 0 &&
-    item.progressSec > 0 &&
-    item.durationSec - item.progressSec < Math.max(40, item.durationSec * 0.03);
+  // The last ten minutes of a film, or two of an episode - the credits - count
+  // as seen; see `lib/watched.ts`.
+  const finished = isFinished(item);
 
   return (
     <motion.div
@@ -1627,7 +1651,7 @@ function DetailSheet({
                     className="h-9 px-5 rounded-input bg-white text-black font-semibold text-sm flex items-center gap-2 hover:bg-white/85"
                   >
                     <Play size={15} fill="currentColor" />
-                    {item.progressSec > 30 ? 'Resume' : 'Play'}
+                    {isContinuing(item) ? 'Resume' : isFinished(item) ? 'Watch again' : 'Play'}
                   </button>
                 )}
                 {/* Only offered when there is somebody to watch with; a button

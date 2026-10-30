@@ -101,6 +101,17 @@ pub fn open_external(url: &str, title: &str, position_ms: i64) -> bool {
     }
 }
 
+/// Leaves the app, for good. Android only: the television's "Leave" button.
+#[tauri::command]
+pub fn app_exit() {
+    #[cfg(target_os = "android")]
+    {
+        let _ = crate::apkinstall::with_activity(|env, class| {
+            let _ = env.call_static_method(class, "exitApp", "()V", &[]);
+        });
+    }
+}
+
 #[tauri::command]
 pub fn player_open_external(url: String, title: String, position_ms: i64) -> bool {
     open_external(&url, &title, position_ms)
@@ -248,6 +259,24 @@ pub extern "system" fn Java_app_lantern_desktop_MainActivity_nativePipMode(
     if let Some(app) = APP.get() {
         use tauri::Emitter;
         let _ = app.emit("pip:mode", mode);
+    }
+}
+
+/// Back was held down on a television remote. Tells the page to ask whether to leave.
+///
+/// # Safety
+///
+/// Called by the Java runtime with arguments it constructed. Nothing else may
+/// call it.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_app_lantern_desktop_MainActivity_nativeBackHold(
+    _env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+) {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("tv:backhold", ());
     }
 }
 

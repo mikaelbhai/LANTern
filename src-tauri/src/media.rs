@@ -557,9 +557,73 @@ pub fn save_progress(
     })
 }
 
-pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
-    let mut built = rebuild(state);
+/// The other devices' titles as they were the last time they were read.
+///
+/// A television that has just started has found nobody yet, and used to show
+/// an empty shelf - then "nothing to watch" - for the seconds it takes the
+/// network to answer, which a viewer cannot tell from there being nothing. The
+/// last library is kept on disk and shown at once, with this device's own
+/// positions on it, and replaced by the real one as each device answers. Marked
+/// `cached` so anything that cares can tell.
+pub fn remembered_library(state: &AppState) -> Vec<serde_json::Value> {
+    let stored = state.with(|s| {
+        s.db.as_ref().and_then(|db| {
+            db.query_row(
+                "SELECT value FROM preferences WHERE key = 'library_cache'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+        })
+    });
+    let Some(mut items) = stored.and_then(|text| serde_json::from_str::<Vec<serde_json::Value>>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    for item in items.iter_mut() {
+        if let Some(fields) = item.as_object_mut() {
+            fields.insert("cached".into(), serde_json::Value::Bool(true));
+        }
+    }
+    apply_saved_progress(state, &mut items);
+    items
+}
 
+/// Writes the other devices' titles down for the next start. Skipped when
+/// nothing changed, because a library is hundreds of kilobytes and this runs
+/// every time anybody joins.
+pub fn remember_library(state: &AppState, remote: &[serde_json::Value]) {
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+
+    let text = serde_json::to_string(remote).unwrap_or_default();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    let hash = h.finish();
+    if LAST.swap(hash, Ordering::Relaxed) == hash {
+        return;
+    }
+    state.with(|s| {
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO preferences (key, value) VALUES ('library_cache', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![text],
+            );
+        }
+    });
+}
+
+/// Puts what this device remembers onto a list of titles: where each was left,
+/// when, and the audio and subtitle language it was watched in.
+///
+/// Used for this device's own titles and, since a title on another device has
+/// no history here until it is given one, for those as well. A title from
+/// another device arrives carrying *that* device's position - nothing about
+/// this one's - so Continue watching was empty at first load and the place
+/// only turned up once the film was opened.
+pub fn apply_saved_progress(state: &AppState, built: &mut Vec<serde_json::Value>) {
     // Positions saved in an earlier session. Applied before the in-memory
     // carry-over below, so a live value still wins for a title being watched
     // right now.
@@ -623,6 +687,13 @@ pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
             }
         });
     }
+
+}
+
+pub fn refresh(state: &AppState) -> Vec<serde_json::Value> {
+    let mut built = rebuild(state);
+
+    apply_saved_progress(state, &mut built);
 
     state.with(|s| {
         // Carry over playback positions so a rescan does not lose someone's place.
@@ -2028,5 +2099,69 @@ mod title_key_tests {
         saved.insert("a".to_string(), row("film", 5000.0, 100.0, 10));
         assert!(resume_for(&saved, "b", Some("film"), 0.0).is_none());
         assert!(resume_for(&saved, "a", Some("film"), 0.0).is_some());
+    }
+}
+
+#[cfg(test)]
+mod remembered_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn state_with_db() -> (AppState, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lantern-remembered-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = AppState::new();
+        let conn = crate::db::open(&dir).unwrap();
+        state.with(|s| s.db = Some(conn));
+        (state, dir)
+    }
+
+    /// A title on another device, the way a peer's library lists it: with that
+    /// device's own idea of how far in somebody is (here, nothing).
+    fn peer_film(id: &str) -> serde_json::Value {
+        json!({
+            "id": id, "title": "The Quiet Harbour", "peerId": "host-1",
+            "relPath": "Films/The.Quiet.Harbour.2023.mkv", "durationSec": 6000.0,
+            "progressSec": 0, "kind": "film", "genres": [], "addedAt": 1,
+        })
+    }
+
+    #[test]
+    fn another_devices_title_gets_the_place_this_device_left_it() {
+        let (state, dir) = state_with_db();
+        // Watched on this device, under the id the other device's copy has.
+        let id = "host-1:media:Films/The.Quiet.Harbour.2023.mkv";
+        assert!(save_progress(&state, id, 1800.0, 6000.0, Some("thequietharbour"), false));
+
+        let mut library = vec![peer_film(id)];
+        apply_saved_progress(&state, &mut library);
+        assert_eq!(library[0]["progressSec"], 1800.0, "Continue watching would be empty");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_same_film_under_another_id_is_still_found_by_what_it_is() {
+        let (state, dir) = state_with_db();
+        // Left under one device's id...
+        assert!(save_progress(&state, "old-host:media:Q.mkv", 2400.0, 6000.0, Some("thequietharbour"), false));
+        // ...and listed now under another's.
+        let mut library = vec![peer_film("host-2:media:Films/The.Quiet.Harbour.2023.mkv")];
+        apply_saved_progress(&state, &mut library);
+        assert_eq!(library[0]["progressSec"], 2400.0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_library_remembered_from_last_time_comes_back_marked_and_with_positions() {
+        let (state, dir) = state_with_db();
+        let id = "host-1:media:Films/The.Quiet.Harbour.2023.mkv";
+        remember_library(&state, &[peer_film(id)]);
+        assert!(save_progress(&state, id, 900.0, 6000.0, Some("thequietharbour"), false));
+
+        let back = remembered_library(&state);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0]["cached"], true);
+        assert_eq!(back[0]["progressSec"], 900.0, "positions are this session's, not last session's copy");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

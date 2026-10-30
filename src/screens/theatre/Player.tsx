@@ -213,7 +213,7 @@ export function Player({
   inPipRef.current = inPip;
   const docked = dockedProp && !inPip;
   const mini = miniProp && !inPip;
-  const [time, setTime] = React.useState(item.progressSec);
+  const [time, setTime] = React.useState(() => startPosition(item));
   const [duration, setDuration] = React.useState(item.durationSec);
   // 0-2: above 1 is gain, which needs the media fetched with a CORS check so
   // the audio graph may read it.
@@ -566,12 +566,14 @@ export function Player({
     if (shownItem.current === item.id) return;
     shownItem.current = item.id;
     remuxFailed.current = false;
-    bestKnown.current = startPosition(item);
-    lastSaved.current = item.progressSec;
+    // Where it will actually begin: the start, for a title left in its credits.
+    const begin = startPosition(item);
+    bestKnown.current = begin;
+    lastSaved.current = begin;
     readyRef.current = false;
     userSought.current = false;
-    setTime(item.progressSec);
-    latestTime.current = item.progressSec;
+    setTime(begin);
+    latestTime.current = begin;
     setDuration(item.durationSec);
     setBuffered(0);
     setSourceOffset(0);
@@ -631,7 +633,7 @@ export function Player({
     // From where the viewer is, not from the start: the remuxed stream begins
     // at whatever it is asked for, and this used to ask for nothing.
     // `time` would still be the previous episode's on a change of title.
-    startRemuxAt(item.progressSec, { track: typeof track.index === 'number' ? track.index : 0 });
+    startRemuxAt(startPosition(item), { track: typeof track.index === 'number' ? track.index : 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, audioTracks, audioTrack, startRemuxAt]);
 
@@ -1020,7 +1022,7 @@ export function Player({
   const readyRef = React.useRef(false);
   const unreachableRef = React.useRef(false);
   unreachableRef.current = unreachable;
-  const lastSaved = React.useRef(item.progressSec);
+  const lastSaved = React.useRef(startPosition(item));
   /** Somebody moved the playhead on purpose since the last save. */
   const userSought = React.useRef(false);
   /** Where the clock was when the other device went away. */

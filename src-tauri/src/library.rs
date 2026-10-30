@@ -348,6 +348,18 @@ pub async fn fetch_peer(
     Some(out)
 }
 
+/// How a peer groups its library, if it says. Best effort: an older build has no
+/// such address and the library is shown grouped by filename, as it always was.
+async fn fetch_collections(host: &str, port: u16, key: Option<&str>) -> Option<serde_json::Value> {
+    let route = match key {
+        Some(k) => format!("/collections.json?k={k}"),
+        None => "/collections.json".to_string(),
+    };
+    let body = get(host, port, &route).await.ok()?;
+    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+    value.is_object().then_some(value)
+}
+
 /// Refreshes the library from every peer with a live link, then republishes it.
 ///
 /// Local entries are rebuilt first so the two halves cannot drift: this is the
@@ -374,6 +386,9 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
     });
 
     let mut remote = Vec::new();
+    // What each peer says about how its library is grouped, read when its
+    // library is.
+    let mut grouped: Vec<(String, serde_json::Value)> = Vec::new();
 
     // Peers that are linked and talking, but whose library could not be read
     // from any of their addresses. This is worth naming rather than showing an
@@ -411,6 +426,12 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
             {
                 remote.extend(items);
                 reached = true;
+                if let Some(published) = fetch_collections(&address, default_port, key.as_deref()).await {
+                    grouped.push((
+                        peer.device_id.clone(),
+                        crate::collections_sync::import(&peer.device_id, &published),
+                    ));
+                }
             }
         }
 
@@ -419,6 +440,44 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         if !reached {
             unreachable.push(peer.name.clone());
         }
+    }
+
+    // What the other device says about how far in somebody is is about its own
+    // viewer. The place this device left each title is its own to remember.
+    for item in remote.iter_mut() {
+        if let Some(fields) = item.as_object_mut() {
+            fields.insert("progressSec".into(), serde_json::Value::from(0));
+            fields.remove("watchedAt");
+        }
+    }
+    crate::media::apply_saved_progress(&state, &mut remote);
+
+    crate::media::remember_library(&state, &remote);
+
+    // For the first moments after starting, a device that has not answered yet is
+    // not a device that has gone: what was remembered of it stays on the shelf
+    // until it does, rather than the shelf emptying and filling again.
+    const STARTUP_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+    static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    if STARTED.get_or_init(std::time::Instant::now).elapsed() < STARTUP_GRACE {
+        let answered: std::collections::HashSet<String> = remote
+            .iter()
+            .filter_map(|i| i.get("peerId").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        let kept: Vec<serde_json::Value> = state.with(|s| {
+            s.media
+                .iter()
+                .filter(|m| m.get("cached").and_then(|v| v.as_bool()).unwrap_or(false))
+                .filter(|m| {
+                    m.get("peerId")
+                        .and_then(|v| v.as_str())
+                        .map(|p| !answered.contains(p))
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .collect()
+        });
+        remote.extend(kept);
     }
 
     let mut all: Vec<serde_json::Value> = local.into_iter().chain(remote).collect();
@@ -433,7 +492,13 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
         }
         s.media = all.clone();
         s.library_unreachable = unreachable.clone();
+        // A peer that could not be read keeps what it last said.
+        for (id, value) in grouped {
+            s.peer_collections.insert(id, value);
+        }
     });
+    let collections = state.with(|s| serde_json::to_value(&s.peer_collections).unwrap_or_default());
+    let _ = app.emit("library:collections", &collections);
     let _ = app.emit("media:changed", &all);
     let _ = app.emit("library:unreachable", &unreachable);
 }

@@ -13,7 +13,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
+import android.app.UiModeManager
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.view.KeyEvent
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -167,6 +170,48 @@ class MainActivity : TauriActivity() {
 
     runCatching { enterPictureInPictureMode(pipParams()) }
   }
+
+  /**
+   * Whether this is a television: the system says so, or it is the LANTV build.
+   *
+   * The package name is in there so the television build can be looked at on a
+   * phone, which is how it is tested here.
+   */
+  private fun isTvDevice(): Boolean {
+    val ui = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    return ui?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+      packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+      packageName == "app.lantern.tv"
+  }
+
+  /**
+   * Back held down on a remote.
+   *
+   * A short press is Back, and the page decides what that undoes. A long one is
+   * "I want out" and is answered by the same question from anywhere - the
+   * system only calls this once the press has been held, and consuming it here
+   * is what stops the release from also counting as a short press.
+   */
+  override fun onKeyLongPress(keyCode: Int, event: KeyEvent): Boolean {
+    if (keyCode == KeyEvent.KEYCODE_BACK && isTvDevice()) {
+      runCatching { nativeBackHold() }
+      return true
+    }
+    return super.onKeyLongPress(keyCode, event)
+  }
+
+  override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    // Asked for explicitly: the long press is only ever reported for a key that
+    // is being tracked, and relying on the base class to start tracking is
+    // relying on a detail that has moved between Android versions.
+    if (keyCode == KeyEvent.KEYCODE_BACK && isTvDevice() && event.repeatCount == 0) {
+      event.startTracking()
+      return true
+    }
+    return super.onKeyDown(keyCode, event)
+  }
+
+  private external fun nativeBackHold()
 
   /**
    * What the floating window looks like, for entering it and for updating it
@@ -426,6 +471,29 @@ class MainActivity : TauriActivity() {
       return runCatching { activity.startActivity(build().setPackage("org.videolan.vlc")); true }
         .recoverCatching { activity.startActivity(build()); true }
         .getOrDefault(false)
+    }
+
+    /**
+     * Leaves the app for real: the notification that keeps it listening goes, the
+     * window goes, and the process with it. "Leave" on the television's prompt.
+     */
+    @JvmStatic
+    fun exitApp() {
+      val activity = activityRef?.get() ?: return
+      activity.runOnUiThread {
+        runCatching {
+          activity.startService(
+            Intent(activity, LanternService::class.java).setAction(LanternService.ACTION_STOP),
+          )
+        }
+        activity.finishAndRemoveTask()
+        // Once the window has had a moment to close. Without this the service's
+        // process lingers and the television is still announcing itself.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+          { android.os.Process.killProcess(android.os.Process.myPid()) },
+          500,
+        )
+      }
     }
 
     /** Whether the film is running right now, as opposed to merely open. */
