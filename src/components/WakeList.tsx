@@ -66,6 +66,9 @@ export function WakeList() {
           <li key={device.deviceId} className="flex items-center gap-2">
             <span className="text-xs truncate flex-1 text-dim">
               {device.name || device.deviceName || 'A device on this network'}
+              {/* Told its address by the device itself, which is what lets a
+                  phone wake one at all. */}
+              {device.paired && <span className="ml-1.5 text-[10px] text-muted">paired</span>}
             </span>
             {sent[device.deviceId] ? (
               <span className="text-[10px] text-muted shrink-0">{sent[device.deviceId]}</span>

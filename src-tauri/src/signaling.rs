@@ -390,6 +390,7 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 });
                 if matched {
                     crate::commands::set_trusted(&state, &envelope.from, true);
+                    crate::commands::announce_wake_address(&state, &envelope.from);
 
                     // Linked as one of this person's own devices only when
                     // BOTH ends said so: this one by choosing it when the PIN
@@ -437,6 +438,15 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // back, natively, before the frontend ever sees it: pairing is
             // meant to be mutual the moment it succeeds, not one-sided until
             // somebody happens to open the audience screen.
+            // A paired device telling us what to wake it by. Kept only from a
+            // device paired on this end as well; see `learn_wake_address`.
+            if envelope.kind == "wakeinfo" {
+                if crate::commands::learn_wake_address(&state, &envelope.from, &envelope.payload) {
+                    let _ = app.emit("wake:changed", &serde_json::json!({ "deviceId": envelope.from }));
+                }
+                continue;
+            }
+
             if envelope.kind == "pairresult" {
                 let accepted = envelope
                     .payload
@@ -445,6 +455,7 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                     .unwrap_or(false);
                 if accepted {
                     crate::commands::set_trusted(&state, &envelope.from, true);
+                    crate::commands::announce_wake_address(&state, &envelope.from);
 
                     // Link back only if this end asked for it too - the far
                     // end saying "companion" is not consent on this side.
@@ -778,6 +789,10 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
             },
         );
     }
+
+    // A paired device is told what to wake this machine by, so that it can
+    // when this machine is off. Nothing is sent to one that is not paired.
+    crate::commands::announce_wake_address(state, &peer_id);
 
     // A peer we can reach is a library we can read. Theatre showed only local
     // titles until something asked.

@@ -122,8 +122,8 @@ export function Player({
   onPlayNext,
   onShape,
   onProgress,
-  docked = false,
-  mini = false,
+  docked: dockedProp = false,
+  mini: miniProp = false,
   away = false,
   onExpand,
 }: {
@@ -171,6 +171,48 @@ export function Player({
   const shellRef = React.useRef<HTMLDivElement>(null);
 
   const [playing, setPlaying] = React.useState(true);
+
+  /*
+   * Android's floating window.
+   *
+   * The whole application goes into it, so what it shows is whatever the
+   * player is showing - which on a phone held upright was the docked strip with
+   * the library underneath, and over another tab was the small window over that
+   * tab. Neither belongs in a thumbnail. While it is up the player puts its
+   * picture alone in it: full size, no controls, nothing else.
+   *
+   * Closing the window with its X leaves the film running unless somebody says
+   * otherwise, so that stops it.
+   */
+  const [inPip, setInPip] = React.useState(false);
+  React.useEffect(
+    () =>
+      on('pip:mode', (mode: string) => {
+        setInPip(mode === 'pip');
+        if (mode === 'dismissed') setPlaying(false);
+      }),
+    [],
+  );
+  // Belt and braces for the native keep-alive: if the page was put to sleep
+  // for even a moment on the way in, the film is not left stopped in a window
+  // whose whole purpose is to be watched.
+  React.useEffect(() => {
+    // Only when the player itself says it is playing: resuming an element the
+    // player believes is paused leaves the window's button showing the wrong
+    // thing, and the next press of it doing nothing.
+    if (inPip && playing) void videoRef.current?.play().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inPip]);
+  // Nothing over the picture in a window that size, and nothing brings it back.
+  React.useEffect(() => {
+    if (inPip) setChrome(false);
+  }, [inPip]);
+  // Read by the element's own handlers, which are made once per render and
+  // must see the answer as of the event.
+  const inPipRef = React.useRef(false);
+  inPipRef.current = inPip;
+  const docked = dockedProp && !inPip;
+  const mini = miniProp && !inPip;
   const [time, setTime] = React.useState(item.progressSec);
   const [duration, setDuration] = React.useState(item.durationSec);
   // 0-2: above 1 is gain, which needs the media fetched with a CORS check so
@@ -180,6 +222,10 @@ export function Player({
   // Set when a host refused the CORS check (media is then fetched plain, and
   // cannot be amplified) or the audio graph could not be built at all.
   const [plainMedia, setPlainMedia] = React.useState(false);
+  /** The re-cut audio stream failed for this title; the plain file is played instead. */
+  const remuxFailed = React.useRef(false);
+  /** The fallback swapped the stream under a film that was meant to be playing. */
+  const resumeAfterFallback = React.useRef(false);
   const [unboostable, setUnboostable] = React.useState(false);
   const maxVolume = plainMedia || unboostable ? 1 : 2;
   const maxVolumeRef = React.useRef(maxVolume);
@@ -519,6 +565,7 @@ export function Player({
   React.useEffect(() => {
     if (shownItem.current === item.id) return;
     shownItem.current = item.id;
+    remuxFailed.current = false;
     bestKnown.current = startPosition(item);
     lastSaved.current = item.progressSec;
     readyRef.current = false;
@@ -570,6 +617,11 @@ export function Player({
   const autoPicked = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (autoPicked.current === item.id) return;
+    // Not again once the re-cut stream has failed for this title: falling back
+    // to the plain file sets the track to "none", which is exactly the state
+    // this effect exists to leave, and it asked for the same stream again
+    // straight away.
+    if (remuxFailed.current) return;
     if (audioTrack >= 0 || audioTracks.length === 0) return;
     const track: any =
       audioTracks.find((t: any) => t?.default) ?? audioTracks[0];
@@ -897,6 +949,19 @@ export function Player({
    * listener, so there is exactly one thing "toggle" can mean.
    */
   React.useEffect(() => on('pip:toggle', () => setPlaying((p) => !p)), []);
+
+  /*
+   * What Android's window needs to know about this film: whether it is running
+   * (the button's glyph, and whether leaving the app should follow you out) and
+   * the shape of the picture (the window's). Not the TV, which has no such
+   * window to shape.
+   */
+  React.useEffect(() => {
+    if (!rotatesWithDevice()) return;
+    void api.pip
+      .setVideo(playing && !unreachable && !away, natural.w, natural.h)
+      .catch(() => {});
+  }, [playing, unreachable, away, natural.w, natural.h]);
 
   React.useEffect(() => {
     const el = videoRef.current;
@@ -1716,6 +1781,14 @@ export function Player({
               if (audioTrack >= 0) setTime(streamStart);
               swapping.current = false;
               readyRef.current = true;
+              // The failed stream left the element paused, and the new source
+              // does not play by itself without a fresh gesture: begun here,
+              // from where the film was.
+              if (resumeAfterFallback.current) {
+                resumeAfterFallback.current = false;
+                setPlaying(true);
+                void el.play().catch(() => setPlaying(false));
+              }
             }}
             onTimeUpdate={(e) => {
               if (scrubbing) return;
@@ -1740,8 +1813,39 @@ export function Player({
               }
               if (upNext) onPlayNext(upNext);
             }}
-            onError={() => {
+            onError={(e) => {
+              // An error from a stream that has already been replaced. The
+              // element reports it a moment after the source was swapped, and
+              // taking it for a fresh failure of the plain file is what turned
+              // the fallback below into "Can't reach" a few milliseconds after
+              // it had worked.
+              if (audioTrack < 0 && /[?&]audio=/.test(e.currentTarget.currentSrc)) return;
               readyRef.current = false;
+              // The re-cut audio stream itself failing is not the other device
+              // being gone either. It needs ffmpeg on whichever device serves the
+              // file, and a copy stored on a phone is served by the phone, which
+              // has none: the film was a few milliseconds away on the same
+              // device and the player said "Can't reach". The plain file has the
+              // picture, and the sound where this device can decode it.
+              if (audioTrack >= 0 && !remuxFailed.current) {
+                remuxFailed.current = true;
+                resumeAfterFallback.current = true;
+                retryAt.current = latestTime.current;
+                swapping.current = true;
+                startGen.current++;
+                startWith.current = {};
+                setSourceOffset(0);
+                setStreamStart(0);
+                setAudioTrack(-1);
+                useStore.getState().toast({
+                  kind: 'info',
+                  title: 'This film will play without its sound',
+                  body: item.peerId
+                    ? 'The device sharing it could not re-encode the audio.'
+                    : 'Its audio format cannot be played on this device, and re-encoding it needs ffmpeg. The picture is here; the sound is with the original.',
+                });
+                return;
+              }
               // The buffer in the middle failing is not the other device being
               // gone: go round it, from where the film had got to.
               if (relayed && relay?.url === playSrc) {
@@ -1767,8 +1871,19 @@ export function Player({
               }
               setUnreachable(true);
             }}
-            onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
+            // In the floating window the element's own pause and play are not
+            // news: the picture is being kept alive from outside, and each of
+            // its pauses used to set `playing` false, whose effect paused it
+            // again and whose resume set it true - a loop about forty times a
+            // second, with the window's button flipping between Play and Pause
+            // as fast. Only what the viewer does (its button, Back) changes
+            // `playing` while it is up; the effect keeps the element to it.
+            onPlay={() => {
+              if (!inPipRef.current) setPlaying(true);
+            }}
+            onPause={() => {
+              if (!inPipRef.current) setPlaying(false);
+            }}
           >
           </video>
         )}
@@ -2066,7 +2181,10 @@ export function Player({
                 />
               </div>
 
-              <div className="flex items-center gap-3 mt-2">
+              {/* Wraps in a narrow window: Crop, Speed, Repeat, Sleep and the
+                  track menus go on a line of their own instead of running off
+                  the edge and being cut to "Rep…". */}
+              <div className="flex items-center gap-3 mt-2 max-md:flex-wrap max-md:gap-y-2">
                 <IconBtn
                   label={
                     following ? 'The host controls playback' : playing ? 'Pause' : 'Play'
@@ -2128,11 +2246,11 @@ export function Player({
                   />
                 </div>
 
-                <span className="text-[11px] font-mono text-white/80 tabular-nums">
+                <span className="text-[11px] font-mono text-white/80 tabular-nums whitespace-nowrap">
                   {clock(shownTime)} / {clock(duration)}
                 </span>
 
-                <div className="ml-auto flex items-center gap-3">
+                <div className="ml-auto flex items-center gap-3 max-md:ml-0 max-md:basis-full max-md:flex-wrap max-md:justify-between max-md:gap-y-2">
                   {/*
                     A toggle rather than a menu, because there are two states
                     and a menu to choose between two things is a menu too many.

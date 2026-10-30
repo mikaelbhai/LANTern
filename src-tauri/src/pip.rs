@@ -38,6 +38,35 @@ pub fn set_playing(playing: bool) {
     }
 }
 
+/// What the floating window needs to know about the film: whether it is
+/// running, and how big its picture is. Android only.
+pub fn set_video(playing: bool, width: i32, height: i32) {
+    #[cfg(target_os = "android")]
+    {
+        crate::apkinstall::with_activity(|env, class| {
+            let _ = env.call_static_method(
+                class,
+                "setPipVideo",
+                "(ZII)V",
+                &[
+                    jni::objects::JValue::Bool(u8::from(playing)),
+                    jni::objects::JValue::Int(width),
+                    jni::objects::JValue::Int(height),
+                ],
+            );
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (playing, width, height);
+    }
+}
+
+#[tauri::command]
+pub fn pip_video_set(playing: bool, width: i32, height: i32) {
+    set_video(playing, width, height);
+}
+
 /// Tells Android who decides which way up the screen is.
 ///
 /// `sensor` rotates from the accelerometer whatever the system's auto-rotate
@@ -157,6 +186,30 @@ static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 #[cfg(target_os = "android")]
 pub fn stash_app_handle(app: tauri::AppHandle) {
     let _ = APP.set(app);
+}
+
+/// The floating window was entered, left, or closed.
+///
+/// `mode` is "pip", "expanded" or "dismissed" - see
+/// `MainActivity.onPictureInPictureModeChanged` for why the last two are not
+/// the same thing.
+///
+/// # Safety
+///
+/// Called by the Java runtime with arguments it constructed. Nothing else may
+/// call it.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_app_lantern_desktop_MainActivity_nativePipMode(
+    mut env: jni::JNIEnv,
+    _this: jni::objects::JObject,
+    mode: jni::objects::JString,
+) {
+    let mode: String = env.get_string(&mode).map(|s| s.into()).unwrap_or_default();
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("pip:mode", mode);
+    }
 }
 
 /// Android's PiP button was pressed. Tells the player to toggle itself.

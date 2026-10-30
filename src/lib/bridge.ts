@@ -20,6 +20,7 @@ import type {
   UpstreamInfo,
   RatingsStatus,
   Wakeable,
+  WakeStatus,
   WifiStatus,
   WatchParty,
 } from './types';
@@ -143,6 +144,13 @@ export async function startBridge() {
       'guest:request',
       'guest:arrived',
       'transfer:conflict',
+      // The floating window on Android. Neither was listed, so its play/pause
+      // button - which has existed for a while - never reached the player, and
+      // the player never learned it was in the window at all.
+      'pip:toggle',
+      'pip:mode',
+      // A paired device announced the address it can be woken by.
+      'wake:changed',
     ];
 
     await Promise.all(
@@ -405,6 +413,12 @@ export const api = {
      * (`player`), with the bars returning when its controls do (`bars`).
      * Android only; a no-op elsewhere.
      */
+    /**
+     * What the floating window needs: whether the film is running and how big
+     * its picture is, for the window's shape and its play/pause button.
+     */
+    setVideo: (playing: boolean, width: number, height: number) =>
+      call<void>('pip_video_set', { playing, width, height }),
     playerScreen: (player: boolean, bars: boolean) =>
       call<void>('player_screen_set', { player, bars }),
   },
@@ -689,6 +703,10 @@ export const api = {
     /** Returns how many packets went out. Nothing acknowledges them. */
     send: (mac: string) => call<number>('wake_device', { mac }),
     list: () => call<Wakeable[]>('wakeable'),
+    /** How this computer is set up to be woken. */
+    status: () => call<WakeStatus>('wake_status'),
+    /** Turns on what Windows needs; it asks for approval itself. */
+    enable: () => call<WakeStatus>('wake_enable'),
   },
   /**
    * Age limits, set by the device holding the files.

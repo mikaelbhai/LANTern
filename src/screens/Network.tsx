@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Avatar } from '../components/Avatar';
 import { MyDevices } from '../components/MyDevices';
+import { WakeThisPc } from '../components/WakeThisPc';
 import { NetworkPrivacy } from '../components/NetworkPrivacy';
 import { DeviceTag } from '../components/PeerName';
 import { QrCode } from '../components/QrCode';
@@ -100,6 +101,7 @@ export function Network() {
         <NetworkPrivacy />
         <MyNetworkCard onFirewall={() => setFirewallOpen(true)} />
         <MyDevices />
+        <WakeThisPc />
         <UpstreamCard />
 
         <section>

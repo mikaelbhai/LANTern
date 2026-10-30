@@ -489,6 +489,10 @@ fn watch_network(app: AppHandle, state: AppState) {
 
             let _ = app.emit("net:changed", &info);
             let _ = app.emit("media:changed", &items);
+
+            // Paired devices hold the address this machine can be woken by, and
+            // a new network means a new one.
+            announce_wake_address_to_paired(&state);
         }
     });
 }
@@ -4214,17 +4218,31 @@ fn remember_macs(state: &AppState) {
     });
 
     for (device_id, ip, name, device_name, os) in seen {
-        let mac = crate::wol::mac_for(&ip).unwrap_or_default();
+        // A paired device that has told us its own address is not asked again.
+        // The ARP table answers with whatever is on the far side of the nearest
+        // hop - a router's address, for a machine on another network - and a
+        // wrong address is worse than none: the packet goes out and nothing
+        // wakes.
+        let told = state.with(|s| s.trusted.contains(&device_id) && s.macs.contains_key(&device_id));
+        let mac = if told {
+            String::new()
+        } else {
+            crate::wol::mac_for(&ip).unwrap_or_default()
+        };
         state.with(|s| {
             if !mac.is_empty() {
                 s.macs.insert(device_id.clone(), mac.clone());
             }
             if let Some(db) = s.db.as_ref() {
                 let _ = db.execute(
+                    // An empty address never replaces a known one: a phone
+                    // cannot read ARP, so every look it took used to blank the
+                    // address a paired device had just announced.
                     "INSERT INTO device_macs (device_id, mac, name, device_name, os, seen_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                      ON CONFLICT(device_id) DO UPDATE SET
-                        mac = ?2, name = ?3, device_name = ?4, os = ?5, seen_at = ?6",
+                        mac = CASE WHEN ?2 = '' THEN device_macs.mac ELSE ?2 END,
+                        name = ?3, device_name = ?4, os = ?5, seen_at = ?6",
                     rusqlite::params![
                         device_id,
                         mac,
@@ -4345,6 +4363,9 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
                 "deviceName": device_name,
                 "os": os,
                 "online": peer.is_some(),
+                // Paired: this device holds our address because it was told it,
+                // not because an ARP table happened to have it.
+                "paired": s.trusted.contains(&device_id),
                 // No address on file - most often a phone asking about a
                 // device it never got to ARP-resolve - means no packet can
                 // be sent, whatever kind of machine this is.
@@ -4353,6 +4374,198 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
         }
         out
     })
+}
+
+/// How this machine is set up to be woken, for the Network screen.
+///
+/// Runs PowerShell, so off the thread that draws the window.
+#[tauri::command]
+pub async fn wake_status(state: State<'_, AppState>) -> Res<crate::wol::WakeStatus> {
+    let (interfaces, shared) = state.with(|s| {
+        let shared = s
+            .trusted
+            .iter()
+            .filter(|id| s.peers.values().any(|p| &p.device_id == *id))
+            .count();
+        (s.net.interfaces.clone(), shared)
+    });
+    let mut status = tauri::async_runtime::spawn_blocking(move || crate::wol::status(&interfaces))
+        .await
+        .map_err(|e| e.to_string())?;
+    status.shared_with = shared;
+    Ok(status)
+}
+
+/// Turns on what this machine needs to be woken, then reports how it stands.
+///
+/// Windows shows its own approval prompt; this app never holds administrator
+/// rights. A declined prompt is an error the screen shows, not a silent no-op.
+#[tauri::command]
+pub async fn wake_enable(state: State<'_, AppState>) -> Res<crate::wol::WakeStatus> {
+    let interfaces = state.with(|s| s.net.interfaces.clone());
+    let again = interfaces.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::wol::enable(&interfaces))
+        .await
+        .map_err(|e| e.to_string())??;
+    let mut status = tauri::async_runtime::spawn_blocking(move || crate::wol::status(&again))
+        .await
+        .map_err(|e| e.to_string())?;
+    status.shared_with = 0;
+    Ok(status)
+}
+
+/// Tells one paired device what to wake this machine by.
+///
+/// Only a paired device: a magic packet cannot be authenticated, so whoever
+/// holds the address can wake the machine, and pairing is the one decision the
+/// owner has made about who that should be. Trust is read again at the moment
+/// of sending, because looking the address up takes a moment and the pairing
+/// may have been removed in it.
+pub(crate) fn announce_wake_address(state: &AppState, peer_id: &str) {
+    if !state.with(|s| s.trusted.contains(peer_id)) {
+        return;
+    }
+    let state = state.clone();
+    let peer_id = peer_id.to_string();
+    std::thread::spawn(move || {
+        let interfaces = state.with(|s| s.net.interfaces.clone());
+        let addresses = crate::wol::own_addresses_cached(&interfaces);
+        if addresses.is_empty() {
+            return;
+        }
+        let (links, me, name, still) = state.with(|s| {
+            (
+                s.links.clone(),
+                s.device_id.clone(),
+                s.instance.clone(),
+                s.trusted.contains(&peer_id),
+            )
+        });
+        if !still {
+            return;
+        }
+        links.send(
+            &peer_id,
+            &Envelope {
+                v: 1,
+                from: me,
+                kind: "wakeinfo".into(),
+                payload: serde_json::json!({ "addresses": addresses, "name": name }),
+            },
+        );
+    });
+}
+
+/// The same, to every paired device that is linked right now - for when this
+/// machine's own networks change.
+pub(crate) fn announce_wake_address_to_paired(state: &AppState) {
+    let ids: Vec<String> = state.with(|s| {
+        s.trusted
+            .iter()
+            .filter(|id| s.peers.values().any(|p| &p.device_id == *id))
+            .cloned()
+            .collect()
+    });
+    for id in ids {
+        announce_wake_address(state, &id);
+    }
+}
+
+/// Keeps the address a paired device announced.
+///
+/// Refused unless the sender is paired *here* too. Pairing is mutual, so a
+/// device we have not paired with has no business choosing what we would send
+/// a wake packet to. Returns whether anything was kept.
+pub(crate) fn learn_wake_address(state: &AppState, from: &str, payload: &serde_json::Value) -> bool {
+    if !state.with(|s| s.trusted.contains(from)) {
+        return false;
+    }
+    let announced: Vec<crate::wol::OwnAddress> = payload
+        .get("addresses")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let mine = state.with(|s| s.net.interfaces.clone());
+    let Some(mac) = crate::wol::choose_address(&announced, &mine) else {
+        return false;
+    };
+    let said_name = payload.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+
+    state.with(|s| {
+        let (name, device_name, os) = s
+            .peers
+            .values()
+            .find(|p| p.device_id == from)
+            .map(|p| (p.name.clone(), p.device_name.clone(), p.os.clone()))
+            .unwrap_or((said_name.clone(), said_name.clone(), String::new()));
+        s.macs.insert(from.to_string(), mac.clone());
+        if let Some(db) = s.db.as_ref() {
+            let _ = db.execute(
+                "INSERT INTO device_macs (device_id, mac, name, device_name, os, seen_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(device_id) DO UPDATE SET mac = ?2, seen_at = ?6",
+                rusqlite::params![from, mac, name, device_name, os, crate::model::now_ms() as i64],
+            );
+        }
+    });
+    true
+}
+
+#[cfg(test)]
+mod wake_announce_tests {
+    use super::*;
+
+    fn payload() -> serde_json::Value {
+        serde_json::json!({
+            "name": "MIKAEL",
+            "addresses": [{ "mac": "74:56:3c:8d:cf:30", "ip": "192.168.100.117", "kind": "ethernet" }],
+        })
+    }
+
+    fn me() -> AppState {
+        let state = AppState::new();
+        state.with(|s| {
+            s.net.interfaces = vec![crate::model::Interface {
+                name: "wlan0".into(),
+                ip: "192.168.100.147".into(),
+                kind: "wifi".into(),
+                mask: "255.255.255.0".into(),
+                cidr: "192.168.100.0/24".into(),
+            }];
+        });
+        state
+    }
+
+    #[test]
+    fn an_address_from_a_device_that_is_not_paired_is_ignored() {
+        let state = me();
+        assert!(!learn_wake_address(&state, "stranger", &payload()));
+        assert!(state.with(|s| s.macs.is_empty()));
+    }
+
+    #[test]
+    fn an_address_from_a_paired_device_is_kept() {
+        let state = me();
+        state.with(|s| {
+            s.trusted.insert("pc".into());
+        });
+        assert!(learn_wake_address(&state, "pc", &payload()));
+        assert_eq!(
+            state.with(|s| s.macs.get("pc").cloned()),
+            Some("74:56:3c:8d:cf:30".to_string()),
+        );
+    }
+
+    #[test]
+    fn nonsense_from_a_paired_device_keeps_nothing() {
+        let state = me();
+        state.with(|s| {
+            s.trusted.insert("pc".into());
+        });
+        let junk = serde_json::json!({ "addresses": [{ "mac": "zz", "ip": "192.168.100.2", "kind": "ethernet" }] });
+        assert!(!learn_wake_address(&state, "pc", &junk));
+        assert!(!learn_wake_address(&state, "pc", &serde_json::json!({})));
+        assert!(state.with(|s| s.macs.is_empty()));
+    }
 }
 
 /// Applies input that arrived from the device holding control.

@@ -5,9 +5,14 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.content.res.Configuration
+import androidx.lifecycle.Lifecycle
 import android.app.RemoteAction
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import android.content.pm.ActivityInfo
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
@@ -23,6 +28,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
+import android.webkit.WebView
 import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
@@ -61,6 +67,28 @@ class MainActivity : TauriActivity() {
     // foreground service Android suspends the process on background, so the
     // device drops off the network the moment you switch apps.
     runCatching { LanternService.start(this) }
+
+    ContextCompat.registerReceiver(
+      this,
+      pipReceiver,
+      IntentFilter(ACTION_PIP_TOGGLE),
+      ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
+  }
+
+  /**
+   * Where the floating window's button lands.
+   *
+   * It was an activity intent, delivered to `onNewIntent`. Starting an activity
+   * is exactly what takes the app out of the floating window, so every press of
+   * the button paused the film and, a moment later, threw the window away and
+   * brought the whole app to full screen. A broadcast to a receiver registered
+   * here does the same work and leaves the window where it is.
+   */
+  private val pipReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action == ACTION_PIP_TOGGLE) runCatching { nativePipToggle() }
+    }
   }
 
   /**
@@ -137,16 +165,116 @@ class MainActivity : TauriActivity() {
     if (!isCallRunning() && !isPlayingSomething()) return
     if (isInPictureInPictureMode) return
 
-    runCatching {
-      enterPictureInPictureMode(
-        PictureInPictureParams.Builder()
-          // The shape of a video call. Android clamps anything too extreme.
-          .setAspectRatio(Rational(16, 9))
-          .setActions(listOf(pipToggleAction()))
-          .build(),
-      )
+    runCatching { enterPictureInPictureMode(pipParams()) }
+  }
+
+  /**
+   * What the floating window looks like, for entering it and for updating it
+   * while it is up.
+   *
+   * The shape is the film's own. It was a fixed 16:9, so a 2.39:1 film sat in a
+   * box with bars baked into the window and a portrait clip was squeezed into a
+   * landscape one. Android refuses anything outside 1:2.39 to 2.39:1, so the
+   * ratio is clamped to what it will take rather than left to throw.
+   *
+   * The button is only offered for a film. A call has nothing to play or pause,
+   * and a play button in a call window pauses nothing and says it does.
+   */
+  private fun pipParams(): PictureInPictureParams {
+    val builder = PictureInPictureParams.Builder().setAspectRatio(pipRatio())
+    if (!isCallRunning()) builder.setActions(listOf(pipToggleAction()))
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      // Android 12 and later shrink the window as the app is left - with the
+      // animation, and without waiting for onUserLeaveHint to be delivered, which
+      // gesture navigation does late or not at all. Only while a film is
+      // running: a paused one is not something to follow you out of the app.
+      builder.setAutoEnterEnabled(mediaPlaying && videoPlaying && !isCallRunning())
+      builder.setSeamlessResizeEnabled(false)
+    }
+    return builder.build()
+  }
+
+  private fun pipRatio(): Rational {
+    val w = videoWidth
+    val h = videoHeight
+    if (w <= 0 || h <= 0) return Rational(16, 9)
+    val ratio = w.toDouble() / h.toDouble()
+    return when {
+      ratio > 2.39 -> Rational(239, 100)
+      ratio < 1.0 / 2.39 -> Rational(100, 239)
+      else -> Rational(w, h)
     }
   }
+
+  /**
+   * The page, kept so it can be held awake while the window is floating.
+   *
+   * Android pauses an activity that has gone into picture-in-picture, and the
+   * base class answers that by pausing the WebView with it - which hides the
+   * page and, with it, stops the film. The window opened at the right shape and
+   * showed black, with the film paused behind it at the second it was left.
+   * Nothing is wrong with a paused activity that is still on screen; the page
+   * just has to be told it is still being looked at.
+   */
+  private var pipWebView: WebView? = null
+
+  override fun onWebViewCreate(webView: WebView) {
+    super.onWebViewCreate(webView)
+    pipWebView = webView
+  }
+
+  private fun keepPageAwake() {
+    pipWebView?.let {
+      it.onResume()
+      it.resumeTimers()
+    }
+  }
+
+  override fun onPause() {
+    super.onPause()
+    // The base class has just paused the page. If this is the floating window
+    // being entered, undo that; the mode-changed callback below covers the
+    // order in which Android delivers the two.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) keepPageAwake()
+  }
+
+  /** Re-sends the window's shape, button and auto-enter flag to Android. */
+  private fun refreshPipParams() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    runCatching { setPictureInPictureParams(pipParams()) }
+  }
+
+  /**
+   * The floating window changing state.
+   *
+   * Three things end it and they are not the same: the app growing back to full
+   * size, which is nothing to do; the window being closed with its X, which
+   * leaves the activity stopped and must stop the film - the web page cannot
+   * tell, and the film carried on playing, sound and all, behind a screen that
+   * was no longer there; and the window being entered, which tells the player
+   * to put its picture alone in it.
+   */
+  override fun onPictureInPictureModeChanged(
+    isInPictureInPictureMode: Boolean,
+    newConfig: Configuration,
+  ) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    val mode = when {
+      isInPictureInPictureMode -> "pip"
+      lifecycle.currentState == Lifecycle.State.CREATED -> "dismissed"
+      else -> "expanded"
+    }
+    if (isInPictureInPictureMode) {
+      keepPageAwake()
+    } else if (mode == "dismissed") {
+      // Closed with its X: the page has been told (below), and may now go back
+      // to sleep. A beat later, so the telling is delivered first.
+      pipWebView?.postDelayed({ pipWebView?.onPause() }, 400)
+    }
+    runCatching { nativePipMode(mode) }
+  }
+
+  private external fun nativePipMode(mode: String)
 
   /**
    * The one button a PiP window gets: toggle play/pause.
@@ -164,19 +292,19 @@ class MainActivity : TauriActivity() {
    * the honest one.
    */
   private fun pipToggleAction(): RemoteAction {
-    val intent = Intent(this, MainActivity::class.java).setAction(ACTION_PIP_TOGGLE)
-    val pending = PendingIntent.getActivity(
+    val intent = Intent(ACTION_PIP_TOGGLE).setPackage(packageName)
+    val pending = PendingIntent.getBroadcast(
       this,
       0,
       intent,
       PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
-    return RemoteAction(
-      Icon.createWithResource(this, android.R.drawable.ic_media_pause),
-      "Play or pause",
-      "Play or pause",
-      pending,
-    )
+    // Showing what pressing it does, and refreshed whenever the film starts or
+    // stops (see `setPipVideo`). A single pause glyph that stayed put while the
+    // film was paused read as "it is playing" on a window that was not.
+    val glyph = if (videoPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
+    val label = if (videoPlaying) "Pause" else "Play"
+    return RemoteAction(Icon.createWithResource(this, glyph), label, label, pending)
   }
 
   /**
@@ -217,12 +345,13 @@ class MainActivity : TauriActivity() {
    * application in a floating window, which is picture-in-picture for
    * something with no picture worth keeping.
    */
-  private fun isPlayingSomething(): Boolean = mediaPlaying
+  private fun isPlayingSomething(): Boolean = mediaPlaying && videoPlaying
 
   /** Implemented in apkinstall.rs. */
   private external fun nativeRegisterInstaller()
 
   override fun onDestroy() {
+    runCatching { unregisterReceiver(pipReceiver) }
     multicastLock?.let { lock ->
       if (lock.isHeld) {
         runCatching { lock.release() }
@@ -269,6 +398,33 @@ class MainActivity : TauriActivity() {
     @JvmStatic
     fun setMediaPlaying(playing: Boolean) {
       mediaPlaying = playing
+      if (!playing) videoPlaying = false
+      val activity = activityRef?.get() ?: return
+      activity.runOnUiThread { activity.refreshPipParams() }
+    }
+
+    /** Whether the film is running right now, as opposed to merely open. */
+    @Volatile
+    private var videoPlaying = false
+
+    /** The picture's own size, for the shape of the floating window. */
+    @Volatile
+    private var videoWidth = 0
+
+    @Volatile
+    private var videoHeight = 0
+
+    /**
+     * Called from pip.rs whenever the film starts, stops, or turns out to be a
+     * different shape. Everything the floating window shows depends on these.
+     */
+    @JvmStatic
+    fun setPipVideo(playing: Boolean, width: Int, height: Int) {
+      videoPlaying = playing
+      videoWidth = width
+      videoHeight = height
+      val activity = activityRef?.get() ?: return
+      activity.runOnUiThread { activity.refreshPipParams() }
     }
 
     /**

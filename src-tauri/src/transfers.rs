@@ -1169,8 +1169,11 @@ mod name_tests {
 /// items_for_share`) builds this one too. A synced copy gets a title, a
 /// season and episode number, a subtitle menu - everything the original had
 /// - because it is read by the same code that read the original.
+/// The slug of the share synced copies live on.
+pub const SYNCED_SLUG: &str = "lantern-synced";
+
 fn ensure_synced_share(app: &AppHandle, state: &AppState) -> Result<Share, String> {
-    const SLUG: &str = "lantern-synced";
+    const SLUG: &str = SYNCED_SLUG;
     if let Some(existing) = state.with(|s| s.shares.iter().find(|sh| sh.slug == SLUG).cloned()) {
         return Ok(existing);
     }

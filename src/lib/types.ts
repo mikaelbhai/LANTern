@@ -637,6 +637,29 @@ export interface Wakeable {
    * indistinguishable from one that failed.
    */
   wakeable?: boolean;
+  /**
+   * Paired with this device. Its address was announced by the device itself
+   * rather than read from an ARP table, which is the only way a phone ever
+   * learns one.
+   */
+  paired?: boolean;
+}
+
+/** How this computer is set up to be woken - see `WakeThisPc`. */
+export interface WakeStatus {
+  /** Windows only for now; elsewhere nothing is checked or changed. */
+  supported: boolean;
+  adapter: string;
+  mac: string;
+  wired: boolean;
+  /** The adapter's own "Wake on Magic Packet". Null when it could not be read. */
+  magicPacket: boolean | null;
+  /** Whether Windows lets that adapter wake the machine. */
+  deviceMayWake: boolean | null;
+  /** A "shut down" with this on is a hibernate, which some cards do not wake from. */
+  fastStartup: boolean | null;
+  /** Paired devices connected now, which hold this address. */
+  sharedWith: number;
 }
 
 /**

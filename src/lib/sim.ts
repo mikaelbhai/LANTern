@@ -747,6 +747,34 @@ export async function handle(cmd: string, args: any): Promise<any> {
     // Companions: one linked device, so the "My devices" list and its storage
     // browser can be exercised without a second machine. A small fake disk,
     // answered the way the real thing answers - asynchronously, as an event.
+    case 'wake_status':
+      return {
+        supported: true,
+        adapter: 'Ethernet',
+        mac: '74:56:3c:8d:cf:30',
+        wired: true,
+        magicPacket: true,
+        deviceMayWake: true,
+        fastStartup: true,
+        sharedWith: 1,
+      };
+    case 'wake_enable':
+      return null;
+    case 'wakeable':
+      return [
+        {
+          deviceId: 'sim-sleeping-pc',
+          mac: '74:56:3c:8d:cf:30',
+          name: 'Studio-PC',
+          deviceName: 'Studio-PC',
+          os: 'windows',
+          online: false,
+          wakeable: true,
+          paired: true,
+        },
+      ];
+    case 'wake_device':
+      return 2;
     case 'peers_companions': {
       const first = peers[0];
       return first && !simCompanionsUnlinked.has(first.deviceId)

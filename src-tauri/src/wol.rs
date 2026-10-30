@@ -366,3 +366,537 @@ mod arp_tests {
         assert_eq!(mac_for(""), None);
     }
 }
+
+/* ------------------------------------------------ this machine's own address */
+
+// Everything above is the sending end, and the sending end has a hole in it:
+// it learns a target's address from the ARP table, and a phone cannot read the
+// ARP table at all. So a phone never held the address of the machine it most
+// wanted to wake. A sleeping machine cannot say what its address is, so it is
+// told ahead of time - while it is awake, to the devices it has been paired
+// with, over the link they already share.
+//
+// A magic packet is not authenticated: whoever holds the address can wake the
+// machine. Pairing is the only gate there is, so the address is given to
+// paired devices and nobody else.
+
+use crate::model::Interface;
+use serde::{Deserialize, Serialize};
+
+/// One of this machine's own network addresses, as it tells a paired device.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnAddress {
+    pub mac: String,
+    pub ip: String,
+    /// "ethernet", "wifi" or "other" - Wi-Fi cards almost never wake a machine
+    /// that is off, so the far end prefers the wired one when it has to choose.
+    pub kind: String,
+}
+
+/// A hardware address written the one way this app stores them.
+pub fn format_mac(mac: [u8; 6]) -> String {
+    mac.iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// Whether two addresses are on the same network under a mask.
+fn same_network(a: Ipv4Addr, b: Ipv4Addr, mask: Ipv4Addr) -> bool {
+    let (a, b, m) = (a.octets(), b.octets(), mask.octets());
+    (0..4).all(|i| a[i] & m[i] == b[i] & m[i])
+}
+
+/// Which of a peer's announced addresses to wake it by.
+///
+/// The one on a network this device is also on, because a broadcast does not
+/// cross a router; failing that, a wired one, because a Wi-Fi card is the least
+/// likely to be listening while the machine is off.
+pub fn choose_address(announced: &[OwnAddress], mine: &[Interface]) -> Option<String> {
+    let shared = |a: &OwnAddress| {
+        let Ok(theirs) = a.ip.parse::<Ipv4Addr>() else {
+            return false;
+        };
+        mine.iter().any(|i| match (i.ip.parse::<Ipv4Addr>(), i.mask.parse::<Ipv4Addr>()) {
+            (Ok(ip), Ok(mask)) => same_network(theirs, ip, mask),
+            _ => false,
+        })
+    };
+    let usable: Vec<&OwnAddress> = announced
+        .iter()
+        .filter(|a| parse_mac(&a.mac).is_some())
+        .collect();
+    let wired = |a: &&OwnAddress| a.kind == "ethernet";
+    usable
+        .iter()
+        .copied()
+        .find(|a| shared(a) && wired(&a))
+        .or_else(|| usable.iter().copied().find(|a| shared(a)))
+        .or_else(|| usable.iter().copied().find(wired))
+        .or_else(|| usable.first().copied())
+        .and_then(|a| parse_mac(&a.mac))
+        .map(format_mac)
+}
+
+/// A network adapter as Windows lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Adapter {
+    pub name: String,
+    pub mac: String,
+    pub up: bool,
+    pub description: String,
+}
+
+/// The adapters out of `Get-NetAdapter | ConvertTo-Json`.
+///
+/// PowerShell prints one adapter as an object and several as an array, so both
+/// shapes are read; a byte-order mark in front of either is not a reason to
+/// find nothing.
+pub fn parse_adapters(json: &str) -> Vec<Adapter> {
+    let value: serde_json::Value = match serde_json::from_str(json.trim_start_matches('\u{feff}').trim()) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let items = match value {
+        serde_json::Value::Array(items) => items,
+        object @ serde_json::Value::Object(_) => vec![object],
+        _ => Vec::new(),
+    };
+    let text = |v: &serde_json::Value, key: &str| {
+        v.get(key).and_then(|x| x.as_str()).unwrap_or_default().to_string()
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let mac = parse_mac(&text(item, "MacAddress"))?;
+            Some(Adapter {
+                name: text(item, "Name"),
+                mac: format_mac(mac),
+                up: text(item, "Status").eq_ignore_ascii_case("up"),
+                description: text(item, "InterfaceDescription"),
+            })
+        })
+        .collect()
+}
+
+/// `1` / `0` as `Get-NetAdapterAdvancedProperty` prints a registry value.
+pub fn parse_flag(text: &str) -> Option<bool> {
+    match text.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// Whether a device is on `powercfg /devicequery wake_armed` - the list of
+/// things Windows will let wake the machine right now.
+pub fn parse_wake_armed(output: &str, description: &str) -> bool {
+    !description.is_empty()
+        && output
+            .lines()
+            .any(|line| line.trim().eq_ignore_ascii_case(description.trim()))
+}
+
+/// Fast Startup from `reg query ... /v HiberbootEnabled`.
+pub fn parse_hiberboot(output: &str) -> Option<bool> {
+    let line = output.lines().find(|l| l.contains("HiberbootEnabled"))?;
+    match line.split_whitespace().last()? {
+        "0x1" | "1" => Some(true),
+        "0x0" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+/// An adapter or device name that is safe to put inside a PowerShell string.
+///
+/// These come from Windows' own listing, not from anybody on the network, but
+/// they end up in a command that runs elevated, so anything that could end the
+/// string or start another command is refused rather than escaped.
+pub fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 120
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\'' | '"' | '`' | '$' | ';' | '&' | '|' | '<' | '>' | '{' | '}'))
+}
+
+#[cfg(windows)]
+fn run(program: &str, args: &[&str]) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(windows)]
+fn powershell(script: &str) -> Option<String> {
+    run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
+}
+
+#[cfg(windows)]
+fn physical_adapters() -> Vec<Adapter> {
+    powershell(
+        "Get-NetAdapter -Physical | Select-Object Name,MacAddress,Status,InterfaceDescription | ConvertTo-Json -Compress",
+    )
+    .map(|text| parse_adapters(&text))
+    .unwrap_or_default()
+}
+
+/// `own_addresses`, remembered for as long as the set of networks is the same.
+///
+/// Looking them up runs PowerShell, which is the better part of a second, and
+/// it would otherwise run again for every paired device that links.
+pub fn own_addresses_cached(interfaces: &[Interface]) -> Vec<OwnAddress> {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(String, Vec<OwnAddress>)>> = Mutex::new(None);
+    let key = interfaces
+        .iter()
+        .map(|i| format!("{}={}", i.name, i.ip))
+        .collect::<Vec<_>>()
+        .join(",");
+    if let Ok(guard) = CACHE.lock() {
+        if let Some((k, found)) = guard.as_ref() {
+            if *k == key {
+                return found.clone();
+            }
+        }
+    }
+    let found = own_addresses(interfaces);
+    // An empty answer is a lookup that failed as often as a machine with
+    // nothing to say, and is not worth remembering.
+    if !found.is_empty() {
+        if let Ok(mut guard) = CACHE.lock() {
+            *guard = Some((key, found.clone()));
+        }
+    }
+    found
+}
+
+/// This machine's own addresses, one per network it is on.
+///
+/// A virtual adapter, a VPN or a link-local address is not something a packet
+/// can wake a machine by, so only physical adapters with an address are listed.
+pub fn own_addresses(interfaces: &[Interface]) -> Vec<OwnAddress> {
+    #[cfg(windows)]
+    {
+        let adapters = physical_adapters();
+        interfaces
+            .iter()
+            .filter_map(|i| {
+                let adapter = adapters.iter().find(|a| a.name.eq_ignore_ascii_case(&i.name))?;
+                Some(OwnAddress { mac: adapter.mac.clone(), ip: i.ip.clone(), kind: i.kind.clone() })
+            })
+            .collect()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        interfaces
+            .iter()
+            .filter_map(|i| {
+                let text = std::fs::read_to_string(format!("/sys/class/net/{}/address", i.name)).ok()?;
+                let mac = parse_mac(&text)?;
+                // What Android answers for a radio it will not name.
+                if mac == [0x02, 0, 0, 0, 0, 0] {
+                    return None;
+                }
+                Some(OwnAddress { mac: format_mac(mac), ip: i.ip.clone(), kind: i.kind.clone() })
+            })
+            .collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        interfaces
+            .iter()
+            .filter_map(|i| {
+                if !i.name.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    return None;
+                }
+                let out = std::process::Command::new("ifconfig").arg(&i.name).output().ok()?;
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                let mac = text
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix("ether "))
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .and_then(parse_mac)?;
+                Some(OwnAddress { mac: format_mac(mac), ip: i.ip.clone(), kind: i.kind.clone() })
+            })
+            .collect()
+    }
+}
+
+/// Whether this machine is set up to be woken, and by what.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WakeStatus {
+    /// Windows only for now; elsewhere the address is announced but nothing
+    /// is checked or changed.
+    pub supported: bool,
+    pub adapter: String,
+    pub mac: String,
+    pub wired: bool,
+    /// The adapter's own "Wake on Magic Packet" setting.
+    pub magic_packet: Option<bool>,
+    /// Whether Windows lets that adapter wake the machine.
+    pub device_may_wake: Option<bool>,
+    /// A "shut down" with Fast Startup on is a hibernate, which some adapters
+    /// do not wake from. Waking from sleep is not affected.
+    pub fast_startup: Option<bool>,
+    /// How many paired devices this address has been given to, filled in by
+    /// the command rather than here.
+    pub shared_with: usize,
+}
+
+/// The adapter to wake this machine by: the wired one that is up, else any
+/// that is up, else the first physical one.
+#[cfg(windows)]
+fn pick_adapter(interfaces: &[Interface]) -> Option<(Adapter, bool)> {
+    let adapters = physical_adapters();
+    let kind_of = |a: &Adapter| {
+        interfaces
+            .iter()
+            .find(|i| i.name.eq_ignore_ascii_case(&a.name))
+            .map(|i| i.kind.clone())
+    };
+    let wired = |a: &Adapter| kind_of(a).as_deref() == Some("ethernet");
+    let chosen = adapters
+        .iter()
+        .find(|a| a.up && wired(a))
+        .or_else(|| adapters.iter().find(|a| a.up))
+        .or_else(|| adapters.first())?
+        .clone();
+    let is_wired = wired(&chosen) || chosen.description.to_ascii_lowercase().contains("ethernet")
+        || chosen.description.to_ascii_lowercase().contains("gbe");
+    Some((chosen, is_wired))
+}
+
+pub fn status(interfaces: &[Interface]) -> WakeStatus {
+    #[cfg(windows)]
+    {
+        let Some((adapter, wired)) = pick_adapter(interfaces) else {
+            return WakeStatus { supported: true, ..Default::default() };
+        };
+        let magic_packet = if safe_name(&adapter.name) {
+            powershell(&format!(
+                "(Get-NetAdapterAdvancedProperty -Name '{}' -RegistryKeyword '*WakeOnMagicPacket' -ErrorAction SilentlyContinue).RegistryValue",
+                adapter.name
+            ))
+            .and_then(|t| parse_flag(&t))
+        } else {
+            None
+        };
+        let device_may_wake = run("powercfg", &["/devicequery", "wake_armed"])
+            .map(|out| parse_wake_armed(&out, &adapter.description));
+        let fast_startup = run(
+            "reg",
+            &[
+                "query",
+                r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power",
+                "/v",
+                "HiberbootEnabled",
+            ],
+        )
+        .and_then(|out| parse_hiberboot(&out));
+        WakeStatus {
+            supported: true,
+            adapter: adapter.name,
+            mac: adapter.mac,
+            wired,
+            magic_packet,
+            device_may_wake,
+            fast_startup,
+            shared_with: 0,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let first = own_addresses(interfaces).into_iter().next();
+        WakeStatus {
+            supported: false,
+            mac: first.as_ref().map(|a| a.mac.clone()).unwrap_or_default(),
+            wired: first.as_ref().map(|a| a.kind == "ethernet").unwrap_or(false),
+            ..Default::default()
+        }
+    }
+}
+
+/// Turns on what Windows needs to wake this machine for a magic packet:
+/// the adapter's own setting, and permission for it to wake the machine.
+///
+/// Both need an administrator, so one elevated PowerShell does both and
+/// Windows asks for the approval itself - this app never holds it. Fast Startup
+/// and the firmware setting are not touched; they are reported instead.
+#[cfg(windows)]
+pub fn enable(interfaces: &[Interface]) -> Result<(), String> {
+    let Some((adapter, _)) = pick_adapter(interfaces) else {
+        return Err("no network adapter was found".into());
+    };
+    if !safe_name(&adapter.name) || !safe_name(&adapter.description) {
+        return Err("that adapter's name cannot be passed on safely".into());
+    }
+    let inner = format!(
+        "$ErrorActionPreference='Stop'; \
+         Set-NetAdapterAdvancedProperty -Name '{name}' -RegistryKeyword '*WakeOnMagicPacket' -RegistryValue 1; \
+         powercfg /deviceenablewake '{description}'; exit $LASTEXITCODE",
+        name = adapter.name,
+        description = adapter.description,
+    );
+    // UTF-16 little-endian, base64: the encoding -EncodedCommand wants, and the
+    // reason nothing in the script above has to survive another layer of quoting.
+    let bytes: Vec<u8> = inner.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let encoded = base64_encode(&bytes);
+    let outer = format!(
+        "$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden \
+         -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'; exit $p.ExitCode"
+    );
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &outer])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = String::from_utf8_lossy(&out.stderr);
+    if said.to_ascii_lowercase().contains("canceled") || said.to_ascii_lowercase().contains("cancelled") {
+        return Err("the Windows prompt was declined".into());
+    }
+    Err("Windows would not apply the change".into())
+}
+
+#[cfg(not(windows))]
+pub fn enable(_interfaces: &[Interface]) -> Result<(), String> {
+    Err("this is set in the system's own network settings on this platform".into())
+}
+
+#[cfg(windows)]
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
+}
+
+#[cfg(test)]
+mod own_address_tests {
+    use super::*;
+
+    fn iface(name: &str, ip: &str, kind: &str) -> Interface {
+        Interface {
+            name: name.into(),
+            ip: ip.into(),
+            kind: kind.into(),
+            mask: "255.255.255.0".into(),
+            cidr: String::new(),
+        }
+    }
+
+    fn own(mac: &str, ip: &str, kind: &str) -> OwnAddress {
+        OwnAddress { mac: mac.into(), ip: ip.into(), kind: kind.into() }
+    }
+
+    #[test]
+    fn the_address_on_a_shared_network_is_the_one_used() {
+        let announced = [
+            own("aa:aa:aa:aa:aa:01", "10.0.0.5", "ethernet"),
+            own("aa:aa:aa:aa:aa:02", "192.168.100.117", "ethernet"),
+        ];
+        let mine = [iface("wlan0", "192.168.100.147", "wifi")];
+        assert_eq!(choose_address(&announced, &mine), Some("aa:aa:aa:aa:aa:02".into()));
+    }
+
+    #[test]
+    fn a_wired_address_beats_wifi_when_both_are_reachable() {
+        let announced = [
+            own("aa:aa:aa:aa:aa:01", "192.168.100.60", "wifi"),
+            own("aa:aa:aa:aa:aa:02", "192.168.100.117", "ethernet"),
+        ];
+        let mine = [iface("wlan0", "192.168.100.147", "wifi")];
+        assert_eq!(choose_address(&announced, &mine), Some("aa:aa:aa:aa:aa:02".into()));
+    }
+
+    #[test]
+    fn with_no_shared_network_a_wired_address_is_still_offered() {
+        let announced = [
+            own("aa:aa:aa:aa:aa:01", "10.1.1.2", "wifi"),
+            own("aa:aa:aa:aa:aa:02", "10.2.2.2", "ethernet"),
+        ];
+        assert_eq!(choose_address(&announced, &[]), Some("aa:aa:aa:aa:aa:02".into()));
+    }
+
+    #[test]
+    fn nonsense_addresses_are_never_chosen() {
+        let announced = [own("not-a-mac", "192.168.100.117", "ethernet"), own("00:00:00:00:00:00", "192.168.100.2", "ethernet")];
+        assert_eq!(choose_address(&announced, &[iface("e", "192.168.100.147", "ethernet")]), None);
+    }
+
+    #[test]
+    fn reads_what_get_netadapter_prints_for_one_adapter_and_for_several() {
+        // Real output from a machine with a wired and a USB Wi-Fi adapter.
+        let one = r#"{"Name":"Ethernet","MacAddress":"74-56-3C-8D-CF-30","Status":"Up","InterfaceDescription":"Realtek PCIe GbE Family Controller"}"#;
+        let a = parse_adapters(one);
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].mac, "74:56:3c:8d:cf:30");
+        assert!(a[0].up);
+
+        let two = r#"[{"Name":"Wi-Fi","MacAddress":"00-0C-43-17-2C-25","Status":"Disconnected","InterfaceDescription":"802.11n USB Wireless LAN Card"},
+                       {"Name":"Ethernet","MacAddress":"74-56-3C-8D-CF-30","Status":"Up","InterfaceDescription":"Realtek PCIe GbE Family Controller"}]"#;
+        let b = parse_adapters(&format!("\u{feff}{two}"));
+        assert_eq!(b.len(), 2);
+        assert!(!b[0].up);
+        assert_eq!(b[1].description, "Realtek PCIe GbE Family Controller");
+
+        assert!(parse_adapters("").is_empty());
+        assert!(parse_adapters("not json").is_empty());
+    }
+
+    #[test]
+    fn the_adapter_setting_and_the_wake_list_are_read_as_printed() {
+        assert_eq!(parse_flag("1\r\n"), Some(true));
+        assert_eq!(parse_flag("0"), Some(false));
+        assert_eq!(parse_flag(""), None);
+
+        let armed = "HID Keyboard Device (001)\r\nRealtek PCIe GbE Family Controller\r\nHID-compliant mouse (002)\r\n";
+        assert!(parse_wake_armed(armed, "Realtek PCIe GbE Family Controller"));
+        assert!(!parse_wake_armed(armed, "802.11n USB Wireless LAN Card"));
+        assert!(!parse_wake_armed(armed, ""));
+
+        let reg = "\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power\r\n    HiberbootEnabled    REG_DWORD    0x1\r\n";
+        assert_eq!(parse_hiberboot(reg), Some(true));
+        assert_eq!(parse_hiberboot("    HiberbootEnabled    REG_DWORD    0x0"), Some(false));
+        assert_eq!(parse_hiberboot("nothing"), None);
+    }
+
+    #[test]
+    fn a_name_that_could_start_another_command_is_refused() {
+        assert!(safe_name("Ethernet"));
+        assert!(safe_name("Intel(R) Ethernet Connection (7) I219-V"));
+        assert!(safe_name("Realtek USB GbE Family Controller #2"));
+        for bad in ["", "x'; calc; '", "a`b", "$(calc)", "a;b", "a|b", "a\nb", "a\"b"] {
+            assert!(!safe_name(bad), "{bad:?} was accepted");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn base64_matches_the_standard_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+}

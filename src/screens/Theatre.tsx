@@ -57,6 +57,7 @@ import {
 import { useLocalStorage } from '../lib/hooks';
 import { isAndroid } from '../lib/picker';
 import { useStore } from '../lib/store';
+import { browserCanPlay, needsRemux } from '../lib/audiocap';
 import { cn, formatBytes } from '../lib/utils';
 import type { MediaItem, RatingsStatus, WatchParty } from '../lib/types';
 import { PullToRefresh } from '../components/PullToRefresh';
@@ -132,7 +133,7 @@ export function Theatre() {
    * here is this device's to rate or to ask about.
    */
   const visible = React.useCallback(
-    (list: MediaItem[]) => list.filter((i) => !(i.peerId && i.locked)),
+    (list: MediaItem[]) => oneOfEach(list.filter((i) => !(i.peerId && i.locked))),
     [],
   );
 
@@ -159,6 +160,22 @@ export function Theatre() {
   }, []);
   const [syncTransfers, setSyncTransfers] = React.useState<Record<string, string>>({});
   const startSync = React.useCallback(async (item: MediaItem) => {
+    // A copy is only as playable as this device can decode. When every audio
+    // track in the file needs re-encoding, and this device cannot do that, the
+    // copy will have a picture and no sound - said now, while the original is
+    // still one tap away, and not found out on a plane.
+    const tracks = (item.audioTracks ?? []) as { codec?: string; webSafe?: boolean }[];
+    if (
+      tracks.length > 0 &&
+      tracks.every((t) => needsRemux(t.codec ?? '', t.webSafe !== false, browserCanPlay)) &&
+      !(await api.media.canSwitchAudio().catch(() => false))
+    ) {
+      useStore.getState().toast({
+        kind: 'info',
+        title: `${item.title} will have no sound offline`,
+        body: 'Its audio format cannot be played here and this device cannot re-encode it. The picture will play; the sound needs the original.',
+      });
+    }
     const transferId = await api.media.sync(item);
     setSyncTransfers((prev) => ({ ...prev, [item.id]: transferId }));
   }, []);
@@ -1242,6 +1259,40 @@ function SearchBox({ value, onChange }: { value: string; onChange: (v: string) =
 export const isSyncedCopy = (item: MediaItem): boolean =>
   (!!item.streamUrl && item.streamUrl.includes('/lantern-synced/')) || item.id.startsWith('synced:');
 
+/** What a title is wherever it is kept; the same rule as `media::title_key`. */
+const titleKeyOf = (item: MediaItem): string => {
+  const plain = (item.series ?? item.title).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  return item.season != null && item.episode != null
+    ? `${plain}|s${item.season}e${item.episode}`
+    : plain;
+};
+
+/**
+ * One entry per title: a copy synced onto this device is hidden while the
+ * device it came from is still listing the original.
+ *
+ * Both were listed, so syncing "Episode 2" turned a series of three into five
+ * rows - the same two episodes twice, once with a tick and once without. The
+ * original stays because it carries the tick that removes the copy; the copy
+ * takes its place the moment the other device goes away, which is what it is
+ * for, and progress follows the title rather than the entry.
+ */
+function oneOfEach(list: MediaItem[]): MediaItem[] {
+  const streamed = new Map<string, MediaItem[]>();
+  for (const i of list) {
+    if (!i.peerId || isSyncedCopy(i)) continue;
+    const key = titleKeyOf(i);
+    streamed.set(key, [...(streamed.get(key) ?? []), i]);
+  }
+  return list.filter((i) => {
+    if (!isSyncedCopy(i)) return true;
+    // The same cut, not another film that shares a name.
+    return !(streamed.get(titleKeyOf(i)) ?? []).some(
+      (o) => !o.durationSec || !i.durationSec || Math.abs(o.durationSec - i.durationSec) <= 30,
+    );
+  });
+}
+
 /**
  * The absolute path of a title on this machine, or null when it is not one of
  * this machine's own. The share holds the folder; the item says where inside it.
@@ -2169,11 +2220,11 @@ function CollectionSheet({
                   {items.map((item) => (
                     <div
                       key={item.id}
-                      className="flex flex-wrap items-center gap-x-3 gap-y-2 p-2 rounded-card bg-raised border border-edge hover:border-gold/40 transition-colors"
+                      className="flex items-center gap-3 p-2 rounded-card bg-raised border border-edge hover:border-gold/40 transition-colors max-md:grid max-md:grid-cols-[6rem_1fr] max-md:gap-x-3 max-md:gap-y-0.5"
                     >
                       <button
                         onClick={() => onPlay(item)}
-                        className="relative w-28 max-md:w-24 shrink-0 rounded-input overflow-hidden group/thumb"
+                        className="relative w-28 max-md:w-24 max-md:row-span-2 max-md:self-start shrink-0 rounded-input overflow-hidden group/thumb"
                       >
                         <Thumbnail
                           title={item.title}
@@ -2197,7 +2248,7 @@ function CollectionSheet({
                         )}
                       </button>
 
-                      <div className="min-w-0 flex-1 basis-32">
+                      <div className="min-w-0 flex-1">
                         <div className="text-xs font-medium truncate">
                           {/* An episode with no name of its own carried the
                               series name, so every row in a collection read
@@ -2219,10 +2270,11 @@ function CollectionSheet({
                         </div>
                       </div>
 
-                      {/* The controls. On a phone they take their own line, right
-                          aligned, so the title above has the width of the row
-                          instead of being cut to "Epis…". */}
-                      <div className="flex items-center gap-1.5 shrink-0 max-md:basis-full max-md:justify-end">
+                      {/* The controls. On a phone they sit under the title, beside
+                          the picture, instead of beside the title (where it was
+                          cut to "Epis…") or on a line of their own (a row of
+                          empty space under a thumbnail). */}
+                      <div className="flex items-center gap-1.5 shrink-0 max-md:col-start-2 max-md:flex-wrap max-md:-ml-1.5">
                       {orderable && !item.peerId && (
                         <span className="flex flex-col shrink-0">
                           <button

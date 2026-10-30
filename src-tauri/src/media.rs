@@ -79,6 +79,18 @@ pub fn rebuild(state: &AppState) -> Vec<serde_json::Value> {
 
     let mut items = Vec::new();
     for (share_id, slug, root) in shares {
+        // A copy synced onto this device is read by this device and offered to
+        // nobody (the share is unlisted), so it is addressed by the one name
+        // that needs no network: loopback. It used to carry this device's LAN
+        // address like everything else, and that address stops existing the
+        // moment Wi-Fi drops - which is exactly when a copy kept for offline
+        // viewing is wanted. The film was on the phone and the phone could not
+        // reach it: "Can't reach", with the file one process away.
+        let authority = if slug == crate::transfers::SYNCED_SLUG {
+            format!("127.0.0.1:{host_port}")
+        } else {
+            authority.clone()
+        };
         items.extend(items_for_share(&share_id, &slug, &root, &authority));
     }
     items
@@ -1470,6 +1482,54 @@ mod tests {
         // Stream URLs must point at this device's host server.
         let url = items[0]["streamUrl"].as_str().unwrap();
         assert!(url.starts_with("http://192.168.1.5:7981/videos/"), "{url}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The fault: a synced copy was addressed by the LAN address, which is gone
+    /// when the network is. Its own address must not depend on one.
+    #[test]
+    fn a_synced_copy_is_addressed_by_loopback_not_the_lan() {
+        let root = std::env::temp_dir().join(format!("lantern-media-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("Loki.S01E01.mkv"), b"x").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            s.net.ip = "192.168.1.5".into();
+            s.net.host_port = 7981;
+            s.shares.push(Share {
+                id: "sy".into(),
+                name: "Synced".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: crate::transfers::SYNCED_SLUG.into(),
+                mode: ShareMode::Media,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: true,
+                audience: Vec::new(),
+                file_count: 1,
+                total_bytes: 1,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            });
+        });
+
+        let items = rebuild(&state);
+        assert_eq!(items.len(), 1);
+        let url = items[0]["streamUrl"].as_str().unwrap();
+        assert!(url.starts_with("http://127.0.0.1:7981/lantern-synced/"), "{url}");
+
+        // Ratings are keyed by the path, which the address must not change.
+        assert_eq!(
+            crate::rating::stream_path(url),
+            "/lantern-synced/Loki.S01E01.mkv",
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
