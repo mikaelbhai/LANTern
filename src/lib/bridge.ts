@@ -400,6 +400,13 @@ export const api = {
       call<void>('orientation_set', { mode }),
     /** Keeps an Android screen on while a film plays. */
     keepAwake: (on: boolean) => call<void>('keep_awake_set', { on }),
+    /**
+     * Full brightness and no system bars while the full-screen player is up
+     * (`player`), with the bars returning when its controls do (`bars`).
+     * Android only; a no-op elsewhere.
+     */
+    playerScreen: (player: boolean, bars: boolean) =>
+      call<void>('player_screen_set', { player, bars }),
   },
   host: {
     /**

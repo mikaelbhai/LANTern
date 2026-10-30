@@ -26,6 +26,8 @@ import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.lang.ref.WeakReference
 
@@ -326,6 +328,55 @@ class MainActivity : TauriActivity() {
         runCatching {
           if (on) activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
           else activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+      }
+    }
+
+    /**
+     * The screen while a film is full screen: full brightness, and the system's
+     * own bars out of the way until the player asks for them.
+     *
+     * `player` is whether the full-screen player is up at all; `bars` is whether
+     * the status bar and gesture strip should be showing right now. They follow
+     * the player's own controls - gone while only the picture is on screen, back
+     * together with the controls when somebody taps - so the phone's clock is
+     * never drawn over a film that nobody is touching.
+     *
+     * Brightness is the window's, not the system setting: it is full while this
+     * window is in front and the player is up, and the phone's own level returns
+     * the moment it is not. Nothing is written to Settings and nothing needs a
+     * permission.
+     */
+    @JvmStatic
+    fun setPlayerScreen(player: Boolean, bars: Boolean) {
+      val activity = activityRef?.get() ?: return
+      activity.runOnUiThread {
+        runCatching {
+          val window = activity.window
+          val controller = WindowInsetsControllerCompat(window, window.decorView)
+          val params = window.attributes
+          if (player) {
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_FULL
+            // A swipe from the edge brings the bars back for a moment and they
+            // leave again by themselves, so the gesture to leave is not lost.
+            controller.systemBarsBehavior =
+              WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (bars) controller.show(WindowInsetsCompat.Type.systemBars())
+            else controller.hide(WindowInsetsCompat.Type.systemBars())
+            // Under the notch as well, so landscape fills the whole panel.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+              params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+          } else {
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+              params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            }
+          }
+          window.attributes = params
         }
       }
     }

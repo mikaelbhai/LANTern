@@ -87,6 +87,35 @@ pub fn set_keep_awake(on: bool) {
     }
 }
 
+/// Full brightness and no system bars while the full-screen player is up, with
+/// the bars coming back when its controls do. Android only; see
+/// `MainActivity.setPlayerScreen`.
+pub fn set_player_screen(player: bool, bars: bool) {
+    #[cfg(target_os = "android")]
+    {
+        crate::apkinstall::with_activity(|env, class| {
+            let _ = env.call_static_method(
+                class,
+                "setPlayerScreen",
+                "(ZZ)V",
+                &[
+                    jni::objects::JValue::Bool(u8::from(player)),
+                    jni::objects::JValue::Bool(u8::from(bars)),
+                ],
+            );
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (player, bars);
+    }
+}
+
+#[tauri::command]
+pub fn player_screen_set(player: bool, bars: bool) {
+    set_player_screen(player, bars);
+}
+
 #[tauri::command]
 pub fn orientation_set(mode: String) {
     set_orientation(&mode);

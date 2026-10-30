@@ -153,6 +153,7 @@ pub fn run() {
             commands::pip_set_playing,
             pip::orientation_set,
             pip::keep_awake_set,
+            pip::player_screen_set,
             storage::storage_all_files,
             storage::storage_request_all_files,
             commands::call_audio_earpiece,

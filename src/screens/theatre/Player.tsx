@@ -1228,6 +1228,25 @@ export function Player({
     };
   }, [playing]);
 
+  /*
+   * The phone's own screen while the film is full screen.
+   *
+   * Full brightness, and no status bar or gesture strip over the picture unless
+   * the controls are up: they come and go together, so the clock is never drawn
+   * across a film nobody is touching. The docked strip and the small window
+   * over another tab are not full screen and give the screen back.
+   */
+  React.useEffect(() => {
+    if (!rotatesWithDevice()) return;
+    void api.pip.playerScreen(!docked, chrome).catch(() => {});
+  }, [docked, chrome]);
+  React.useEffect(
+    () => () => {
+      if (rotatesWithDevice()) void api.pip.playerScreen(false, true).catch(() => {});
+    },
+    [],
+  );
+
   const orientationLocked = useOrientation((s) => s.locked);
   const portraitNow = useOrientation((s) => !s.landscape);
   // Locked upright on a phone. The lock itself is a small ring in the corner; a
