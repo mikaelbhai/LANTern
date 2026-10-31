@@ -1041,11 +1041,18 @@ function Hero({
   const resume = isContinuing(item);
   return (
     <div className="relative h-[320px] md:h-[400px]">
-      <Artwork
+      {/*
+        The title's own frame, with the generated art only where there is none.
+        The hero used to draw the generated art unconditionally, so the biggest
+        picture on the screen was the one that never looked like the film while
+        every card under it did. The frame is cut small (480 px wide) and shown
+        large, which the two gradients over it forgive.
+      */}
+      <Thumbnail
         title={item.title}
         seed={item.id}
-        variant="backdrop"
-        rounded={false}
+        posterUrl={item.posterUrl}
+        streamUrl={item.streamUrl}
         className="absolute inset-0 h-full w-full"
       />
       <div className="absolute inset-0 bg-gradient-to-r from-[#08090C] via-[#08090C]/70 to-transparent" />
@@ -1555,11 +1562,11 @@ function DetailSheet({
               </div>
             )}
             <div className="relative h-52">
-              <Artwork
+              <Thumbnail
                 title={item.title}
                 seed={item.id}
-                variant="backdrop"
-                rounded={false}
+                posterUrl={item.posterUrl}
+                streamUrl={item.streamUrl}
                 className="h-full w-full"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-surface to-transparent" />
