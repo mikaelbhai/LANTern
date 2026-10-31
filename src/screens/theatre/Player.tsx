@@ -46,6 +46,7 @@ import { claimArrowKeys } from '../../lib/tv';
 import { RotationLock } from '../../components/RotationLock';
 import { streamOrigin } from './keyframe';
 import { recoveredPosition, rememberPosition, startPosition } from '../../lib/resumeMirror';
+import { pipTitle } from '../../lib/pipTitle';
 import { setBoost } from './loudness';
 import { trackNames } from './tracks';
 import { useDetectedSubtitles } from './useDetectedSubtitles';
@@ -1526,6 +1527,17 @@ export function Player({
       el.removeEventListener('leavepictureinpicture', leave);
     };
   }, []);
+
+  // While the picture is floating, the page is called what is playing: the
+  // system's window uses the page title for the name it shows on hover.
+  React.useEffect(() => {
+    if (!pip) return;
+    const before = document.title;
+    document.title = pipTitle(item);
+    return () => {
+      document.title = before;
+    };
+  }, [pip, item.id]);
 
   const toggleFullscreen = async () => {
     try {
