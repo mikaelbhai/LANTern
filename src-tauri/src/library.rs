@@ -25,7 +25,7 @@ const TIMEOUT: Duration = Duration::from_secs(4);
 /// requests are two fixed paths against a server we wrote, on a LAN, with no
 /// redirects, no TLS and no authentication. `reqwest` would add a megabyte of
 /// binary and a TLS stack to fetch a JSON file from the machine next door.
-async fn get(host: &str, port: u16, path: &str) -> std::io::Result<String> {
+pub(crate) async fn get(host: &str, port: u16, path: &str) -> std::io::Result<String> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
     let stream = tokio::time::timeout(
@@ -444,7 +444,21 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
 
     // What the other device says about how far in somebody is is about its own
     // viewer. The place this device left each title is its own to remember.
+    //
+    // Except from a device paired as the same person's: that device's place *is*
+    // this person's place, and it stands in for a title this device has no record
+    // of yet (apply_saved_progress below overrides it whenever there is one), so
+    // Continue watching is there before the history has had time to sync.
+    let companions = state.with(|s| s.companions.clone());
     for item in remote.iter_mut() {
+        let theirs = item
+            .get("peerId")
+            .and_then(|v| v.as_str())
+            .map(|p| companions.contains(p))
+            .unwrap_or(false);
+        if theirs {
+            continue;
+        }
         if let Some(fields) = item.as_object_mut() {
             fields.insert("progressSec".into(), serde_json::Value::from(0));
             fields.remove("watchedAt");

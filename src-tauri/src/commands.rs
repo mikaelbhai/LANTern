@@ -325,6 +325,23 @@ pub fn boot(app: AppHandle, state: AppState) {
             }
         });
         signaling::reconcile(app.clone(), (*state).clone(), links);
+
+        // The net under pushing: every few minutes, ask each paired device what
+        // it has, in case a push was lost or the link was down when it was sent.
+        {
+            let app = app.clone();
+            let state = (*state).clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                loop {
+                    let taken = crate::historysync::sync_now(&state).await;
+                    if taken > 0 {
+                        crate::library::spawn_refresh(&app, &state);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(10 * 60)).await;
+                }
+            });
+        }
     }
 
     // Local STUN, so ICE never has to leave the LAN.
@@ -1412,6 +1429,11 @@ const PAIR_TTL_MS: u64 = 3 * 60 * 1000;
 
 #[tauri::command]
 pub fn peers_pair_start(state: State<'_, AppState>, companion: Option<bool>) -> String {
+    begin_pairing(&state, companion.unwrap_or(false))
+}
+
+/// The body of `peers_pair_start`, over the state alone so a test can run it.
+pub(crate) fn begin_pairing(state: &AppState, companion: bool) -> String {
     // A UUID's own randomness, reduced to six digits rather than pulling in
     // a `rand` dependency this codebase otherwise has no use for - `uuid`
     // is already here for every token this application hands out.
@@ -1422,7 +1444,7 @@ pub fn peers_pair_start(state: State<'_, AppState>, companion: Option<bool>) -> 
         s.pending_pair = Some((pin.clone(), crate::model::now_ms() + PAIR_TTL_MS));
         // Whoever is showing the PIN decides whether the device typing it is
         // one of their own - it is their storage that would be opened.
-        s.pair_as_companion = companion.unwrap_or(false);
+        s.pair_as_companion = companion;
     });
     pin
 }
@@ -3897,7 +3919,28 @@ pub fn media_set_progress(
     // Written through to the database, not just held in memory. Losing your
     // place on restart is the difference between "Continue watching" being a
     // feature and being an empty row.
-    media::save_progress(&state, &id, progress_sec, duration, key.as_deref(), force);
+    if media::save_progress(&state, &id, progress_sec, duration, key.as_deref(), force) {
+        // And a few seconds later to the devices that are this person's own.
+        crate::historysync::note_saved(&state);
+    }
+}
+
+/// Which devices this one shares its watch history with, and when each last sent.
+#[tauri::command]
+pub fn progress_sync_status(state: State<'_, AppState>) -> serde_json::Value {
+    crate::historysync::status(&state)
+}
+
+/// Asks every paired device for what it has and gives it what this one has,
+/// now rather than at the next interval. Returns how many places came in.
+#[tauri::command]
+pub async fn progress_sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
+    let owned = (*state).clone();
+    let taken = crate::historysync::sync_now(&owned).await;
+    if taken > 0 {
+        crate::library::spawn_refresh(&app, &owned);
+    }
+    Ok(taken)
 }
 
 /// Positions the guard refused, newest first - what to read if a place in a

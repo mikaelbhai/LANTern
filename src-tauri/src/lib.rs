@@ -31,6 +31,7 @@ pub mod readahead;
 mod screencap;
 mod wol;
 mod collections_sync;
+mod historysync;
 #[cfg(desktop)]
 mod wifi;
 mod media;
@@ -160,6 +161,8 @@ pub fn run() {
             pip::app_exit,
             commands::media_publish_collections,
             commands::media_peer_collections,
+            commands::progress_sync_status,
+            commands::progress_sync_now,
             storage::storage_all_files,
             storage::storage_request_all_files,
             commands::call_audio_earpiece,

@@ -14,7 +14,9 @@ import {
   File as FileIcon,
   Folder,
   HardDrive,
+  KeyRound,
   Link2Off,
+  RefreshCw,
   Monitor,
   Smartphone,
 } from 'lucide-react';
@@ -24,6 +26,7 @@ import { useStore } from '../lib/store';
 import { cn, formatBytes, relativeTime, uid } from '../lib/utils';
 import { Badge, Button, IconButton, Modal, SectionTitle, Spinner } from './ui';
 import { RemoteControl } from './RemoteControl';
+import { PairEnterModal, PairShowModal } from './Audience';
 
 interface Companion {
   deviceId: string;
@@ -46,6 +49,40 @@ export function MyDevices() {
   const [list, setList] = React.useState<Companion[]>([]);
   const [browsing, setBrowsing] = React.useState<{ peerId: string; name: string } | null>(null);
   const [controlling, setControlling] = React.useState<string | null>(null);
+  // Pairing, from here: this card is only ever about your own devices, so the
+  // switch that says so starts on.
+  const [showFor, setShowFor] = React.useState<{ deviceId: string; name: string } | null>(null);
+  const [entering, setEntering] = React.useState(false);
+
+  // What has been shared of what you have watched, and when.
+  type History = { devices: { deviceId: string; syncedAt: number; rows: number; linked: boolean }[]; held: number };
+  const [history, setHistory] = React.useState<History | null>(null);
+  const [syncing, setSyncing] = React.useState(false);
+  const loadHistory = React.useCallback(() => {
+    void api.media
+      .historyStatus()
+      // A build without the command, or the simulator, answers with nothing.
+      .then((h) => setHistory(h && Array.isArray(h.devices) ? h : null))
+      .catch(() => setHistory(null));
+  }, []);
+  React.useEffect(loadHistory, [loadHistory, peers]);
+  React.useEffect(() => on('history:changed', () => loadHistory()), [loadHistory]);
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const taken = await api.media.historySyncNow();
+      toast({
+        kind: 'success',
+        title: taken ? `${taken} place${taken === 1 ? '' : 's'} brought in` : 'Already up to date',
+        body: taken ? 'Continue watching now reflects what you watched on your other devices.' : 'Your other devices have nothing newer.',
+      });
+    } catch (err) {
+      toast({ kind: 'error', title: 'Could not sync', body: String(err) });
+    } finally {
+      setSyncing(false);
+      loadHistory();
+    }
+  };
   // Whether THIS device lets itself be seen in full. It is this device's
   // storage that others would browse, so it is this device that has to be
   // allowed to read it all - only ever false on Android, which hides files.
@@ -100,6 +137,30 @@ export function MyDevices() {
         and be used as a screen and controller without asking every time.
       </p>
 
+      <div className="mb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" icon={<KeyRound size={13} />} onClick={() => setEntering(true)}>
+            Enter a code from another device
+          </Button>
+          {Object.values(peers)
+            .filter((p) => !list.some((c) => c.deviceId === p.deviceId))
+            .map((p) => (
+              <Button
+                key={p.deviceId}
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowFor({ deviceId: p.deviceId, name: p.name })}
+              >
+                Show a code for {p.name || 'a device'}
+              </Button>
+            ))}
+        </div>
+        <p className="text-2xs text-muted leading-relaxed mt-1.5">
+          Show a code on one screen and enter it on the other. Both screens need "This is one of my own
+          devices" switched on - it starts on here.
+        </p>
+      </div>
+
       {list.length > 0 && !allFiles && (
         <div className="mb-3 rounded-card border border-gold/40 bg-gold/[0.06] p-3">
           <p className="text-xs text-dim leading-relaxed mb-2">
@@ -115,10 +176,20 @@ export function MyDevices() {
 
       {list.length === 0 ? (
         <p className="text-2xs text-muted leading-relaxed">
-          Nothing linked yet. Pair a device (Settings, Privacy), and switch on "This is one of my
-          own devices" on both screens.
+          Nothing linked yet. Use the buttons above: show a code on one device and enter it on the
+          other.
         </p>
       ) : (
+        <>
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <span className="text-2xs text-muted">
+            What you watch follows you between these.
+            {history && history.held > 0 ? ` ${history.held} title${history.held === 1 ? '' : 's'} from them.` : ''}
+          </span>
+          <Button size="xs" variant="ghost" icon={<RefreshCw size={11} className={syncing ? 'animate-spin' : undefined} />} disabled={syncing} onClick={() => void syncNow()}>
+            Sync history now
+          </Button>
+        </div>
         <ul className="divide-y divide-edge/70">
           {list.map((device) => {
             const peer = live(device.deviceId);
@@ -134,6 +205,17 @@ export function MyDevices() {
                   <div className="text-2xs text-muted">
                     {here ? 'Here now' : 'Not here right now'} · linked {relativeTime(device.companionAt)}
                   </div>
+                  {(() => {
+                    const h = history?.devices.find((d) => d.deviceId === device.deviceId);
+                    if (!history) return null;
+                    return (
+                      <div className="text-2xs text-muted">
+                        {h && h.syncedAt > 0
+                          ? `Watch history synced ${relativeTime(h.syncedAt)}`
+                          : 'Watch history not synced yet'}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <Button
                   size="sm"
@@ -160,6 +242,7 @@ export function MyDevices() {
             );
           })}
         </ul>
+        </>
       )}
 
       {browsing && (
@@ -176,6 +259,27 @@ export function MyDevices() {
         <div className="fixed inset-0 z-[150] bg-base">
           <RemoteControl peerId={controlling} onClose={() => setControlling(null)} />
         </div>
+      )}
+      {showFor && (
+        <PairShowModal
+          defaultOwn
+          device={showFor}
+          onClose={() => setShowFor(null)}
+          onPaired={() => {
+            setShowFor(null);
+            load();
+          }}
+        />
+      )}
+      {entering && (
+        <PairEnterModal
+          defaultOwn
+          onClose={() => setEntering(false)}
+          onPaired={() => {
+            setEntering(false);
+            load();
+          }}
+        />
       )}
     </section>
   );

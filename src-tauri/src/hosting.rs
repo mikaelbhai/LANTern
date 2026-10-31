@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         // What a peer reads to discover what this device publishes.
         .route("/shares.json", get(shares_json))
         .route("/collections.json", get(collections_json))
+        .route("/sync/progress.json", get(progress_json))
         .route("/get/:name", get(serve_installer))
         .route("/unlock", get(unlock))
         .route("/watch/:slug/*path", get(watch))
@@ -699,6 +700,34 @@ async fn serve_root(
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
     respond(state, slug, String::new(), &headers, key, params.contains_key("json")).await
+}
+
+/// This device's watch history, for a device paired as the same person's.
+///
+/// Refused to anybody else: what somebody has watched is not something a
+/// merely trusted device, or any browser on the network, gets to read.
+async fn progress_json(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let device = crate::rating::requester(&state, params.get("k").map(String::as_str));
+    let allowed = device
+        .as_deref()
+        .map(|d| crate::historysync::is_companion(&state, d))
+        .unwrap_or(false);
+    if !allowed {
+        return (StatusCode::FORBIDDEN, "Not a device of yours").into_response();
+    }
+    let since = params.get("since").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+    let rows = crate::historysync::export_rows(&state, since, 5000);
+    (
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        serde_json::json!({ "rows": rows }).to_string(),
+    )
+        .into_response()
 }
 
 /// How this device groups its library, for the devices that read it.
@@ -2704,6 +2733,46 @@ mod tests {
         assert!(response.contains("The Amazing Spider-Man"), "{response}");
         // The device-independent form of the title's id: share name and path.
         assert!(response.contains("test:clip.mp4"), "{response}");
+    }
+
+    /// What somebody has watched is for their own devices only.
+    ///
+    /// A device that is merely trusted, a device nobody has vouched for, and a
+    /// browser with no key at all are all refused; one paired as the same
+    /// person's is answered.
+    #[tokio::test]
+    async fn watch_history_is_served_to_a_paired_device_of_yours_and_to_nobody_else() {
+        let dir = std::env::temp_dir().join(format!("lantern-histroute-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir2 = dir.clone();
+        let (addr, _root) = serve_fixture_with(ShareMode::Media, move |state| {
+            state.with(|s| {
+                s.db = Some(crate::db::open(&dir2).unwrap());
+                s.companions.insert("mine".into());
+                s.trusted.insert("friend".into());
+                s.issued_keys.insert("mine".into(), "key-mine".into());
+                s.issued_keys.insert("friend".into(), "key-friend".into());
+                s.issued_keys.insert("stranger".into(), "key-stranger".into());
+            });
+            assert!(crate::media::save_progress(state, "d:film.mkv", 1234.0, 6000.0, Some("thequietharbour"), false));
+        })
+        .await;
+
+        let anonymous = get_as(addr, "/sync/progress.json", "127.0.0.1:7981", "").await;
+        assert!(anonymous.contains("403"), "no key: {anonymous}");
+        let friend = get_as(addr, "/sync/progress.json?k=key-friend", "127.0.0.1:7981", "").await;
+        assert!(friend.contains("403"), "a merely trusted device must not read it: {friend}");
+        let stranger = get_as(addr, "/sync/progress.json?k=key-stranger", "127.0.0.1:7981", "").await;
+        assert!(stranger.contains("403"), "{stranger}");
+
+        let mine = get_as(addr, "/sync/progress.json?k=key-mine", "127.0.0.1:7981", "").await;
+        assert!(mine.contains("200"), "{mine}");
+        assert!(mine.contains("thequietharbour") && mine.contains("1234"), "{mine}");
+        // And only what is newer than asked.
+        let nothing_new =
+            get_as(addr, "/sync/progress.json?k=key-mine&since=99999999999999", "127.0.0.1:7981", "").await;
+        assert!(nothing_new.contains("\"rows\":[]"), "{nothing_new}");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// A media folder can be listed, not only played.

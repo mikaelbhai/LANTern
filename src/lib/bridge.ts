@@ -155,6 +155,27 @@ export async function startBridge() {
       'tv:backhold',
       // Another device published how it groups its library.
       'library:collections',
+      /*
+       * Everything below was emitted by Rust and listened for by the page, and
+       * never forwarded - so none of it ever arrived in the real app. The
+       * simulator emits straight onto the page's bus, which is why it all
+       * looked fine there. A pairing could complete natively while the dialog
+       * waited for "Paired" and then reported failure; a remote-control request
+       * never reached its prompt; a PIN typed for a restricted title was never
+       * answered; a storage browse never came back; and nobody's avatar
+       * arrived. `scripts/audit-events.mjs` compares the two lists.
+       */
+      'pair:accepted',
+      'pair:result',
+      'control:changed',
+      'control:message',
+      'companion:browsed',
+      'companion:fetched',
+      'rating:unlocked',
+      'peer:profile',
+      'installers:progress',
+      // A paired device's watch history arrived.
+      'history:changed',
     ];
 
     await Promise.all(
@@ -483,6 +504,14 @@ export const api = {
     setProgress: (id: string, progressSec: number, force = false) =>
       call<void>('media_set_progress', { id, progressSec, force }),
     scan: () => call<MediaItem[]>('media_scan'),
+    /** Who this device shares its watch history with, and when each last sent. */
+    historyStatus: () =>
+      call<{
+        devices: { deviceId: string; syncedAt: number; rows: number; linked: boolean }[];
+        held: number;
+      }>('progress_sync_status'),
+    /** Gives and asks for watch history now; resolves with how many places came in. */
+    historySyncNow: () => call<number>('progress_sync_now'),
     /** Hands over how this device groups its library, for other devices to show. */
     publishCollections: (overrides: unknown) => call<void>('media_publish_collections', { overrides }),
     /** How other devices group theirs, by device, in ids this library uses. */

@@ -195,6 +195,67 @@ pub async fn serve(app: AppHandle, state: AppState, links: Links, port: u16) -> 
     }
 }
 
+/// A PIN was typed at the other device: does it match the one this one is
+/// showing? Returns `Some(companion)` when it did - and then `from` is trusted
+/// here, and is one of this person's own devices if both ends said so.
+///
+/// Out of the link loop, and free of the window, so two devices' handshake can
+/// be run against each other in a test; that handshake was only ever read.
+pub(crate) fn match_pair_confirm(
+    state: &AppState,
+    from: &str,
+    payload: &serde_json::Value,
+) -> Option<bool> {
+    let pin = payload.get("pin").and_then(|v| v.as_str()).unwrap_or_default();
+    let matched = state.with(|s| match &s.pending_pair {
+        Some((expected, expires_at)) => {
+            !pin.is_empty() && expected == pin && *expires_at > crate::model::now_ms()
+        }
+        None => false,
+    });
+    if !matched {
+        return None;
+    }
+    crate::commands::set_trusted(state, from, true);
+
+    // Linked as one of this person's own devices only when BOTH ends said so:
+    // this one by choosing it when the PIN was shown, the other by choosing it
+    // when typing. Either alone leaves a plain trust - one side must never be
+    // able to open the other's storage by asking.
+    let typer_said_so = payload.get("companion").and_then(|v| v.as_bool()).unwrap_or(false);
+    let both = state.with(|s| s.pair_as_companion) && typer_said_so;
+    if both {
+        crate::commands::set_companion(state, from, true);
+    }
+    state.with(|s| {
+        s.pending_pair = None;
+        s.pair_as_companion = false;
+    });
+    Some(both)
+}
+
+/// The far end answered a PIN this device typed. Returns whether it accepted;
+/// if so the sender is trusted here, and is one of this person's own devices
+/// when this end asked for that as well - the far end saying "companion" is
+/// not consent on this side.
+pub(crate) fn match_pair_result(state: &AppState, from: &str, payload: &serde_json::Value) -> bool {
+    let accepted = payload.get("accepted").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !accepted {
+        return false;
+    }
+    crate::commands::set_trusted(state, from, true);
+    let they_agreed = payload.get("companion").and_then(|v| v.as_bool()).unwrap_or(false);
+    let we_asked = state.with(|s| {
+        let asked = s.pair_confirm_companion;
+        s.pair_confirm_companion = false;
+        asked
+    });
+    if they_agreed && we_asked {
+        crate::commands::set_companion(state, from, true);
+    }
+    true
+}
+
 /// Drains received envelopes onto the frontend event bus.
 ///
 /// Keeping this out of the link loop is what lets the loop be tested without a
@@ -377,39 +438,13 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
              * back — mutual, never one-sided.
              */
             if envelope.kind == "pairconfirm" {
-                let pin = envelope
-                    .payload
-                    .get("pin")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let matched = state.with(|s| match &s.pending_pair {
-                    Some((expected, expires_at)) => {
-                        expected == pin && *expires_at > crate::model::now_ms()
-                    }
-                    None => false,
-                });
-                if matched {
-                    crate::commands::set_trusted(&state, &envelope.from, true);
+                if let Some(both) = match_pair_confirm(&state, &envelope.from, &envelope.payload) {
                     crate::commands::announce_wake_address(&state, &envelope.from);
-
-                    // Linked as one of this person's own devices only when
-                    // BOTH ends said so: this one by choosing it when the PIN
-                    // was shown, the other by choosing it when typing. Either
-                    // alone leaves a plain trust - one side must never be
-                    // able to open the other's storage by asking.
-                    let typer_said_so = envelope
-                        .payload
-                        .get("companion")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let both = state.with(|s| s.pair_as_companion) && typer_said_so;
                     if both {
-                        crate::commands::set_companion(&state, &envelope.from, true);
+                        // Paired as one's own: the history starts moving now.
+                        let (s, p) = (state.clone(), envelope.from.clone());
+                        std::thread::spawn(move || crate::historysync::push_to(&s, &p));
                     }
-                    state.with(|s| {
-                        s.pending_pair = None;
-                        s.pair_as_companion = false;
-                    });
 
                     let name =
                         state.with(|s| s.peers.get(&envelope.from).map(|p| p.name.clone()));
@@ -417,7 +452,14 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                     let _ = app.emit("peers:changed", &peers);
                     let _ = app.emit(
                         "pair:accepted",
-                        &serde_json::json!({ "deviceId": envelope.from, "name": name }),
+                        &serde_json::json!({
+                            "deviceId": envelope.from,
+                            "name": name,
+                            // Whether it was agreed as one of this person's own,
+                            // which is what history sync and storage browsing
+                            // depend on and what the dialog should say.
+                            "companion": both,
+                        }),
                     );
 
                     let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
@@ -447,30 +489,50 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 continue;
             }
 
-            if envelope.kind == "pairresult" {
-                let accepted = envelope
-                    .payload
-                    .get("accepted")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if accepted {
-                    crate::commands::set_trusted(&state, &envelope.from, true);
-                    crate::commands::announce_wake_address(&state, &envelope.from);
-
-                    // Link back only if this end asked for it too - the far
-                    // end saying "companion" is not consent on this side.
-                    let they_agreed = envelope
+            // A paired device's watch history. Taken only from one this end also
+            // knows as one of its own - see `historysync`.
+            if envelope.kind == "progresssync" {
+                if crate::historysync::is_companion(&state, &envelope.from) {
+                    let rows: Vec<crate::historysync::Row> = envelope
                         .payload
-                        .get("companion")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let we_asked = state.with(|s| {
-                        let asked = s.pair_confirm_companion;
-                        s.pair_confirm_companion = false;
-                        asked
-                    });
-                    if they_agreed && we_asked {
-                        crate::commands::set_companion(&state, &envelope.from, true);
+                        .get("rows")
+                        .cloned()
+                        .and_then(|v| serde_json::from_value(v).ok())
+                        .unwrap_or_default();
+                    let upto = envelope.payload.get("upto").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let taken = crate::historysync::import_rows(&state, &rows);
+                    crate::historysync::record_sync(&state, &envelope.from, taken);
+                    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+                    links.send(
+                        &envelope.from,
+                        &Envelope {
+                            v: 1,
+                            from: me,
+                            kind: "progressack".into(),
+                            payload: serde_json::json!({ "upto": upto }),
+                        },
+                    );
+                    if taken > 0 {
+                        let _ = app.emit("history:changed", &serde_json::json!({ "from": envelope.from, "rows": taken }));
+                        crate::library::spawn_refresh(&app, &state);
+                    }
+                }
+                continue;
+            }
+            if envelope.kind == "progressack" {
+                if crate::historysync::is_companion(&state, &envelope.from) {
+                    let upto = envelope.payload.get("upto").and_then(|v| v.as_i64()).unwrap_or(0);
+                    crate::historysync::set_mark(&state, &envelope.from, "sent_upto", upto);
+                }
+                continue;
+            }
+
+            if envelope.kind == "pairresult" {
+                if match_pair_result(&state, &envelope.from, &envelope.payload) {
+                    crate::commands::announce_wake_address(&state, &envelope.from);
+                    {
+                        let (s, p) = (state.clone(), envelope.from.clone());
+                        std::thread::spawn(move || crate::historysync::push_to(&s, &p));
                     }
                     let peers: Vec<_> = state.with(|s| s.peers.values().cloned().collect());
                     let _ = app.emit("peers:changed", &peers);
@@ -793,6 +855,18 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
     // A paired device is told what to wake this machine by, so that it can
     // when this machine is off. Nothing is sent to one that is not paired.
     crate::commands::announce_wake_address(state, &peer_id);
+
+    // A paired device of this person's: what each has watched goes both ways.
+    if crate::historysync::is_companion(state, &peer_id) {
+        let (s, p) = (state.clone(), peer_id.clone());
+        std::thread::spawn(move || crate::historysync::push_to(&s, &p));
+        let (app, s, p) = (app.clone(), state.clone(), peer_id.clone());
+        tauri::async_runtime::spawn(async move {
+            if crate::historysync::pull_from(&s, &p).await > 0 {
+                crate::library::spawn_refresh(&app, &s);
+            }
+        });
+    }
 
     // A peer we can reach is a library we can read. Theatre showed only local
     // titles until something asked.
@@ -1781,5 +1855,100 @@ mod tests {
         assert_eq!(back.from, "device-1");
         assert_eq!(back.kind, "chat");
         assert_eq!(back.payload["body"], "line one");
+    }
+}
+
+#[cfg(test)]
+mod pairing_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Two devices, each with its own state, doing what the link would carry.
+    fn two() -> (AppState, AppState) {
+        let pc = AppState::new();
+        let phone = AppState::new();
+        pc.with(|s| s.device_id = "pc".into());
+        phone.with(|s| s.device_id = "phone".into());
+        (pc, phone)
+    }
+
+    /// The PC shows a PIN; the phone types it. Returns what each end ended up as.
+    fn pair(pc_own: bool, phone_own: bool, typed: &str) -> (Option<bool>, bool) {
+        let (pc, phone) = two();
+        let pin = crate::commands::begin_pairing(&pc, pc_own);
+        phone.with(|s| s.pair_confirm_companion = phone_own);
+        let typed = if typed.is_empty() { pin } else { typed.to_string() };
+        let sent = json!({ "pin": typed, "companion": phone_own });
+
+        let reply = match_pair_confirm(&pc, "phone", &sent);
+        let accepted = match reply {
+            Some(both) => match_pair_result(&phone, "pc", &json!({ "accepted": true, "companion": both })),
+            None => false,
+        };
+        // Both ends' view of the other.
+        let pc_trusts = pc.with(|s| s.trusted.contains("phone"));
+        let pc_companion = pc.with(|s| s.companions.contains("phone"));
+        let phone_trusts = phone.with(|s| s.trusted.contains("pc"));
+        let phone_companion = phone.with(|s| s.companions.contains("pc"));
+        assert_eq!(pc_trusts, phone_trusts, "trust is mutual or it is not there");
+        assert_eq!(pc_companion, phone_companion, "own-device is mutual or it is not there");
+        (reply, accepted && pc_companion)
+    }
+
+    #[test]
+    fn ticked_on_both_screens_pairs_them_as_your_own_devices() {
+        let (reply, own) = pair(true, true, "");
+        assert_eq!(reply, Some(true));
+        assert!(own);
+    }
+
+    #[test]
+    fn ticked_on_one_screen_only_is_a_plain_trust_and_nobody_gets_the_other_s_storage() {
+        for (pc_own, phone_own) in [(true, false), (false, true)] {
+            let (reply, own) = pair(pc_own, phone_own, "");
+            assert_eq!(reply, Some(false), "paired, but not as an own device");
+            assert!(!own, "pc_own={pc_own} phone_own={phone_own}");
+        }
+    }
+
+    #[test]
+    fn a_wrong_pin_pairs_nothing() {
+        let (reply, own) = pair(true, true, "000000");
+        // (a one in a million chance the real PIN was 000000: ignore it)
+        assert!(reply.is_none() || own);
+    }
+
+    #[test]
+    fn an_empty_pin_never_matches_a_missing_one() {
+        let (pc, _phone) = two();
+        // Nothing is being shown at all.
+        assert_eq!(match_pair_confirm(&pc, "phone", &json!({ "pin": "", "companion": true })), None);
+        assert_eq!(match_pair_confirm(&pc, "phone", &json!({})), None);
+    }
+
+    #[test]
+    fn a_pin_nobody_typed_in_time_is_dead() {
+        let (pc, _phone) = two();
+        pc.with(|s| s.pending_pair = Some(("123456".into(), crate::model::now_ms() - 1)));
+        assert_eq!(match_pair_confirm(&pc, "phone", &json!({ "pin": "123456", "companion": true })), None);
+    }
+
+    #[test]
+    fn a_pin_works_once() {
+        let (pc, _phone) = two();
+        crate::commands::begin_pairing(&pc, true);
+        let pin = pc.with(|s| s.pending_pair.clone().unwrap().0);
+        assert!(match_pair_confirm(&pc, "phone", &json!({ "pin": pin, "companion": true })).is_some());
+        assert!(
+            match_pair_confirm(&pc, "other", &json!({ "pin": pin, "companion": true })).is_none(),
+            "a second device cannot use the same PIN"
+        );
+    }
+
+    #[test]
+    fn a_refusal_changes_nothing() {
+        let (_pc, phone) = two();
+        assert!(!match_pair_result(&phone, "pc", &json!({ "accepted": false, "companion": true })));
+        assert!(!phone.with(|s| s.trusted.contains("pc")));
     }
 }

@@ -790,6 +790,17 @@ export async function handle(cmd: string, args: any): Promise<any> {
         ? [{ deviceId: first.deviceId, name: first.name, companionAt: Date.now() - 3 * 86400_000 }]
         : [];
     }
+    case 'progress_sync_status': {
+      const first = peers[0];
+      return {
+        devices: first && !simCompanionsUnlinked.has(first.deviceId)
+          ? [{ deviceId: first.deviceId, syncedAt: Date.now() - 3 * 60_000, rows: 14, linked: true }]
+          : [],
+        held: 14,
+      };
+    }
+    case 'progress_sync_now':
+      return 3;
     case 'peers_set_companion': {
       if (!args.companion) simCompanionsUnlinked.add(String(args.deviceId));
       return null;

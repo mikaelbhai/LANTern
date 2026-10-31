@@ -82,6 +82,16 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
             before REAL NOT NULL
         );
 
+        -- What each paired device has acknowledged of this one's watch history, and
+        -- what was last received from it, so a reconnect sends only what is new.
+        CREATE TABLE IF NOT EXISTS sync_marks (
+            peer_id    TEXT PRIMARY KEY,
+            sent_upto  INTEGER NOT NULL DEFAULT 0,
+            got_upto   INTEGER NOT NULL DEFAULT 0,
+            synced_at  INTEGER NOT NULL DEFAULT 0,
+            rows_total INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE TABLE IF NOT EXISTS calls (
             id          TEXT PRIMARY KEY,
             kind        TEXT NOT NULL,

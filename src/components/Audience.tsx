@@ -518,22 +518,25 @@ export function Audience({ compact = false }: { compact?: boolean }) {
  * comment for why); this device just waits to hear whether its own PIN was
  * the one that matched.
  */
-function PairShowModal({
+export function PairShowModal({
   device,
   onClose,
   onPaired,
+  defaultOwn = false,
 }: {
   device: { deviceId: string; name: string };
   onClose: () => void;
   onPaired: () => void;
+  /** Starts with "my own device" ticked, for the one place that is only ever about those. */
+  defaultOwn?: boolean;
 }) {
   const [pin, setPin] = React.useState<string | null>(null);
-  const [matched, setMatched] = React.useState(false);
+  const [matched, setMatched] = React.useState<{ companion: boolean } | null>(null);
   // Whether the device typing this PIN is one of this person's own. Asked
   // here, by whoever is showing it, because it is their storage that would be
   // opened - and the typing end has to say the same, so neither can open the
   // other's by asking alone.
-  const [own, setOwn] = React.useState(false);
+  const [own, setOwn] = React.useState(defaultOwn);
 
   // Changing the choice starts over with a fresh PIN: the choice travels with
   // the PIN, and a PIN already read out should not quietly mean something
@@ -551,10 +554,10 @@ function PairShowModal({
   }, [own]);
 
   React.useEffect(() => {
-    return on('pair:accepted', (r: { deviceId: string }) => {
+    return on('pair:accepted', (r: { deviceId: string; companion?: boolean }) => {
       if (r.deviceId !== device.deviceId) return;
-      setMatched(true);
-      setTimeout(onPaired, 900);
+      setMatched({ companion: !!r.companion });
+      setTimeout(onPaired, 2600);
     });
   }, [device.deviceId, onPaired]);
 
@@ -562,10 +565,7 @@ function PairShowModal({
     <Modal open onClose={onClose} title={`Pair with ${device.name || 'this device'}`} width="max-w-sm">
       <div className="space-y-4 text-center">
         {matched ? (
-          <div className="py-4">
-            <ShieldCheck size={28} className="mx-auto text-emerald-400 mb-2" />
-            <p className="text-sm font-medium">Paired.</p>
-          </div>
+          <PairedNotice companion={matched.companion} />
         ) : (
           <>
             <p className="text-2xs text-muted leading-relaxed">
@@ -601,18 +601,27 @@ function PairShowModal({
  */
 const PAIR_CONFIRM_TIMEOUT_MS = 8000;
 
-function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: () => void }) {
+export function PairEnterModal({
+  onClose,
+  onPaired,
+  defaultOwn = false,
+}: {
+  onClose: () => void;
+  onPaired: () => void;
+  defaultOwn?: boolean;
+}) {
   const [pin, setPin] = React.useState('');
-  const [state, setState] = React.useState<'idle' | 'trying' | 'failed'>('idle');
-  const [matchedName, setMatchedName] = React.useState<string | null>(null);
+  const [state, setState] = React.useState<'idle' | 'trying' | 'failed' | 'nobody'>('idle');
+  const [matched, setMatched] = React.useState<{ companion: boolean } | null>(null);
   // Said on this end as well as on the one showing the PIN; see PairShowModal.
-  const [own, setOwn] = React.useState(false);
+  const [own, setOwn] = React.useState(defaultOwn);
 
   React.useEffect(() => {
     if (state !== 'trying') return;
-    const off = on('pair:result', () => {
-      setMatchedName('that device');
-      setTimeout(onPaired, 900);
+    const off = on('pair:result', (r: { accepted?: boolean; companion?: boolean }) => {
+      if (r && r.accepted === false) return;
+      setMatched({ companion: !!r?.companion });
+      setTimeout(onPaired, 2600);
     });
     const timer = setTimeout(() => setState('failed'), PAIR_CONFIRM_TIMEOUT_MS);
     return () => {
@@ -624,17 +633,18 @@ function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: 
   const submit = async () => {
     if (pin.length < 4) return;
     setState('trying');
-    await api.peers.pairConfirm(pin, own);
+    // How many devices it was sent to. None is not a wrong PIN, and waiting eight
+    // seconds to say "nothing answered" was a poor way to find out that the other
+    // device was not connected at all.
+    const reached = await api.peers.pairConfirm(pin, own).catch(() => 0);
+    if (!reached) setState('nobody');
   };
 
   return (
     <Modal open onClose={onClose} title="Enter a pairing PIN" width="max-w-sm">
       <div className="space-y-4">
-        {matchedName ? (
-          <div className="py-4 text-center">
-            <ShieldCheck size={28} className="mx-auto text-emerald-400 mb-2" />
-            <p className="text-sm font-medium">Paired.</p>
-          </div>
+        {matched ? (
+          <PairedNotice companion={matched.companion} />
         ) : (
           <>
             <p className="text-2xs text-muted leading-relaxed">
@@ -655,15 +665,49 @@ function PairEnterModal({ onClose, onPaired }: { onClose: () => void; onPaired: 
             >
               {state === 'trying' ? 'Checking…' : 'Pair'}
             </Button>
+            {state === 'nobody' && (
+              <p className="text-2xs text-danger text-center leading-relaxed">
+                No other device is connected to this one right now. Open LANTern on the other
+                device, wait for it to appear in your device list, and try again.
+              </p>
+            )}
             {state === 'failed' && (
-              <p className="text-2xs text-danger text-center">
-                Nothing answered to that PIN. Check it's still showing on the other screen.
+              <p className="text-2xs text-danger text-center leading-relaxed">
+                A device heard it and nothing matched. Check the code is still showing on the other
+                screen (it lasts three minutes) and that you typed it exactly.
               </p>
             )}
           </>
         )}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * What was agreed, said plainly.
+ *
+ * "Paired." was all either dialog said, which left the question that matters
+ * unanswered: pairing as someone's own device needs the switch ticked on both
+ * screens, and one that was ticked on one produces a plain trust with nothing
+ * visibly different - no history following you, no storage browsing.
+ */
+function PairedNotice({ companion }: { companion: boolean }) {
+  return (
+    <div className="py-4 text-center space-y-1.5">
+      <ShieldCheck size={28} className="mx-auto text-emerald-400 mb-2" />
+      <p className="text-sm font-medium">Paired.</p>
+      {companion ? (
+        <p className="text-2xs text-muted leading-relaxed">
+          Linked as one of your own devices. What you have watched will follow you between them.
+        </p>
+      ) : (
+        <p className="text-2xs text-muted leading-relaxed">
+          Paired, but not as one of your own - that needs "This is one of my own devices" switched
+          on at both screens. Until then your watch history stays where it is.
+        </p>
+      )}
+    </div>
   );
 }
 
