@@ -112,7 +112,7 @@ export function Sidebar({
               "which build am I looking at" answerable at a glance, which
               matters while several devices are being updated by hand.
             */}
-            <span className="ml-1.5 text-[10px] font-mono text-muted no-drag" title="Version">
+            <span className="ml-1.5 text-[10.5px] font-brand-mono font-medium text-muted no-drag" title="Version">
               {version}
             </span>
           </>

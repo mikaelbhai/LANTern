@@ -23,6 +23,12 @@ export default {
       fontFamily: {
         sans: ['Geist', 'Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
         mono: ['Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        // The name and the version beside it. Shipped with the app (see the
+        // @font-face rules in index.css) rather than assumed to be installed:
+        // "Geist" above is only a first choice, and on a machine without it the
+        // wordmark fell back to whatever the system had.
+        brand: ['LANTern Geist', 'Geist', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        'brand-mono': ['LANTern Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       fontSize: {
         '2xs': ['11px', '15px'],

@@ -191,4 +191,8 @@ $c.G.DrawString('Theatre on your network', $subFont,
   (New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(200, 190, 200, 220))), 268, 214)
 Save-Png $c (Join-Path $res 'drawable-xhdpi\tv_banner.png')
 
+# The desktop apps' source icon: `npx tauri icon assets/brand/lantern-icon-1024.png` turns
+# it into the .ico, .icns and the sized PNGs under src-tauri/icons.
+Save-Png (Launcher 1024 'phone' 'square' 'nodes') (Join-Path (Join-Path $PSScriptRoot '..') 'assets/brand/lantern-icon-1024.png')
+
 Write-Host 'icons written'

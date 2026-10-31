@@ -1,3 +1,24 @@
+/*
+ * The brand faces: Geist and Geist Mono, latin only, as variable fonts bundled
+ * from node_modules so the wordmark looks the same on every device and needs no
+ * network. Named differently from the stack in tailwind.config.js on purpose -
+ * these are for the name and version only, not a change of face for the app.
+ */
+@font-face {
+  font-family: 'LANTern Geist';
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'LANTern Geist Mono';
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2') format('woff2-variations');
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
