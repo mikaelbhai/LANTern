@@ -107,18 +107,33 @@ pub fn unregister_script() -> Result<String, String> {
 }
 
 /// Whether the task exists. Anybody may ask, so this needs no prompt.
+///
+/// `schtasks /Query` alone is not enough: a task that runs as SYSTEM is readable
+/// only by administrators, so an ordinary user gets "Access is denied" for a
+/// task that is there - the switch was turned on, Windows applied it, and the
+/// app then reported that Windows had not kept the change. The firewall rule is
+/// created and removed together with the task and is readable by anyone, so it
+/// stands in when the task cannot be read.
 #[cfg(windows)]
 pub fn registered() -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::process::Command::new("schtasks")
-        .args(["/Query", "/TN", TASK_NAME])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let ok = |cmd: &mut std::process::Command| {
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    };
+    ok(std::process::Command::new("schtasks").args(["/Query", "/TN", TASK_NAME]))
+        || ok(std::process::Command::new("netsh").args([
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            &format!("name={TASK_NAME}"),
+        ]))
 }
 
 #[cfg(not(windows))]
