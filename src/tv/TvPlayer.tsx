@@ -557,14 +557,15 @@ export function TvPlayer({
           'absolute inset-x-0 top-0 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-200',
           controls && !failed ? 'opacity-100' : 'opacity-0',
         )}
-        style={{ padding: `${u(3)} ${u(4)} ${u(8)}` }}
+        style={{ padding: `${u(3.4)} ${u(5)} ${u(9)}` }}
       >
-        <div className="font-semibold leading-tight truncate" style={{ fontSize: u(3) }}>
-          {item.title}
+        <div className="font-bold leading-tight truncate" style={{ fontSize: u(3.6), letterSpacing: '-0.02em' }}>
+          {item.series ?? item.title}
         </div>
         {item.series && (
-          <div className="text-white/70 truncate" style={{ fontSize: u(1.9), marginTop: u(0.5) }}>
-            {item.series} · Season {item.season ?? 1}, Episode {item.episode ?? 1}
+          <div className="text-white/70 truncate font-medium" style={{ fontSize: u(2), marginTop: u(0.5) }}>
+            S{item.season ?? 1}, E{item.episode ?? 1}
+            {item.title && item.title !== item.series ? ` · ${item.title}` : ''}
           </div>
         )}
       </div>
@@ -579,8 +580,8 @@ export function TvPlayer({
       >
         {menu ? (
           <div
-            className="mx-auto rounded-2xl bg-black/75 backdrop-blur-md border border-white/10"
-            style={{ width: u(46), padding: u(1.2) }}
+            className="mx-auto bg-neutral-900/95 border border-white/10"
+            style={{ width: u(46), padding: u(1.2), borderRadius: u(2) }}
           >
             <div className="text-white/60 uppercase tracking-wider" style={{ fontSize: u(1.5), padding: `${u(0.6)} ${u(1.4)}` }}>
               {menu === 'subs' ? 'Subtitles' : 'Audio'}
@@ -605,62 +606,62 @@ export function TvPlayer({
           </div>
         ) : (
           <>
-            {/* The bar. Taller and brighter when it has the focus. */}
+            {/* The bar: thin and white, thicker with the cursor on it. */}
             <div
               className="relative rounded-full bg-white/25 transition-all"
-              style={{ height: barFocus ? u(1.1) : u(0.55) }}
+              style={{ height: barFocus ? u(1) : u(0.6) }}
             >
-              <div className="absolute inset-y-0 left-0 rounded-full bg-white/45" style={{ width: `${donePct}%` }} />
-              <div className="absolute inset-y-0 left-0 rounded-full bg-gold" style={{ width: `${pct}%` }} />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-white/40" style={{ width: `${donePct}%` }} />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-white" style={{ width: `${pct}%` }} />
               {barFocus && (
                 <span
-                  className="absolute top-1/2 rounded-full bg-white ring-4 ring-gold/60"
+                  className="absolute top-1/2 rounded-full bg-white"
                   style={{
                     left: `${pct}%`,
-                    width: u(2.2),
-                    height: u(2.2),
+                    width: u(2.4),
+                    height: u(2.4),
                     transform: 'translate(-50%, -50%)',
+                    boxShadow: '0 0.3rem 1.2rem rgba(0,0,0,0.6)',
                   }}
                 />
               )}
             </div>
-            <div className="flex items-center justify-between tabular-nums text-white/80" style={{ fontSize: u(1.9), marginTop: u(1.2) }}>
-              <span className={cn(scrub !== null && 'text-gold font-semibold')}>{clock(shown)}</span>
-              <span className="text-white/60">
-                {duration > 0 ? `${runtime(Math.max(0, duration - shown))} left` : ''}
-              </span>
+            <div className="flex items-center justify-between tabular-nums" style={{ fontSize: u(1.8), marginTop: u(1.3) }}>
+              <span className={cn(scrub !== null ? 'text-white font-semibold' : 'text-white/80')}>{clock(shown)}</span>
+              <span className="text-white/60">{duration > 0 ? `-${clock(Math.max(0, duration - shown))}` : ''}</span>
             </div>
 
             {buttons.length > 0 && (
-              <div className="flex items-center justify-center" style={{ gap: u(1.6), marginTop: u(2) }}>
+              <div className="flex items-center justify-center" style={{ gap: u(1.6), marginTop: u(1.8) }}>
                 {buttons.map((b, i) => {
                   const focused = zone === 'buttons' && i === button;
                   return (
                     <div
                       key={b.id}
                       className={cn(
-                        'flex items-center rounded-full transition-all duration-150',
-                        focused ? 'bg-gold text-on-gold font-semibold scale-105 shadow-glow' : 'bg-white/12 text-white/90',
+                        'tv-lift flex items-center justify-center rounded-full',
+                        focused ? 'bg-white text-black font-semibold' : 'bg-white/20 text-white',
                       )}
-                      style={{ height: u(5.4), paddingInline: u(2.4), gap: u(1.1), fontSize: u(2) }}
+                      style={{
+                        height: u(5.6),
+                        minWidth: u(5.6),
+                        paddingInline: focused ? u(2.4) : 0,
+                        gap: u(1.1),
+                        fontSize: u(2),
+                        transform: focused ? 'scale(1.08)' : 'scale(1)',
+                        boxShadow: focused ? '0 0.8rem 2rem rgba(0,0,0,0.55)' : undefined,
+                      }}
                     >
                       {React.cloneElement(b.icon as React.ReactElement, {
-                        style: { width: u(2.4), height: u(2.4) },
+                        style: { width: u(2.6), height: u(2.6) },
                         fill: b.id === 'subs' || b.id === 'audio' ? 'none' : 'currentColor',
                       })}
-                      <span className="whitespace-nowrap">{b.label}</span>
+                      {focused && <span className="whitespace-nowrap">{b.label}</span>}
                     </div>
                   );
                 })}
               </div>
             )}
-
-            <div className="flex justify-center text-white/45" style={{ fontSize: u(1.5), marginTop: u(1.8) }}>
-              {playing ? <Pause style={{ width: u(1.6), height: u(1.6) }} /> : <Play style={{ width: u(1.6), height: u(1.6) }} />}
-              <span style={{ marginLeft: u(0.8) }}>
-                OK {playing ? 'pauses' : 'plays'} · ◀ ▶ {zone === 'bar' ? 'scrub' : 'move'} · Back {zone === 'hidden' ? 'leaves' : 'hides this'}
-              </span>
-            </div>
           </>
         )}
       </div>

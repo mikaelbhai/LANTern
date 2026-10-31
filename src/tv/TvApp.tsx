@@ -3,10 +3,19 @@ import React from 'react';
 import { api, on } from '../lib/bridge';
 import { claimArrowKeys } from '../lib/tv';
 import { useStore } from '../lib/store';
+import { useBackDismiss } from '../lib/hooks';
+import { emptyOverrides, groupLibrary } from '../lib/collections';
+import { mergeOverrides, usePeerOverrides } from '../lib/peerCollections';
 import type { MediaItem } from '../lib/types';
+import { TvDetail } from './TvDetail';
+import { TvDevices } from './TvDevices';
 import { TvExitPrompt, useRootBack } from './TvExit';
-import { TvLibrary } from './TvLibrary';
+import { TvGrid } from './TvGrid';
+import { TvEmpty, TvHome } from './TvLibrary';
 import { TvPlayer } from './TvPlayer';
+import { TABS, TAB_STOPS, TvTabs } from './TvTabs';
+import { intentOf } from './remote';
+import { movieTiles, showTiles, type Tile } from './tvShelves';
 import { UNIT } from './units';
 
 /**
@@ -20,7 +29,7 @@ import { UNIT } from './units';
 const LOOK_FOR_MS = 20_000;
 
 /**
- * LANTV: the shelf and the player, and nothing else.
+ * LANTV: a bar of tabs over a page, a page for each title, and the player.
  *
  * No chat, calls, files, games, settings or network screens; none of them can
  * be reached from a remote and none belongs on a television. Anything that
@@ -28,21 +37,28 @@ const LOOK_FOR_MS = 20_000;
  * where it arrives (see the `isTv()` guards in the store) so there is nothing
  * to draw here for it.
  *
- * The player is always full screen and always on top of the shelf. The shelf
- * stays mounted underneath, so where you were in it is where you are when the
- * film ends.
+ * Where the cursor is - the bar or the page - is held here; each page handles
+ * its own keys while it has it. The player is always full screen and always on
+ * top, and the pages stay mounted underneath, so where you were is where you
+ * are when the film ends.
  *
- * Back unwinds one thing at a time: the menu, the controls, the film, the
- * episode list - and then, rather than leaving the app on the next press, asks.
- * Holding Back asks from anywhere.
+ * Back unwinds one thing at a time: the menu, the controls, the film, a
+ * title's page, the page back to the bar - and then, rather than leaving the
+ * app on the next press, asks. Holding Back asks from anywhere.
  */
 export function TvApp() {
   const [items, setItems] = React.useState<MediaItem[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [settled, setSettled] = React.useState(false);
   const [playing, setPlaying] = React.useState<MediaItem | null>(null);
+  const [detail, setDetail] = React.useState<Tile | null>(null);
   const [leaving, setLeaving] = React.useState(false);
+  const [stop, setStop] = React.useState(0);
+  const [zone, setZone] = React.useState<'tabs' | 'page'>('page');
+  const [busy, setBusy] = React.useState(false);
   const peers = useStore((s) => s.peers);
+
+  const tab = TABS[Math.min(stop, TABS.length - 1)].id;
 
   const load = React.useCallback(async () => {
     try {
@@ -93,31 +109,118 @@ export function TvApp() {
   useRootBack(() => setLeaving(true));
   React.useEffect(() => on('tv:backhold', () => setLeaving(true)), []);
 
-  const devices = React.useMemo(
-    () => Object.values(peers).map((p) => p.name).filter(Boolean),
-    [peers],
+  // A title's page closes first; then the page gives the cursor back to the bar.
+  useBackDismiss(!!detail, () => setDetail(null));
+  useBackDismiss(zone === 'page' && !detail, () => setZone('tabs'));
+
+  const peerList = React.useMemo(() => Object.values(peers), [peers]);
+  const devices = React.useMemo(() => peerList.map((p) => p.name).filter(Boolean), [peerList]);
+
+  const peerOverrides = usePeerOverrides();
+  const grouping = React.useMemo(
+    () => groupLibrary(items, mergeOverrides(peerOverrides, emptyOverrides())),
+    [items, peerOverrides],
   );
+  const movies = React.useMemo(() => movieTiles(grouping), [grouping]);
+  const shows = React.useMemo(() => showTiles(grouping), [grouping]);
+
+  const rescan = React.useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    // Never shorter than a moment, or a refresh that answers at once looks like a
+    // press that did nothing.
+    const minimum = new Promise((done) => window.setTimeout(done, 700));
+    try {
+      await Promise.all([
+        (async () => {
+          // Ask every device again, then read what came back.
+          await api.net.refresh().catch(() => undefined);
+          await api.media.scan().catch(() => undefined);
+          await load();
+        })(),
+        minimum,
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, load]);
+  const rescanRef = React.useRef(rescan);
+  rescanRef.current = rescan;
+
+  const open = React.useCallback((t: Tile) => setDetail(t), []);
+  const up = React.useCallback(() => setZone('tabs'), []);
+
+  const barActive = zone === 'tabs' && !detail && !playing && !leaving;
+  const pageActive = zone === 'page' && !detail && !playing && !leaving;
+  const empty = !items.length;
+
+  // The bar's keys. Moving across it changes the page at once.
+  const bar = React.useRef({ stop, barActive, pageActive, empty });
+  bar.current = { stop, barActive, pageActive, empty };
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const b = bar.current;
+      const intent = intentOf(e);
+      if (!intent || intent === 'back') return;
+      if (b.barActive) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (intent === 'left') setStop(Math.max(0, b.stop - 1));
+        else if (intent === 'right') setStop(Math.min(TAB_STOPS - 1, b.stop + 1));
+        else if (intent === 'down') setZone('page');
+        else if (intent === 'ok' && b.stop === TABS.length) void rescanRef.current();
+        return;
+      }
+      // Nothing to show: Refresh is all there is on the page.
+      if (b.pageActive && b.empty) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (intent === 'ok') void rescanRef.current();
+        else if (intent === 'up') setZone('tabs');
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+
+  const searching = loading || (!settled && empty);
 
   return (
     <div
-      className="cinema fixed inset-0 bg-black text-white overflow-hidden select-none"
+      className="cinema tv-apple fixed inset-0 bg-black text-white overflow-hidden select-none"
       style={{ ['--u' as string]: UNIT, cursor: 'none' }}
     >
       <div className={playing ? 'invisible h-full' : 'h-full'}>
-        <TvLibrary
-          items={items}
-          loading={loading || (!settled && items.length === 0)}
-          devices={devices}
-          active={!playing && !leaving}
-          onPlay={setPlaying}
-          onRescan={async () => {
-            // Ask every device again, then read what came back.
-            await api.net.refresh().catch(() => undefined);
-            await api.media.scan().catch(() => undefined);
-            await load();
-          }}
-        />
+        <div className="relative h-full">
+          <div key={tab} className="tv-fade-in h-full">
+            {empty && tab !== 'devices' ? (
+              <TvEmpty loading={searching} busy={busy} devices={devices} focused={pageActive} />
+            ) : tab === 'home' ? (
+              <TvHome items={items} grouping={grouping} active={pageActive} onPlay={setPlaying} onOpen={open} onUp={up} />
+            ) : tab === 'movies' ? (
+              <TvGrid heading="Movies" tiles={movies} empty="No films yet." active={pageActive} onOpen={open} onUp={up} />
+            ) : tab === 'shows' ? (
+              <TvGrid heading="Shows" tiles={shows} empty="No series yet." active={pageActive} onOpen={open} onUp={up} />
+            ) : (
+              <TvDevices
+                peers={peerList}
+                items={items}
+                active={pageActive}
+                busy={busy}
+                onRefresh={() => void rescan()}
+                onUp={up}
+              />
+            )}
+          </div>
+
+          {!detail && (
+            <TvTabs current={tab} stop={stop} focused={barActive} busy={busy} deviceCount={peerList.length} />
+          )}
+        </div>
+
+        {detail && <TvDetail key={detail.key} tile={detail} active={!playing && !leaving} onPlay={setPlaying} />}
       </div>
+
       {playing && (
         <TvPlayer
           key={playing.id}
