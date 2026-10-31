@@ -505,10 +505,21 @@ export function Player({
   );
   // A remuxed stream has no timeline of its own, so seeking re-requests it
   // rather than scrubbing: `sourceOffset` is the point it was asked to begin at.
-  const [sourceOffset, setSourceOffset] = React.useState(0);
+  //
+  // Begins at the saved place when the re-cut stream is the one being asked for
+  // from the start. It used to begin at 0 here and rely on something later
+  // asking for the right place - which only the no-saved-language path did, so
+  // an episode with a remembered audio language (every episode after the first
+  // one chosen by hand) opened at its beginning and ignored where it was left.
+  const [sourceOffset, setSourceOffset] = React.useState(() =>
+    audioTrack >= 0 ? startPosition(item) : 0,
+  );
   // And where it really begins - a keyframe at or before that - which is what
-  // the player's clock is measured from.
-  const [streamStart, setStreamStart] = React.useState(0);
+  // the player's clock is measured from. Until the host says which keyframe,
+  // the requested place is the best guess.
+  const [streamStart, setStreamStart] = React.useState(() =>
+    audioTrack >= 0 ? startPosition(item) : 0,
+  );
   /**
    * How far to move the audio, in milliseconds, positive for later.
    *
@@ -576,8 +587,12 @@ export function Player({
     latestTime.current = begin;
     setDuration(item.durationSec);
     setBuffered(0);
-    setSourceOffset(0);
-    setStreamStart(0);
+    // An episode that opens straight onto the re-cut stream (its audio language
+    // is already chosen) is asked for from where it was left; asked for from 0
+    // it ignored the saved place and began again.
+    const track = matchLanguage(item.audioTracks, item.audioLang);
+    setSourceOffset(track >= 0 ? begin : 0);
+    setStreamStart(track >= 0 ? begin : 0);
     setNatural({ w: 0, h: 0 });
     setUnreachable(false);
     setRepeatA(null);
@@ -589,8 +604,17 @@ export function Player({
     // An answer still in flight belongs to the last episode.
     startGen.current++;
     startWith.current = {};
+    // Which keyframe the stream really begins on, so the clock reads true.
+    if (track >= 0 && begin > 0) startRemuxAt(begin);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
+
+  // The same for the first title this player opens: nothing above runs for it.
+  React.useEffect(() => {
+    const begin = startPosition(item);
+    if (audioTrack >= 0 && begin > 0) startRemuxAt(begin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // True when some track here cannot be decoded on this device — which is a
   // reason to offer the control even with nothing to switch between.
