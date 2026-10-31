@@ -79,6 +79,26 @@ fn parse_args() -> Option<Args> {
     })
 }
 
+/// Appends to `host.log` beside the database. Started at boot as SYSTEM this
+/// process has no console, so stderr is lost and a library that never shows up
+/// on other devices could not be explained. Kept short: it is rewritten from
+/// scratch once it passes 64 KB.
+fn log(data_dir: &std::path::Path, message: &str) {
+    use std::io::Write;
+    eprintln!("lantern-host: {message}");
+    let path = data_dir.join("host.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 64 * 1024).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "{secs} {message}");
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let Some(args) = parse_args() else {
@@ -127,10 +147,13 @@ async fn main() {
     // Listed on the network while there is no app to list it. Kept until this
     // function returns, when dropping it tells everyone the library has gone.
     let _announcement = if args.announce {
-        match lantern_lib::bootstart::announce(&args.data_dir, &args.name, &args.who, args.port) {
+        let log_dir = args.data_dir.clone();
+        match lantern_lib::bootstart::announce(&args.data_dir, &args.name, &args.who, args.port, move |m| {
+            log(&log_dir, &m)
+        }) {
             Ok(a) => Some(a),
             Err(e) => {
-                eprintln!("lantern-host: could not announce: {e}");
+                log(&args.data_dir, &format!("could not announce: {e}"));
                 None
             }
         }
@@ -138,7 +161,7 @@ async fn main() {
         None
     };
 
-    eprintln!("lantern-host: serving {live} folder(s) on port {}", args.port);
+    log(&args.data_dir, &format!("serving {live} folder(s) on port {}", args.port));
 
     // The app that launched this is usually still exiting, so the port is
     // still held for a moment. Waiting beats failing and leaving nothing up.
@@ -148,7 +171,7 @@ async fn main() {
             r = hosting::serve(state.clone(), args.port) => r,
             // A permit is kept if this arrives while sleeping between tries.
             _ = handover.notified() => {
-                eprintln!("lantern-host: handing over to the app");
+                log(&args.data_dir, "handing over to the app");
                 break;
             }
         };

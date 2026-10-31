@@ -220,32 +220,50 @@ impl Drop for Announcement {
 /// the network changes.
 ///
 /// At boot the network is often not up yet, and a laptop moves between them;
-/// both look like a different set of addresses, so it is checked every few
-/// seconds and re-announced when it differs.
-pub fn announce(data_dir: &Path, instance: &str, who: &str, port: u16) -> anyhow::Result<Announcement> {
+/// both look like a different set of addresses. So nothing is announced until
+/// there is an address, and the announcement is redone whenever the set
+/// differs from what was last announced *successfully* - a registration that
+/// failed is tried again on the next tick instead of being counted as done,
+/// which at boot left the library unlisted for good.
+///
+/// `log` is where the outcome goes: a process started as SYSTEM has no console
+/// and its stderr goes nowhere, so without it there is no way to tell why a
+/// library never appeared.
+pub fn announce(
+    data_dir: &Path,
+    instance: &str,
+    who: &str,
+    port: u16,
+    log: impl Fn(String) + Send + 'static,
+) -> anyhow::Result<Announcement> {
     let device_id = crate::identity::load_or_create(data_dir);
     let daemon = ServiceDaemon::new()?;
-    let addresses = current_addresses();
-    crate::discovery::register_host(&daemon, &device_id, instance, who, &addresses, port)?;
 
     let stop = Arc::new(AtomicBool::new(false));
     {
         let (daemon, stop) = (daemon.clone(), stop.clone());
         let (instance, who) = (instance.to_string(), who.to_string());
         std::thread::spawn(move || {
-            let mut announced = addresses;
+            let mut announced: Vec<String> = Vec::new();
+            let mut waited = false;
             while !stop.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_secs(10));
                 let now = current_addresses();
-                if now != announced && !now.is_empty() {
-                    crate::discovery::withdraw(&daemon, &instance);
-                    if let Err(e) =
-                        crate::discovery::register_host(&daemon, &device_id, &instance, &who, &now, port)
-                    {
-                        eprintln!("could not re-announce after a network change: {e}");
+                if now.is_empty() {
+                    if !waited {
+                        log("no network address yet; waiting to announce".into());
+                        waited = true;
                     }
-                    announced = now;
+                } else if now != announced {
+                    crate::discovery::withdraw(&daemon, &instance);
+                    match crate::discovery::register_host(&daemon, &device_id, &instance, &who, &now, port) {
+                        Ok(()) => {
+                            log(format!("announced on {}", now.join(", ")));
+                            announced = now;
+                        }
+                        Err(e) => log(format!("could not announce on {}: {e}", now.join(", "))),
+                    }
                 }
+                std::thread::sleep(Duration::from_secs(5));
             }
         });
     }
