@@ -4918,7 +4918,29 @@ pub async fn files_stage(
         // descriptor beside it is what actually gets read.
         let key = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
         let size = meta.len();
-        let name = crate::transfers::name_from_uri(&source);
+        // Ask the provider first; the URI only knows a name when the provider
+        // happened to put one in it, and the Downloads and Media providers do
+        // not - those files went out called "file".
+        let name = crate::apkinstall::with_activity(|env, class| {
+            let arg = env.new_string(&source).ok()?;
+            let out = env
+                .call_static_method(
+                    class,
+                    "displayName",
+                    "(Ljava/lang/String;)Ljava/lang/String;",
+                    &[jni::objects::JValue::Object(&arg)],
+                )
+                .ok()?
+                .l()
+                .ok()?;
+            if out.is_null() {
+                return None;
+            }
+            let text: String = env.get_string(&jni::objects::JString::from(out)).ok()?.into();
+            crate::transfers::clean_display_name(&text)
+        })
+        .flatten()
+        .unwrap_or_else(|| crate::transfers::name_from_uri(&source));
 
         state.with(|s| {
             s.staged.insert(

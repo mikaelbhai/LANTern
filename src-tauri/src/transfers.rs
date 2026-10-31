@@ -1079,6 +1079,29 @@ pub fn name_from_uri(uri: &str) -> String {
         .collect()
 }
 
+/// A name the provider gave, made safe to write to disk.
+///
+/// Unlike `name_from_uri` this is not guessing: it is what the file is called,
+/// so it is kept whole - no extension required - and only made safe.
+pub fn clean_display_name(raw: &str) -> Option<String> {
+    let leaf = raw.rsplit(['/', '\\']).next().unwrap_or(raw).trim();
+    if leaf.is_empty() || leaf == "." || leaf == ".." {
+        return None;
+    }
+    let safe: String = leaf.replace(':', "_").replace("..", "_").chars().filter(|c| !c.is_control()).collect();
+    // Cut the stem, never the extension: a name that loses its ending is the
+    // fault this exists to prevent.
+    if safe.chars().count() <= 120 {
+        return Some(safe);
+    }
+    let (stem, ext) = match safe.rfind('.') {
+        Some(i) if safe.chars().count() - safe[..i].chars().count() <= 16 => safe.split_at(i),
+        _ => (safe.as_str(), ""),
+    };
+    let keep = 120usize.saturating_sub(ext.chars().count());
+    Some(format!("{}{}", stem.chars().take(keep).collect::<String>(), ext))
+}
+
 /// Turns `%20` and friends back into characters.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
@@ -1101,7 +1124,30 @@ fn percent_decode(text: &str) -> String {
 
 #[cfg(test)]
 mod name_tests {
-    use super::name_from_uri;
+    use super::{clean_display_name, name_from_uri};
+
+    #[test]
+    fn a_provider_name_is_kept_whole() {
+        assert_eq!(clean_display_name("Inglourious Basterds (2009).mkv").unwrap(), "Inglourious Basterds (2009).mkv");
+        // No extension is still the name it was given.
+        assert_eq!(clean_display_name("README").unwrap(), "README");
+    }
+
+    #[test]
+    fn a_provider_name_cannot_climb_out_of_the_folder() {
+        assert_eq!(clean_display_name("../../etc/passwd").unwrap(), "passwd");
+        assert_eq!(clean_display_name("a:b.txt").unwrap(), "a_b.txt");
+        assert!(clean_display_name("..").is_none());
+        assert!(clean_display_name("  ").is_none());
+    }
+
+    #[test]
+    fn a_long_provider_name_loses_its_stem_not_its_ending() {
+        let long = format!("{}.mkv", "x".repeat(300));
+        let name = clean_display_name(&long).unwrap();
+        assert_eq!(name.chars().count(), 120);
+        assert!(name.ends_with(".mkv"));
+    }
 
     #[test]
     fn a_real_name_is_kept() {

@@ -28,6 +28,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
@@ -791,6 +792,22 @@ class MainActivity : TauriActivity() {
      * Leaving the mode set keeps the phone in call routing afterwards, which
      * is how a device ends up playing music through the earpiece.
      */
+    /**
+     * What the provider says a picked file is called.
+     *
+     * A `content://` URI is not a name: from the Downloads and Media providers
+     * it ends in an opaque id (`msf:1234`, `image:42`), so a name read out of
+     * the URI text came to nothing and the file was sent as "file". Every
+     * document provider answers DISPLAY_NAME, which is the one place the real
+     * name is kept.
+     */
+    @JvmStatic
+    fun displayName(uri: String): String? = runCatching {
+      val ctx = appContext ?: return null
+      ctx.contentResolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()
+
     /**
      * Whether Android's battery optimizer is currently free to doze this
      * process. The foreground service is what is supposed to keep LANTern
