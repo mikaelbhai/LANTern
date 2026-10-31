@@ -34,6 +34,8 @@ android {
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "true"
         manifestPlaceholders["appLabel"] = if (isTvBuild) "LANTV" else "LANTern"
+        manifestPlaceholders["appIcon"] = if (isTvBuild) "@mipmap/ic_launcher_tv" else "@mipmap/ic_launcher"
+        manifestPlaceholders["appRoundIcon"] = if (isTvBuild) "@mipmap/ic_launcher_tv_round" else "@mipmap/ic_launcher_round"
         applicationId = if (isTvBuild) "app.lantern.tv" else "app.lantern.desktop"
         minSdk = 24
         targetSdk = 36
@@ -66,6 +68,8 @@ android {
             // A build type's placeholders replace the defaults wholesale, so
             // the label has to be repeated here or the TV build loses its name.
             manifestPlaceholders["appLabel"] = if (isTvBuild) "LANTV" else "LANTern"
+            manifestPlaceholders["appIcon"] = if (isTvBuild) "@mipmap/ic_launcher_tv" else "@mipmap/ic_launcher"
+            manifestPlaceholders["appRoundIcon"] = if (isTvBuild) "@mipmap/ic_launcher_tv_round" else "@mipmap/ic_launcher_round"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false

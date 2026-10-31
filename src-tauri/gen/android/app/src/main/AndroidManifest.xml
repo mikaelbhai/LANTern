@@ -61,7 +61,8 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:icon="@mipmap/ic_launcher"
+        android:icon="${appIcon}"
+        android:roundIcon="${appRoundIcon}"
         android:label="${appLabel}"
         android:theme="@style/Theme.lantern"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
