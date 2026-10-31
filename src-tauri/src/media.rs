@@ -1446,6 +1446,29 @@ mod tests {
         }
     }
 
+    /// Files from the library this was reported from, by their path under the
+    /// share. Each arrived on screen with its release tags, or as twelve films
+    /// instead of twelve episodes.
+    #[test]
+    fn the_reported_library_reads_as_it_should() {
+        let film = |rel: &str| {
+            let p = parse_title(rel);
+            (p.title, p.kind, p.series, p.season, p.episode)
+        };
+        assert_eq!(
+            film("Iron Man 2 (2010) [1080p]/Iron.Man.2.2010.1080p.BrRip.x264.YIFY.mp4"),
+            ("Iron Man 2".to_string(), "film", None, None, None)
+        );
+        assert_eq!(
+            film("Thunderbolts (2025) [REPACK] [1080p] [WEBRip] [x265] [10bit] [5.1] [YTS.MX]/Thunderbolts.2025.REPACK.1080p.WEBRip.x265.10bit.AAC5.1-[YTS.MX].mp4"),
+            ("Thunderbolts".to_string(), "film", None, None, None)
+        );
+        let ep = film("Shows/Jaadugar A Witch In Mongolia/Jaadugar A Witch In Mongolia Episode 9 In HD Online For Free - Animenosub.mp4");
+        assert_eq!(ep.1, "episode", "{ep:?}");
+        assert_eq!(ep.2.as_deref(), Some("Jaadugar A Witch In Mongolia"), "{ep:?}");
+        assert_eq!(ep.4, Some(9), "{ep:?}");
+    }
+
     /// A film named after a future year is named, not dated. This is the one
     /// case where dropping the number deletes the title instead of tidying
     /// it, so it survives even with release tags stacked behind it.

@@ -96,9 +96,23 @@ export function MessageItem({
   const [editing, setEditing] = React.useState(false);
   const [editValue, setEditValue] = React.useState(m.body);
   const [copied, setCopied] = React.useState(false);
-  // Tapping a message picks it out of the run, which is how you keep your
-  // place in a long conversation on a phone where hovering does not exist.
-  const [focused, setFocused] = React.useState(false);
+  // On a touch screen there is no hover, so a tap is what brings up the bar of
+  // things that can be done to a message. It used to paint the message green
+  // and do nothing else - and a mouse click did the same, and the colour
+  // stayed on every message that had been clicked.
+  const [tapped, setTapped] = React.useState(false);
+  const pointerKind = React.useRef<string>('mouse');
+  const rowRef = React.useRef<HTMLDivElement | null>(null);
+
+  // A tap anywhere else puts it away again, so only one message has its bar up.
+  React.useEffect(() => {
+    if (!tapped) return;
+    const away = (e: PointerEvent) => {
+      if (!rowRef.current?.contains(e.target as Node)) setTapped(false);
+    };
+    document.addEventListener('pointerdown', away, true);
+    return () => document.removeEventListener('pointerdown', away, true);
+  }, [tapped]);
 
   /*
    * Long-press to select, touch only.
@@ -213,7 +227,11 @@ export function MessageItem({
         if (!menuOpen && !pickerOpen) setPickerOpen(false);
         cancelLongPress();
       }}
-      onPointerDown={startLongPress}
+      ref={rowRef}
+      onPointerDown={(e) => {
+        pointerKind.current = e.pointerType;
+        startLongPress(e);
+      }}
       onPointerUp={cancelLongPress}
       onPointerMove={cancelLongPress}
       onContextMenu={(e) => {
@@ -228,17 +246,16 @@ export function MessageItem({
           longPressFired.current = false;
           return;
         }
-        selectMode ? onToggleSelect?.() : setFocused((f) => !f);
+        if (selectMode) onToggleSelect?.();
+        // A mouse has the hover bar and right-click; only a finger needs this.
+        else if (pointerKind.current === 'touch' || pointerKind.current === 'pen') setTapped((v) => !v);
       }}
       className={cn(
         'group relative flex gap-2.5 px-4 transition-colors selectable',
         pad,
         grouped ? 'mt-0' : 'mt-2',
         mentionsMe && 'bg-gold/[0.06] border-l-2 border-gold -ml-[2px] pl-[calc(1rem-2px)]',
-        // Tapping picks a message out of the run. On a phone there is no
-        // hover, so without this there is no way to say "this one".
-        focused && !mentionsMe && 'bg-gold/[0.08] ring-1 ring-inset ring-gold/25',
-        hovered && !focused && !mentionsMe && 'bg-raised/40',
+        hovered && !mentionsMe && 'bg-raised/40',
         selected && 'bg-gold/[0.10] ring-1 ring-inset ring-gold/30',
         selectMode && 'cursor-pointer',
       )}
@@ -410,7 +427,7 @@ export function MessageItem({
 
       {/* hover action bar */}
       <AnimatePresence>
-        {(hovered || menuOpen || pickerOpen) && !m.deleted && !selectMode && (
+        {(hovered || tapped || menuOpen || pickerOpen) && !m.deleted && !selectMode && (
           <motion.div
             initial={{ opacity: 0, y: -3 }}
             animate={{ opacity: 1, y: 0 }}
