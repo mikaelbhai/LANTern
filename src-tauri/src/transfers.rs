@@ -396,7 +396,7 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
 
     set_state(&app, &state, &transfer_id, "active", have);
 
-    let result = stream_to_file(&app, &state, &transfer_id, &url, &target, have, size, None).await;
+    let result = stream_to_file(&|| emit_one(&app, &state, &transfer_id), &state, &transfer_id, &url, &target, have, size, None).await;
 
     match result {
         Ok(total) => {
@@ -456,7 +456,10 @@ pub async fn accept(app: AppHandle, state: AppState, transfer_id: String) {
 
 /// Streams the body to disk, appending when resuming.
 async fn stream_to_file(
-    app: &AppHandle,
+    // How to tell the window that something moved. A closure, not the app
+    // handle: this is the part worth testing (pausing, resuming from the byte
+    // reached) and a test has no window to hand it.
+    emit: &(dyn Fn() + Send + Sync),
     state: &AppState,
     transfer_id: &str,
     url: &str,
@@ -579,7 +582,7 @@ async fn stream_to_file(
                     t.speed_bps = speed;
                 }
             });
-            emit_one(app, state, transfer_id);
+            emit();
         }
     }
 
@@ -1270,6 +1273,73 @@ fn safe_relative(rel: &str) -> PathBuf {
 /// command that spawns this can hand it back immediately - the frontend
 /// needs it to watch progress before a single byte has moved, the same
 /// reason `files_accept` never waits for `accept` to finish either.
+/// What a sync needs in order to carry on after it has been paused.
+#[derive(Clone)]
+struct SyncJob {
+    item_id: String,
+    video_url: String,
+    /// The path inside the synced share, as the sender listed it.
+    rel: String,
+    subtitle_urls: Vec<String>,
+    min_age: Option<u8>,
+    /// Where the finished copy goes, and where it is written until it is whole.
+    target: PathBuf,
+    part: PathBuf,
+    /// The size the listing gave, for a copy made from the file as it is.
+    size: u64,
+    /// Asked for the sound to be converted first.
+    convert: bool,
+    /// The other device could not convert, so the file is taken as it is.
+    plain: bool,
+    /// How long the sender said the copy would be, once it has said.
+    expected: Option<u64>,
+    /// Something is writing to the part file right now.
+    running: bool,
+}
+
+fn sync_jobs() -> &'static Mutex<HashMap<String, SyncJob>> {
+    static JOBS: std::sync::OnceLock<Mutex<HashMap<String, SyncJob>>> = std::sync::OnceLock::new();
+    JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether this transfer is a sync, which pauses, resumes and cancels by its
+/// own rules (see `resume_sync` and `cancel_sync`).
+pub fn is_sync(id: &str) -> bool {
+    sync_jobs().lock().expect("sync jobs poisoned").contains_key(id)
+}
+
+/// The name a copy is written under until it is whole.
+///
+/// Not a video extension, so a rescan while it is still arriving does not list a
+/// half-film as a title - which it did, because the copy was written straight
+/// to its final name.
+fn part_path(target: &Path) -> PathBuf {
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or("video");
+    target.with_file_name(format!("{name}.part"))
+}
+
+/// Removes half-written copies left by a sync that never finished - the app was
+/// closed part-way. Nothing can continue them (the job lived in memory), and
+/// they would only take up space.
+fn sweep_stale_parts(root: &Path) {
+    fn walk(dir: &Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("part") {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    walk(root);
+}
+
+fn converted_address(video_url: &str) -> String {
+    format!("{video_url}{}syncaudio=1", if video_url.contains('?') { '&' } else { '?' })
+}
+
 pub async fn sync_media(
     app: AppHandle,
     state: AppState,
@@ -1286,6 +1356,12 @@ pub async fn sync_media(
 ) -> Result<(), String> {
     let share = ensure_synced_share(&app, &state)?;
     let root = PathBuf::from(&share.path);
+    {
+        // Once per run, before the first copy of this one: whatever is still
+        // here from an earlier run was left by a sync that cannot be continued.
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(|| sweep_stale_parts(&root));
+    }
     let target = root.join(safe_relative(&video_rel_path));
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1296,13 +1372,6 @@ pub async fn sync_media(
         .and_then(|n| n.to_str())
         .unwrap_or("video")
         .to_string();
-
-    // The address that asks for the conversion. It is the same file at the same
-    // path with one more word on the end.
-    let converted_url = format!(
-        "{video_url}{}syncaudio=1",
-        if video_url.contains('?') { '&' } else { '?' }
-    );
     let shown_name = if convert_audio {
         format!("{name} (preparing the sound)")
     } else {
@@ -1324,71 +1393,196 @@ pub async fn sync_media(
         local_path: None,
         expires_at: None,
         bundle_id: None,
-        url: Some(if convert_audio { converted_url.clone() } else { video_url.clone() }),
+        url: Some(if convert_audio { converted_address(&video_url) } else { video_url.clone() }),
         via_chat: false,
     };
     state.with(|s| s.transfers.push(transfer));
     emit_one(&app, &state, &transfer_id);
 
-    let ready = convert_audio.then(|| name.clone());
+    sync_jobs().lock().expect("sync jobs poisoned").insert(
+        transfer_id.clone(),
+        SyncJob {
+            item_id,
+            video_url,
+            rel: video_rel_path,
+            subtitle_urls,
+            min_age,
+            part: part_path(&target),
+            target,
+            size,
+            convert: convert_audio,
+            plain: false,
+            expected: None,
+            running: false,
+        },
+    );
+
+    run_sync(app, state, transfer_id).await
+}
+
+/// Starts (or carries on) the download for a sync, once at a time.
+async fn run_sync(app: AppHandle, state: AppState, transfer_id: String) -> Result<(), String> {
+    let job = {
+        let mut jobs = sync_jobs().lock().expect("sync jobs poisoned");
+        let Some(job) = jobs.get_mut(&transfer_id) else {
+            return Err("that sync is gone".into());
+        };
+        if job.running {
+            return Ok(());
+        }
+        job.running = true;
+        job.clone()
+    };
+    let result = sync_download(&app, &state, &transfer_id, job).await;
+    if let Some(job) = sync_jobs().lock().expect("sync jobs poisoned").get_mut(&transfer_id) {
+        job.running = false;
+    }
+    result
+}
+
+fn with_job(id: &str, change: impl FnOnce(&mut SyncJob)) {
+    if let Some(job) = sync_jobs().lock().expect("sync jobs poisoned").get_mut(id) {
+        change(job);
+    }
+}
+
+async fn sync_download(
+    app: &AppHandle,
+    state: &AppState,
+    transfer_id: &str,
+    job: SyncJob,
+) -> Result<(), String> {
+    let name = job
+        .target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("video")
+        .to_string();
+    let emit = || emit_one(app, state, transfer_id);
+
+    let converting = job.convert && !job.plain;
+    let have = std::fs::metadata(&job.part).map(|m| m.len()).unwrap_or(0);
+    set_state(app, state, transfer_id, "active", have);
+
+    let url = if converting { converted_address(&job.video_url) } else { job.video_url.clone() };
     let mut result = stream_to_file(
-        &app,
-        &state,
-        &transfer_id,
-        if convert_audio { &converted_url } else { &video_url },
-        &target,
-        0,
+        &emit,
+        state,
+        transfer_id,
+        &url,
+        &job.part,
+        have,
         // The size of the original means nothing for a converted copy; the
         // sender's own length is read from its answer.
-        if convert_audio { 0 } else { size },
-        ready,
+        if converting { 0 } else { job.size },
+        (converting && have == 0).then(|| name.clone()),
     )
     .await;
+
     // The sharing device cannot convert (no ffmpeg there): the copy is made
     // from the file as it is, which is what syncing did before this existed.
     // It plays, without its sound, and says so.
-    if convert_audio {
+    if converting {
         if let Err(e) = &result {
             if e.to_string().contains("501") {
+                with_job(transfer_id, |j| j.plain = true);
                 state.with(|s| {
                     if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
                         t.name = name.clone();
-                        t.url = Some(video_url.clone());
+                        t.url = Some(job.video_url.clone());
                     }
                 });
-                result = stream_to_file(&app, &state, &transfer_id, &video_url, &target, 0, size, None).await;
+                result =
+                    stream_to_file(&emit, state, transfer_id, &job.video_url, &job.part, 0, job.size, None).await;
             }
         }
     }
-    match &result {
-        Ok(total) => {
-            state.with(|s| {
-                if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
-                    t.sent = *total;
-                    t.state = "done".into();
-                    t.finished_at = Some(now_ms());
-                    t.local_path = Some(target.to_string_lossy().to_string());
-                }
-            });
-        }
-        Err(_) => {
-            state.with(|s| {
-                if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
-                    t.state = "failed".into();
-                }
-            });
+
+    // What the sender said it would send. A copy made again from scratch (the
+    // other device had to convert once more) need not be the same bytes as the
+    // one the first part came from, so a resumed one that comes out a different
+    // length starts over rather than being joined to the wrong file.
+    let announced = state.with(|s| {
+        s.transfers.iter().find(|t| t.id == transfer_id).map(|t| t.size).unwrap_or(0)
+    });
+    if converting && announced > 0 {
+        match job.expected {
+            Some(before) if before != announced && have > 0 => {
+                let _ = std::fs::remove_file(&job.part);
+                with_job(transfer_id, |j| j.expected = None);
+                return Box::pin(sync_download(
+                    app,
+                    state,
+                    transfer_id,
+                    SyncJob { expected: None, ..job },
+                ))
+                .await;
+            }
+            None => with_job(transfer_id, |j| j.expected = Some(announced)),
+            _ => {}
         }
     }
-    emit_one(&app, &state, &transfer_id);
-    result.map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(total) => {
+            // Whole now: take its real name, replacing an earlier copy.
+            let _ = std::fs::remove_file(&job.target);
+            if let Err(e) = std::fs::rename(&job.part, &job.target) {
+                state.with(|s| {
+                    if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
+                        t.state = "failed".into();
+                    }
+                });
+                emit();
+                return Err(format!("could not finish the copy: {e}"));
+            }
+            state.with(|s| {
+                if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
+                    t.sent = total;
+                    t.state = "done".into();
+                    t.finished_at = Some(now_ms());
+                    t.local_path = Some(job.target.to_string_lossy().to_string());
+                }
+            });
+            emit();
+        }
+        Err(e) => {
+            let now = state.with(|s| {
+                s.transfers.iter().find(|t| t.id == transfer_id).map(|t| t.state.clone())
+            });
+            match now.as_deref() {
+                // Cancelled while it ran: nothing worth keeping.
+                Some("cancelled") => {
+                    let _ = std::fs::remove_file(&job.part);
+                    sync_jobs().lock().expect("sync jobs poisoned").remove(transfer_id);
+                    emit();
+                    return Ok(());
+                }
+                // Paused is not failed: the part stays, and resuming continues it.
+                Some("paused") => {
+                    emit();
+                    return Ok(());
+                }
+                _ => {
+                    state.with(|s| {
+                        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
+                            t.state = "failed".into();
+                        }
+                    });
+                    emit();
+                    return Err(e.to_string());
+                }
+            }
+        }
+    }
 
     // Subtitle sidecars: best-effort, and not tracked as transfers of their
     // own - a season sync would otherwise leave twenty tiny completed
     // entries in Files' history for every episode's language tracks.
-    if let Some(dir) = target.parent() {
-        let prefix_len = video_url.rfind('/').map(|i| i + 1).unwrap_or(0);
-        let base = &video_url[..prefix_len];
-        for sub_url in &subtitle_urls {
+    if let Some(dir) = job.target.parent() {
+        let prefix_len = job.video_url.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let base = &job.video_url[..prefix_len];
+        for sub_url in &job.subtitle_urls {
             let Some(rel) = sub_url.strip_prefix(base) else { continue };
             let decoded = percent_decode(rel);
             let sub_target = dir.join(safe_relative(&decoded));
@@ -1396,19 +1590,19 @@ pub async fn sync_media(
                 let _ = std::fs::create_dir_all(parent);
             }
             if let Err(e) = fetch_whole(sub_url, &sub_target).await {
-                eprintln!("sync {item_id}: subtitle {sub_url} failed: {e}");
+                eprintln!("sync {}: subtitle {sub_url} failed: {e}", job.item_id);
             }
         }
     }
 
-    save_synced(&state, &item_id, &target);
+    save_synced(state, &job.item_id, &job.target);
 
     // The host's rating goes with the file. The copy is a title of its own on
     // a share of its own, so nothing linked it to the original and it came out
     // unrated - listed with no age on it, and playable by anyone holding the
     // phone, whatever the host had decided about the film it was copied from.
-    if let Some(age) = min_age {
-        let path = synced_stream_path(&video_rel_path);
+    if let Some(age) = job.min_age {
+        let path = synced_stream_path(&job.rel);
         state.with(|s| {
             s.title_ages.insert(path.clone(), age);
             if let Some(db) = s.db.as_ref() {
@@ -1421,10 +1615,50 @@ pub async fn sync_media(
         });
     }
 
-    let items = crate::media::refresh(&state);
+    sync_jobs().lock().expect("sync jobs poisoned").remove(transfer_id);
+    let items = crate::media::refresh(state);
     let _ = app.emit("media:changed", &items);
 
     Ok(())
+}
+
+/// Carries on a sync that was paused, or retries one that failed.
+///
+/// From the byte the part file reached, by a Range request. If it is already
+/// running (paused and resumed within one chunk) there is nothing to start: the
+/// loop never noticed.
+pub async fn resume_sync(app: AppHandle, state: AppState, id: String) {
+    state.with(|s| {
+        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
+            if matches!(t.state.as_str(), "paused" | "failed" | "queued") {
+                t.state = "active".into();
+            }
+        }
+    });
+    emit_one(&app, &state, &id);
+    let _ = run_sync(app, state, id).await;
+}
+
+/// Stops a sync and throws away what has arrived of it.
+pub fn cancel_sync(app: &AppHandle, state: &AppState, id: &str) {
+    state.with(|s| {
+        if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
+            t.state = "cancelled".into();
+        }
+    });
+    emit_one(app, state, id);
+    let idle = {
+        let mut jobs = sync_jobs().lock().expect("sync jobs poisoned");
+        match jobs.get(id) {
+            // A loop that is running notices and cleans up after itself.
+            Some(job) if job.running => None,
+            Some(_) => jobs.remove(id),
+            None => None,
+        }
+    };
+    if let Some(job) = idle {
+        let _ = std::fs::remove_file(&job.part);
+    }
 }
 
 /// A plain GET to a file, no progress tracking - for the small sidecar files
@@ -1667,5 +1901,164 @@ mod history_tests {
         let loaded = state.with(|s| load_history(s.db.as_ref().unwrap()));
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].state, "done");
+    }
+}
+
+#[cfg(test)]
+mod sync_control_tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A server that honours \`Range: bytes=N-\` and sends in small slices, so a
+    /// pause can land in the middle of the body.
+    async fn range_server(body: Vec<u8>) -> u16 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let from = request
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Range: bytes="))
+                        .and_then(|r| r.split('-').next()?.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let (status, slice) = if from > 0 {
+                        ("206 Partial Content", &body[from..])
+                    } else {
+                        ("200 OK", &body[..])
+                    };
+                    let head = format!("HTTP/1.0 {status}\r\nContent-Length: {}\r\n\r\n", slice.len());
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    for chunk in slice.chunks(32 * 1024) {
+                        if socket.write_all(chunk).await.is_err() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    fn row(id: &str, size: u64) -> Transfer {
+        Transfer {
+            id: id.into(),
+            name: "film.mkv".into(),
+            size,
+            sent: 0,
+            peer_id: String::new(),
+            direction: "in".into(),
+            state: "active".into(),
+            speed_bps: 0,
+            started_at: 0,
+            finished_at: None,
+            mime: "video/x-matroska".into(),
+            local_path: None,
+            expires_at: None,
+            bundle_id: None,
+            url: None,
+            via_chat: false,
+        }
+    }
+
+    fn set(state: &AppState, id: &str, to: &str) {
+        state.with(|s| {
+            if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
+                t.state = to.into();
+            }
+        });
+    }
+
+    /// The point of pausing: what had arrived is kept and the rest is asked for
+    /// from the next byte, and the two halves are the film.
+    #[tokio::test]
+    async fn a_paused_download_continues_from_the_byte_it_reached() {
+        let body: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        let port = range_server(body.clone()).await;
+        let url = format!("http://127.0.0.1:{port}/film.mkv");
+        let dir = std::env::temp_dir().join(format!("lantern-pause-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("film.mkv.part");
+
+        let state = AppState::new();
+        state.with(|s| s.transfers.push(row("t1", body.len() as u64)));
+
+        // Pause shortly after it starts.
+        let pauser = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                set(&state, "t1", "paused");
+            })
+        };
+        let first = stream_to_file(&|| {}, &state, "t1", &url, &part, 0, body.len() as u64, None).await;
+        pauser.await.unwrap();
+        assert!(first.is_err(), "a pause stops the download");
+        let kept = std::fs::metadata(&part).unwrap().len();
+        assert!(kept > 0 && (kept as usize) < body.len(), "it paused part-way: {kept} bytes");
+
+        // Resumed: from where it was.
+        set(&state, "t1", "active");
+        let total = stream_to_file(&|| {}, &state, "t1", &url, &part, kept, body.len() as u64, None)
+            .await
+            .expect("the rest arrives");
+        assert_eq!(total as usize, body.len());
+        assert_eq!(std::fs::read(&part).unwrap(), body, "the two parts make the film, byte for byte");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_download_stops_and_is_not_reported_as_a_failure_to_resume() {
+        let body: Vec<u8> = vec![7; 2_000_000];
+        let port = range_server(body.clone()).await;
+        let url = format!("http://127.0.0.1:{port}/x");
+        let dir = std::env::temp_dir().join(format!("lantern-cancel-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join("x.part");
+        let state = AppState::new();
+        state.with(|s| s.transfers.push(row("t2", body.len() as u64)));
+
+        let canceller = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                set(&state, "t2", "cancelled");
+            })
+        };
+        let result = stream_to_file(&|| {}, &state, "t2", &url, &part, 0, body.len() as u64, None).await;
+        canceller.await.unwrap();
+        assert!(result.is_err());
+        // The state the caller reads to decide what to clean up.
+        let now = state.with(|s| s.transfers[0].state.clone());
+        assert_eq!(now, "cancelled");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_copy_arrives_under_a_name_no_rescan_lists() {
+        let target = Path::new("/synced/Shows/Loki/S01E01.mkv");
+        let part = part_path(target);
+        assert_eq!(part, Path::new("/synced/Shows/Loki/S01E01.mkv.part"));
+        assert_ne!(part.extension().and_then(|e| e.to_str()), Some("mkv"));
+    }
+
+    #[test]
+    fn half_films_left_by_a_closed_app_are_swept_and_whole_ones_are_not() {
+        let dir = std::env::temp_dir().join(format!("lantern-sweep-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("Shows")).unwrap();
+        std::fs::write(dir.join("Shows/a.mkv.part"), b"half").unwrap();
+        std::fs::write(dir.join("Shows/b.mkv"), b"whole").unwrap();
+        std::fs::write(dir.join("c.mkv.part"), b"half").unwrap();
+        sweep_stale_parts(&dir);
+        assert!(!dir.join("Shows/a.mkv.part").exists());
+        assert!(!dir.join("c.mkv.part").exists());
+        assert!(dir.join("Shows/b.mkv").exists(), "a finished copy must survive the sweep");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

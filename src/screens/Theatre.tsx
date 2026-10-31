@@ -19,12 +19,15 @@ import {
   Layers,
   Lock,
   LockOpen,
+  Pause,
   Pencil,
   Search,
   ShieldCheck,
+  Trash2,
   Tv,
   Upload,
   Users,
+  X,
 } from 'lucide-react';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { RotationLock } from '../components/RotationLock';
@@ -1713,31 +1716,89 @@ function SyncControl({
   compact?: boolean;
 }) {
   const transfer = useStore((s) => (transferId ? s.transfers[transferId] : undefined));
-  const active = !!transfer && !['done', 'failed', 'cancelled'].includes(transfer.state);
+  const state = transfer?.state;
+  const paused = state === 'paused';
+  const running = !!transfer && !['done', 'failed', 'cancelled', 'paused'].includes(transfer.state);
+  const icon = compact ? 11 : 13;
   const size = compact ? 'xs' : 'sm';
 
   if (!item.peerId) return null;
 
-  if (active && transfer) {
+  // On its way, or stopped part-way: a way to stop it, to carry on, and to
+  // abandon it. It used to be a disabled button with a percentage on it, so a
+  // copy of a film that was the wrong one, or was eating the Wi-Fi, could only
+  // be waited out.
+  if ((running || paused) && transfer) {
     const pct = transfer.size ? Math.round((transfer.sent / transfer.size) * 100) : 0;
     return (
-      <Button size={size} variant="ghost" disabled icon={<Download size={compact ? 11 : 13} />}>
-        {pct}%
-      </Button>
+      <span className="inline-flex items-center gap-0.5">
+        {/* The percentage lives on the pause button, so a row on a phone keeps to
+            one line instead of pushing its other buttons onto a second. */}
+        <Button
+          size={size}
+          variant="ghost"
+          icon={paused ? <Play size={icon} /> : <Pause size={icon} />}
+          onClick={() => void (paused ? api.files.resume(transfer.id) : api.files.pause(transfer.id))}
+          title={paused ? `Paused at ${pct}% - carry on copying` : `Copying, ${pct}% - pause`}
+          aria-label={paused ? 'Resume sync' : 'Pause sync'}
+        >
+          <span className="tabular-nums">{compact ? `${pct}%` : paused ? `Resume · ${pct}%` : `Pause · ${pct}%`}</span>
+        </Button>
+        <Button
+          size={size}
+          variant="ghost"
+          icon={<X size={icon} />}
+          onClick={() => void api.files.cancel(transfer.id)}
+          title="Stop and discard what has been copied so far"
+          aria-label="Cancel sync"
+        >
+          {compact ? '' : 'Cancel'}
+        </Button>
+      </span>
     );
   }
 
-  if (synced) {
+  if (state === 'failed' && transfer) {
     return (
       <Button
         size={size}
         variant="ghost"
-        icon={<Check size={compact ? 11 : 13} className="text-cyan" />}
-        onClick={() => onRemove(item)}
-        title="Synced to this device — click to remove the local copy"
+        icon={<RefreshCw size={icon} />}
+        onClick={() => void api.files.resume(transfer.id)}
+        title="Copying stopped - try again from where it got to"
       >
-        {compact ? '' : 'Synced'}
+        {compact ? '' : 'Retry'}
       </Button>
+    );
+  }
+
+  // Finished: the tick says so, and the way to get rid of it is a button that
+  // says so too. It used to be the tick itself, with the only hint in a tooltip.
+  if (synced) {
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        <span
+          className="inline-flex items-center gap-1 px-1.5 text-2xs text-cyan"
+          title="A copy is stored on this device"
+        >
+          <Check size={icon} />
+          {compact ? '' : 'Synced'}
+        </span>
+        <Button
+          size={size}
+          variant="ghost"
+          icon={<Trash2 size={icon} />}
+          onClick={() => {
+            if (window.confirm(`Delete the copy of "${item.title}" stored on this device? The original stays where it is.`)) {
+              onRemove(item);
+            }
+          }}
+          title="Delete the copy on this device"
+          aria-label="Delete the synced copy"
+        >
+          {compact ? '' : 'Delete copy'}
+        </Button>
+      </span>
     );
   }
 
@@ -2298,7 +2359,7 @@ function CollectionSheet({
                           the picture, instead of beside the title (where it was
                           cut to "Epis…") or on a line of their own (a row of
                           empty space under a thumbnail). */}
-                      <div className="flex items-center gap-1.5 shrink-0 max-md:col-start-2 max-md:flex-wrap max-md:-ml-1.5">
+                      <div className="flex items-center gap-1.5 shrink-0 max-md:col-start-2 max-md:flex-wrap max-md:gap-0 max-md:-ml-1.5">
                       {orderable && !item.peerId && (
                         <span className="flex flex-col shrink-0">
                           <button

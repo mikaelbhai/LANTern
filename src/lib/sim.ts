@@ -978,7 +978,12 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'files_pause': {
       const t = transfers.get(args.id);
-      if (t && t.state === 'active') t.state = 'paused';
+      if (t && t.state === 'active') {
+        t.state = 'paused';
+        t.speedBps = 0;
+        // As the real command does: the screen learns of it from this.
+        emit('transfer:progress', { ...t });
+      }
       return null;
     }
 

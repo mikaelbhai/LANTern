@@ -1767,6 +1767,12 @@ pub fn files_pause(app: AppHandle, state: State<'_, AppState>, id: String) {
 
 #[tauri::command]
 pub fn files_resume(app: AppHandle, state: State<'_, AppState>, id: String) {
+    // A sync carries on into its own folder, from its own part file.
+    if crate::transfers::is_sync(&id) {
+        let owned = (*state).clone();
+        tauri::async_runtime::spawn(crate::transfers::resume_sync(app, owned, id));
+        return;
+    }
     state.with(|s| {
         if let Some(t) = s.transfers.iter_mut().find(|t| t.id == id) {
             t.state = "queued".into();
@@ -1778,6 +1784,11 @@ pub fn files_resume(app: AppHandle, state: State<'_, AppState>, id: String) {
 
 #[tauri::command]
 pub fn files_cancel(app: AppHandle, state: State<'_, AppState>, id: String) {
+    // A sync has no other end to tell; it throws away the part it had.
+    if crate::transfers::is_sync(&id) {
+        crate::transfers::cancel_sync(&app, &state, &id);
+        return;
+    }
     // Tells the other end too, so a sender stops holding the file open and a
     // receiver stops fetching.
     crate::transfers::cancel_transfer(&app, &state, &id);
