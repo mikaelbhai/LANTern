@@ -645,6 +645,7 @@ pub fn net_add_manual_peer(
         initiated_by: Initiator::Us,
         // Filled in when a link is established; unknown until then.
         local_address: String::new(),
+        host_only: false,
     };
     state.with(|s| s.peers.insert(peer.id.clone(), peer.clone()));
     let _ = app.emit("peer:joined", &peer);
@@ -2055,6 +2056,29 @@ fn host_binary(app: &AppHandle) -> Option<std::path::PathBuf> {
 /// hosting port, and while the app is open it should be the app. Returns
 /// whether one was actually stopped.
 pub fn stop_host_service(app: &AppHandle) -> bool {
+    // Ask first. A host started at boot runs as SYSTEM, which an ordinary user
+    // is not allowed to kill - the taskkill below was refused, the port stayed
+    // held, and the app that had just been signed in to served nothing. Asked
+    // politely it leaves on its own, taking its announcement with it.
+    if let Some(pid_file) = host_pid_file(app) {
+        let port = std::fs::read_to_string(pid_file.with_file_name("host.port"))
+            .ok()
+            .and_then(|t| t.trim().parse::<u16>().ok())
+            .unwrap_or(7981);
+        if crate::bootstart::ask_host_to_leave(port) {
+            let pid = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|t| t.trim().parse::<u32>().ok());
+            for _ in 0..50 {
+                if !pid.map(process_alive).unwrap_or(false) {
+                    let _ = std::fs::remove_file(&pid_file);
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+
     let Some(pid_file) = host_pid_file(app) else {
         return false;
     };
@@ -2103,7 +2127,8 @@ pub fn start_host_service(app: &AppHandle, state: &AppState) -> bool {
     let Ok(dir) = app.path().app_data_dir() else {
         return false;
     };
-    let (port, name) = state.with(|s| (s.net.host_port, s.instance.clone()));
+    let (port, name, who) =
+        state.with(|s| (s.net.host_port, s.instance.clone(), s.display_name.clone()));
 
     let mut cmd = std::process::Command::new(binary);
     cmd.arg("--data-dir")
@@ -2112,6 +2137,11 @@ pub fn start_host_service(app: &AppHandle, state: &AppState) -> bool {
         .arg(port.to_string())
         .arg("--name")
         .arg(&name)
+        // Announced, so the library stays listed on everybody else's Theatre
+        // after the window closes - which "keep serving" always promised and
+        // nothing had been telling the network.
+        .arg("--announce")
+        .args(if who.trim().is_empty() { vec![] } else { vec!["--who".to_string(), who] })
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -2126,6 +2156,36 @@ pub fn start_host_service(app: &AppHandle, state: &AppState) -> bool {
     }
 
     cmd.spawn().is_ok()
+}
+
+/// Whether LANTern's file server starts with the computer, before anybody signs in.
+#[tauri::command]
+pub fn host_boot_status() -> serde_json::Value {
+    serde_json::json!({
+        "supported": cfg!(windows),
+        "registered": crate::bootstart::registered(),
+    })
+}
+
+/// Turns the start-up task on or off. One Windows prompt, which this waits on;
+/// takes effect at the next start of the computer.
+#[tauri::command]
+pub async fn host_boot_set(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    use tauri::Manager;
+    let binary = host_binary(&app).ok_or("the background host program was not found beside LANTern")?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let (port, name, who) =
+        state.with(|s| (s.net.host_port, s.instance.clone(), s.display_name.clone()));
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::bootstart::set(enabled, &binary, &dir, port, &name, &who)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(crate::bootstart::registered())
 }
 
 /// Whether files should keep being served after the window closes.

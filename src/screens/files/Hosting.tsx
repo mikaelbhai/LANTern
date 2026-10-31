@@ -142,6 +142,56 @@ function KeepHosting() {
 }
 
 /**
+ * Serving before anybody has signed in to Windows.
+ *
+ * Wake-on-LAN gets the machine as far as the sign-in screen, and "start at
+ * login" only runs after the PIN - so a PC woken to share its library woke up
+ * to nothing. A start-up task runs the file server alone, as the system, and
+ * the app takes over from it when somebody does sign in.
+ */
+function HostAtBoot() {
+  const [status, setStatus] = React.useState<{ supported: boolean; registered: boolean } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [problem, setProblem] = React.useState('');
+  React.useEffect(() => {
+    void api.service
+      .bootStatus()
+      .then(setStatus)
+      .catch(() => setStatus(null));
+  }, []);
+
+  // Only Windows has a way to run something before anybody is signed in from
+  // here; a switch that does nothing on the others is worse than none.
+  if (!status?.supported || !canHost()) return null;
+
+  const change = (want: boolean) => {
+    setBusy(true);
+    setProblem('');
+    api.service
+      .bootSet(want)
+      .then((registered) => setStatus({ supported: true, registered }))
+      .catch((e) => setProblem(String(e?.message ?? e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="rounded-card border border-edge bg-surface px-3 py-2.5 mb-3 flex items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium">Serve from start-up, before anyone signs in</p>
+        <p className="text-2xs text-muted leading-relaxed mt-0.5">
+          When this PC starts or wakes, the file server runs on its own, so your library is there
+          for other devices even while Windows is waiting at the PIN screen. Opening LANTern after
+          you sign in takes over from it. Needs one Windows permission prompt, and applies from the
+          next start.
+        </p>
+        {problem && <p className="text-2xs text-danger leading-relaxed mt-1">{problem}</p>}
+      </div>
+      <Toggle checked={status.registered} disabled={busy} onChange={change} />
+    </div>
+  );
+}
+
+/**
  * Offering the application itself from the landing page.
  *
  * Somebody who opens this machine's address in a browser is on the network
@@ -595,6 +645,7 @@ export function Hosting() {
         {/* Publishing is exactly where "nobody can reach my files" matters. */}
         <NetworkPrivacy />
         <KeepHosting />
+        <HostAtBoot />
         <OfferTheApp />
         <GuestAccess />
 

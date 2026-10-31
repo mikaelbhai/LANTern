@@ -61,6 +61,11 @@ cannot be monkey-patched, and an empty log from trying proves nothing.
 (`src-tauri/host`), a detached file server that keeps serving published
 folders after the window closes. It links the main crate as a library, which
 is why a few modules there are `pub`.
+`lantern-host --announce` advertises the same device id with TXT `mode=host` (peers
+mark it `host_only` and never dial it), and `GET /host/handover` — loopback only,
+enabled only in that binary — is how the app takes the port from a host running
+as SYSTEM, which `taskkill` cannot touch. `bootstart.rs` registers it as the
+start-up Scheduled Task.
 
 **Three layers, and the boundaries matter.**
 

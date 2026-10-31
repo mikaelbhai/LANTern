@@ -399,7 +399,9 @@ pub async fn refresh_all(app: AppHandle, state: AppState) {
     let mut unreachable: Vec<String> = Vec::new();
 
     for peer in peers {
-        if !links.contains(&peer.device_id) {
+        // Linked, or announcing as a host: with nobody signed in there is no
+        // link to be had, and the library is still served.
+        if !links.contains(&peer.device_id) && !peer.host_only {
             continue;
         }
         // A device can answer on several addresses; the one that responds is

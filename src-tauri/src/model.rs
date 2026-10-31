@@ -88,6 +88,11 @@ pub struct Peer {
     pub trusted: bool,
     pub scope: PeerScope,
     pub initiated_by: Initiator,
+    /// Announced by `lantern-host` with nobody signed in: its library can be
+    /// read over HTTP, and there is no app at the other end to hold a link, so
+    /// dialling it only fails every five seconds.
+    #[serde(default)]
+    pub host_only: bool,
 }
 
 /// Two of this device's interfaces addressing the same network.

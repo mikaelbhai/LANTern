@@ -788,6 +788,13 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                 if !local_address.is_empty() {
                     existing.local_address = local_address.clone();
                 }
+                // A link proves the app is running there now. A host's
+                // announcement can outlive it by a minute in someone's cache,
+                // and would otherwise label a live device "hosting only".
+                existing.host_only = false;
+                if existing.status_message.as_deref() == Some(crate::discovery::HOST_ONLY_NOTE) {
+                    existing.status_message = None;
+                }
                 (existing.clone(), false)
             }
             None => {
@@ -819,6 +826,7 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                     scope: crate::model::PeerScope::Local,
                     initiated_by: crate::model::Initiator::Them,
                     local_address: local_address.clone(),
+                    host_only: false,
                 };
                 s.peers.insert(peer_id.clone(), peer.clone());
                 (peer, true)
@@ -1302,6 +1310,9 @@ pub fn reconcile(app: AppHandle, state: AppState, links: Links) {
                 (
                     s.peers
                         .values()
+                        // Nobody is signed in there to answer a link; the
+                        // library is read over HTTP instead (library.rs).
+                        .filter(|p| !p.host_only)
                         .map(|p| (p.device_id.clone(), p.addresses.clone(), p.port))
                         .collect::<Vec<_>>(),
                     s.net.port,

@@ -42,12 +42,18 @@ struct Args {
     data_dir: PathBuf,
     port: u16,
     name: String,
+    /// Announce on the network, for a host running with no app beside it.
+    announce: bool,
+    /// The person's name, as the app announces it.
+    who: String,
 }
 
 fn parse_args() -> Option<Args> {
     let mut data_dir = None;
     let mut port = 7981u16;
     let mut name = String::from("LANTern");
+    let mut announce = false;
+    let mut who = String::new();
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -55,6 +61,8 @@ fn parse_args() -> Option<Args> {
             "--data-dir" => data_dir = args.next().map(PathBuf::from),
             "--port" => port = args.next()?.parse().ok()?,
             "--name" => name = args.next()?,
+            "--who" => who = args.next()?,
+            "--announce" => announce = true,
             _ => {}
         }
     }
@@ -66,13 +74,17 @@ fn parse_args() -> Option<Args> {
         data_dir: data_dir?,
         port,
         name,
+        announce,
+        who,
     })
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let Some(args) = parse_args() else {
-        eprintln!("usage: lantern-host --data-dir <path> [--port 7981] [--name <device>]");
+        eprintln!(
+            "usage: lantern-host --data-dir <path> [--port 7981] [--name <device>] [--who <person>] [--announce]"
+        );
         std::process::exit(2);
     };
 
@@ -101,9 +113,30 @@ async fn main() {
         return;
     }
 
-    // Record the process so the app can stop it again.
+    // Record the process so the app can stop it again, and the port so it knows
+    // where to ask.
     let pid_file = args.data_dir.join("host.pid");
+    let port_file = args.data_dir.join("host.port");
     let _ = std::fs::write(&pid_file, std::process::id().to_string());
+    let _ = std::fs::write(&port_file, args.port.to_string());
+
+    // Asked to leave by the app that is starting, rather than killed: this may
+    // be running as SYSTEM, which the person signing in cannot kill.
+    let handover = hosting::enable_handover();
+
+    // Listed on the network while there is no app to list it. Kept until this
+    // function returns, when dropping it tells everyone the library has gone.
+    let _announcement = if args.announce {
+        match lantern_lib::bootstart::announce(&args.data_dir, &args.name, &args.who, args.port) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                eprintln!("lantern-host: could not announce: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     eprintln!("lantern-host: serving {live} folder(s) on port {}", args.port);
 
@@ -111,7 +144,15 @@ async fn main() {
     // still held for a moment. Waiting beats failing and leaving nothing up.
     let started = Instant::now();
     loop {
-        match hosting::serve(state.clone(), args.port).await {
+        let served = tokio::select! {
+            r = hosting::serve(state.clone(), args.port) => r,
+            // A permit is kept if this arrives while sleeping between tries.
+            _ = handover.notified() => {
+                eprintln!("lantern-host: handing over to the app");
+                break;
+            }
+        };
+        match served {
             Ok(()) => break,
             Err(e) if started.elapsed() < BIND_TIMEOUT => {
                 eprintln!("lantern-host: port {} busy ({e}); retrying", args.port);
@@ -125,4 +166,5 @@ async fn main() {
     }
 
     let _ = std::fs::remove_file(&pid_file);
+    let _ = std::fs::remove_file(&port_file);
 }

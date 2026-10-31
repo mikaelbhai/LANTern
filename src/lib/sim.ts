@@ -171,6 +171,8 @@ const MEDIA_SEED: Array<
 
 let startupWifi: string | null = null;
 let ratingDefault = 12;
+// Whether the simulated PC is set to serve from start-up.
+let simBootHost = false;
 const ratingAges: { deviceId: string; name: string; maxAge: number }[] = [
   { deviceId: 'peer-nadia', name: 'Nadia', maxAge: 18 },
   { deviceId: 'peer-tomas', name: 'Tomas', maxAge: 7 },
@@ -752,6 +754,13 @@ export async function handle(cmd: string, args: any): Promise<any> {
 
     case 'peers_trusted':
       return [];
+
+    // Start-up hosting: the switch and its Windows prompt, minus the prompt.
+    case 'host_boot_status':
+      return { supported: true, registered: simBootHost };
+    case 'host_boot_set':
+      simBootHost = !!args?.enabled;
+      return simBootHost;
 
     // Companions: one linked device, so the "My devices" list and its storage
     // browser can be exercised without a second machine. A small fake disk,

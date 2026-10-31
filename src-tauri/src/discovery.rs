@@ -16,6 +16,10 @@ use crate::state::AppState;
 
 pub const SERVICE_TYPE: &str = "_lantern._tcp.local.";
 
+/// What a host-only device says about itself, so nobody wonders why there is
+/// no chat or call button that works.
+pub const HOST_ONLY_NOTE: &str = "Hosting only - nobody is signed in";
+
 /// Registers this device and starts emitting peer events to the frontend.
 ///
 /// The returned daemon must be kept alive; dropping it withdraws the service.
@@ -29,7 +33,7 @@ pub fn start(
     port: u16,
 ) -> anyhow::Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new()?;
-    register(&daemon, device_id, instance, who, addresses, port)?;
+    register(&daemon, device_id, instance, who, addresses, port, None)?;
 
     let receiver = daemon.browse(SERVICE_TYPE)?;
     let own_id = device_id.to_string();
@@ -72,9 +76,21 @@ pub fn start(
                         continue;
                     }
 
+                    // `lantern-host` announcing with nobody signed in. A link
+                    // overrules it: the app is plainly running if one is up,
+                    // and a host's record can linger in caches after it left.
+                    let host_only = info.get_property_val_str("mode") == Some("host")
+                        && !state.with(|s| s.links.has(&peer_id));
+
                     let (peer, is_new) = state.with(|s| {
                         match s.peers.get_mut(&peer_id) {
                             Some(existing) => {
+                                existing.host_only = host_only;
+                                if host_only {
+                                    existing.status_message = Some(HOST_ONLY_NOTE.into());
+                                } else if existing.status_message.as_deref() == Some(HOST_ONLY_NOTE) {
+                                    existing.status_message = None;
+                                }
                                 // Same device, possibly on a new interface.
                                 for addr in &found {
                                     if !existing.addresses.contains(addr) {
@@ -83,7 +99,11 @@ pub fn start(
                                 }
                                 existing.name = name.clone();
                                 existing.device_name = device_name.clone();
-                                existing.port = info.get_port();
+                                // A host announces its file port, not the one a link
+                                // is dialled on; keep the app's if it is known.
+                                if !host_only {
+                                    existing.port = info.get_port();
+                                }
                                 existing.last_seen = now_ms();
                                 // Prefer an address we can still reach.
                                 if !found.contains(&existing.ip) {
@@ -113,7 +133,7 @@ pub fn start(
                     latency_ms: -1.0,
                                     loss_pct: 0.0,
                                     status: PeerStatus::Available,
-                                    status_message: None,
+                                    status_message: host_only.then(|| HOST_ONLY_NOTE.to_string()),
                                     last_seen: now_ms(),
                                     // Vouched for only if the host has said
                                     // so. This was `true` for everyone found,
@@ -126,6 +146,7 @@ pub fn start(
                                     initiated_by: Initiator::Us,
         // Filled in when a link is established; unknown until then.
         local_address: String::new(),
+        host_only,
     };
                                 s.peers.insert(peer_id.clone(), peer.clone());
                                 (peer, true)
@@ -134,6 +155,12 @@ pub fn start(
                     });
 
                     let _ = app.emit(if is_new { "peer:joined" } else { "peer:updated" }, &peer);
+
+                    // Its library is readable now, and no link is coming to
+                    // prompt a refresh the way one does for an app.
+                    if host_only {
+                        crate::library::spawn_refresh(&app, &state);
+                    }
                 }
 
                 ServiceEvent::ServiceRemoved(_, fullname) => {
@@ -157,6 +184,7 @@ fn register(
     who: &str,
     addresses: &[String],
     port: u16,
+    mode: Option<&str>,
 ) -> anyhow::Result<()> {
     let host = format!("{}.local.", sanitize(instance));
     let mut props: HashMap<String, String> = HashMap::new();
@@ -171,6 +199,11 @@ fn register(
     }
     props.insert("os".into(), std::env::consts::OS.to_string());
     props.insert("v".into(), env!("CARGO_PKG_VERSION").to_string());
+    // Set by the process that serves files with nobody signed in; absent from
+    // the app, which is what an older device sees too.
+    if let Some(mode) = mode {
+        props.insert("mode".into(), mode.to_string());
+    }
 
     // Announce on every address this device holds, so peers on any of its
     // networks can find it.
@@ -197,9 +230,26 @@ pub fn reannounce(
     port: u16,
 ) {
     let _ = daemon.unregister(&format!("{}.{}", sanitize(instance), SERVICE_TYPE));
-    if let Err(e) = register(daemon, device_id, instance, who, addresses, port) {
+    if let Err(e) = register(daemon, device_id, instance, who, addresses, port, None) {
         eprintln!("could not re-announce after a network change: {e}");
     }
+}
+
+/// Announces this device as serving files only. See `bootstart`.
+pub(crate) fn register_host(
+    daemon: &ServiceDaemon,
+    device_id: &str,
+    instance: &str,
+    who: &str,
+    addresses: &[String],
+    port: u16,
+) -> anyhow::Result<()> {
+    register(daemon, device_id, instance, who, addresses, port, Some("host"))
+}
+
+/// Withdraws this device's announcement, with a goodbye so that peers drop it now.
+pub(crate) fn withdraw(daemon: &ServiceDaemon, instance: &str) {
+    let _ = daemon.unregister(&format!("{}.{}", sanitize(instance), SERVICE_TYPE));
 }
 
 /// Drops peers that have gone quiet.

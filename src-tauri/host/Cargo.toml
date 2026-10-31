@@ -22,7 +22,7 @@ path = "src/main.rs"
 # package is `lantern`; its library target is `lantern_lib`, which is the
 # name the code imports.
 lantern = { path = ".." }
-tokio = { version = "1", features = ["rt", "macros", "time", "net"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "net", "sync"] }
 
 # Windows shows a process by the name embedded in the file, and falls back to
 # the bare filename when there is none. Without this the firewall prompt asks

@@ -708,6 +708,10 @@ export const api = {
     removeInstaller: (name: string) => call<void>('installers_remove', { name }),
     set: (enabled: boolean) => call<void>('service_set', { enabled }),
     running: () => call<boolean>('service_running'),
+    /** Whether the file server is set to start with the computer, before anybody signs in. */
+    bootStatus: () => call<{ supported: boolean; registered: boolean }>('host_boot_status'),
+    /** Registers or removes it. One Windows prompt; resolves with the new state. */
+    bootSet: (enabled: boolean) => call<boolean>('host_boot_set', { enabled }),
     /**
      * Why published folders are not being served, or null when they are.
      *

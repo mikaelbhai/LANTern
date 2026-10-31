@@ -30,6 +30,7 @@ mod rating;
 pub mod readahead;
 mod screencap;
 mod wol;
+pub mod bootstart;
 mod collections_sync;
 mod historysync;
 #[cfg(desktop)]
@@ -163,6 +164,8 @@ pub fn run() {
             commands::media_peer_collections,
             commands::progress_sync_status,
             commands::progress_sync_now,
+            commands::host_boot_status,
+            commands::host_boot_set,
             storage::storage_all_files,
             storage::storage_request_all_files,
             commands::call_audio_earpiece,
@@ -405,7 +408,10 @@ pub fn run() {
                         .map(|v| v == "1")
                         .unwrap_or(false)
                 });
-                if keep {
+                // Also when the start-up task is registered: whoever turned that
+                // on wants the library up whenever the app is not, and the task
+                // itself only runs at boot.
+                if keep || bootstart::registered() {
                     commands::start_host_service(_app, &state);
                 }
             }

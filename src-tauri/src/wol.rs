@@ -744,8 +744,15 @@ pub fn enable(interfaces: &[Interface]) -> Result<(), String> {
         name = adapter.name,
         description = adapter.description,
     );
-    // UTF-16 little-endian, base64: the encoding -EncodedCommand wants, and the
-    // reason nothing in the script above has to survive another layer of quoting.
+    run_elevated(&inner)
+}
+
+/// Runs a PowerShell script as administrator, through one UAC prompt.
+///
+/// UTF-16 little-endian, base64: the encoding -EncodedCommand wants, and the
+/// reason nothing in the script has to survive another layer of quoting.
+#[cfg(windows)]
+pub(crate) fn run_elevated(inner: &str) -> Result<(), String> {
     let bytes: Vec<u8> = inner.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
     let encoded = base64_encode(&bytes);
     let outer = format!(

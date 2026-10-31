@@ -59,6 +59,11 @@ export interface Peer {
   scope: PeerScope;
   /** Which side opened the session that carries this peer's traffic. */
   initiatedBy: Initiator;
+  /**
+   * Serving files with nobody signed in: its library can be read, but there is
+   * no app there to chat with or call.
+   */
+  hostOnly?: boolean;
 }
 
 export interface Profile {

@@ -31,6 +31,9 @@ pub fn router(state: AppState) -> Router {
         .route("/shares.json", get(shares_json))
         .route("/collections.json", get(collections_json))
         .route("/sync/progress.json", get(progress_json))
+        // Registered with the others, so no published folder named "host" can
+        // shadow it - and answering only inside `lantern-host`.
+        .route("/host/handover", get(handover))
         .route("/get/:name", get(serve_installer))
         .route("/unlock", get(unlock))
         .route("/watch/:slug/*path", get(watch))
@@ -700,6 +703,32 @@ async fn serve_root(
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     }
     respond(state, slug, String::new(), &headers, key, params.contains_key("json")).await
+}
+
+static HANDOVER: std::sync::OnceLock<Arc<tokio::sync::Notify>> = std::sync::OnceLock::new();
+
+/// Lets this process be asked to leave. Called only by `lantern-host`.
+///
+/// The app starting on the same machine needs the port, and a host running as
+/// SYSTEM cannot be killed by an ordinary user - so it is asked instead.
+pub fn enable_handover() -> Arc<tokio::sync::Notify> {
+    HANDOVER.get_or_init(|| Arc::new(tokio::sync::Notify::new())).clone()
+}
+
+/// `GET /host/handover`: the host exits so the app can take over.
+///
+/// Refused from any address but this machine's own loopback, and unknown at all
+/// inside the app. Anybody else on the network asking a server to stop would
+/// be a switch for taking a library down.
+async fn handover(ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Response {
+    let Some(notify) = HANDOVER.get() else {
+        return (StatusCode::NOT_FOUND, "Not here").into_response();
+    };
+    if !addr.ip().to_canonical().is_loopback() {
+        return (StatusCode::FORBIDDEN, "This machine only").into_response();
+    }
+    notify.notify_one();
+    (StatusCode::OK, "Handing over").into_response()
 }
 
 /// This device's watch history, for a device paired as the same person's.
@@ -3174,5 +3203,47 @@ mod browser_identity_tests {
         let raw = cookie.split(';').next().unwrap().split_once('=').unwrap().1;
         let mixed = format!("theme=dark; lantern_who={raw}; lt_at_abc=120");
         assert_eq!(browser_id(&jar(&mixed)), Some(id));
+    }
+}
+
+#[cfg(test)]
+mod handover_tests {
+    use super::*;
+
+    /// One test, because the switch is process-wide: it starts off, and a
+    /// second test turning it on would change what the first one sees.
+    #[tokio::test]
+    async fn only_the_host_process_answers_and_only_to_this_machine() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = AppState::new();
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+        let ask = move || tokio::task::spawn_blocking(move || crate::bootstart::ask_host_to_leave(port));
+
+        // The app does not know the route at all: nobody on the network, and
+        // nothing on this machine, can ask it to stop serving.
+        assert!(!ask().await.unwrap());
+
+        let waiting = enable_handover();
+        let leave = tokio::spawn(async move { waiting.notified().await });
+        assert!(ask().await.unwrap(), "loopback is told it is being handed over");
+        tokio::time::timeout(std::time::Duration::from_secs(2), leave)
+            .await
+            .expect("the host is told to leave")
+            .unwrap();
+
+        // A neighbour on the LAN is refused even though the route exists.
+        let lan: SocketAddr = "192.168.1.40:50000".parse().unwrap();
+        let refused = handover(ConnectInfo(lan)).await;
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        // And the same address as a dual-stack socket reports loopback.
+        let mapped: SocketAddr = "[::ffff:127.0.0.1]:50000".parse().unwrap();
+        assert_eq!(handover(ConnectInfo(mapped)).await.status(), StatusCode::OK);
     }
 }
