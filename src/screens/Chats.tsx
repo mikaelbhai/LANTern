@@ -43,6 +43,7 @@ import { ForwardModal } from './chat/ForwardModal';
 import { useClickOutside } from '../lib/hooks';
 import { isGuest } from '../lib/bridge';
 import { useStore } from '../lib/store';
+import { refreshOwn, useThreadMessages, useThreads } from '../lib/threads';
 import { useIsMobile } from '../lib/hooks';
 import { attachmentFromFile } from '../lib/actions';
 import { copyText } from '../lib/clipboard';
@@ -62,6 +63,28 @@ export function Chats() {
   const rooms = useStore((s) => s.rooms);
   const activeRoomId = useStore((s) => s.activeRoomId);
   const openRoom = useStore((s) => s.openRoom);
+  const markRoomRead = useStore((s) => s.markRoomRead);
+  const peersNow = useStore((s) => s.peers);
+  const threads = useThreads();
+
+  // Which devices are the person's own is read again whenever the devices on the
+  // network change.
+  React.useEffect(refreshOwn, [peersNow]);
+
+  // A conversation made of several rooms is opened and answered through the one
+  // that stands for it, so a message goes to a device that can receive it.
+  React.useEffect(() => {
+    const primary = activeRoomId ? threads.primaryOf[activeRoomId] : undefined;
+    if (activeRoomId && primary && primary !== activeRoomId) openRoom(primary);
+  }, [activeRoomId, threads, openRoom]);
+
+  // Everything that arrives in any room of the open conversation is read.
+  const openIds = activeRoomId ? (threads.ids[threads.primaryOf[activeRoomId] ?? activeRoomId] ?? []) : [];
+  const openUnread = openIds.reduce((n, id) => n + (rooms[id]?.unread ?? 0), 0);
+  React.useEffect(() => {
+    if (openUnread > 0) for (const id of openIds) markRoomRead(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openUnread, activeRoomId]);
   const threadRootId = useStore((s) => s.threadRootId);
   const isMobile = useIsMobile();
 
@@ -249,20 +272,29 @@ function RoomList({
   const activeRoomId = useStore((s) => s.activeRoomId);
   const openRoom = useStore((s) => s.openRoom);
   const saved = useStore((s) => s.saved);
+  const threads = useThreads();
+  const markRoomRead = useStore((s) => s.markRoomRead);
 
   const [filter, setFilter] = React.useState<'all' | 'dm' | 'group' | 'broadcast'>('all');
   const [query, setQuery] = React.useState('');
   const [newOpen, setNewOpen] = React.useState(false);
   const [savedOpen, setSavedOpen] = React.useState(false);
 
+  // Where a person has more than one room - a device they no longer use, or
+  // their own phone and PC - the list shows one row, and its last message and
+  // its unread count are the whole conversation's.
+  const lastOf = (r: Room) =>
+    (threads.ids[r.id] ?? [r.id]).reduce<Message | undefined>((best, id) => {
+      const m = messages[id]?.at(-1);
+      return m && (!best || m.ts > best.ts) ? m : best;
+    }, undefined);
+  const unreadOf = (r: Room) => (threads.ids[r.id] ?? [r.id]).reduce((n, id) => n + (rooms[id]?.unread ?? 0), 0);
+
   const list = Object.values(rooms)
+    .filter((r) => (threads.primaryOf[r.id] ?? r.id) === r.id)
     .filter((r) => (filter === 'all' ? true : r.kind === filter))
     .filter((r) => (query ? r.name.toLowerCase().includes(query.toLowerCase()) : true))
-    .sort((a, b) => {
-      const la = messages[a.id]?.at(-1)?.ts ?? a.createdAt;
-      const lb = messages[b.id]?.at(-1)?.ts ?? b.createdAt;
-      return lb - la;
-    });
+    .sort((a, b) => (lastOf(b)?.ts ?? b.createdAt) - (lastOf(a)?.ts ?? a.createdAt));
 
   return (
     <aside className={cn('flex flex-col bg-surface/40 min-w-0', className)}>
@@ -320,13 +352,17 @@ function RoomList({
         ) : (
           <ul>
             {list.map((r) => {
-              const last = messages[r.id]?.at(-1);
+              const last = lastOf(r);
               const dmPeer = r.kind === 'dm' ? peers[r.members[0]] : null;
-              const on = r.id === activeRoomId;
+              const on = (threads.ids[r.id] ?? [r.id]).includes(activeRoomId ?? '');
+              const unread = unreadOf(r);
               return (
                 <li key={r.id}>
                   <button
-                    onClick={() => openRoom(r.id)}
+                    onClick={() => {
+                      openRoom(r.id);
+                      for (const id of threads.ids[r.id] ?? []) if (id !== r.id) markRoomRead(id);
+                    }}
                     className={cn(
                       'w-full flex items-center gap-3 pl-4 pr-3 py-2.5 text-left transition-colors',
                       'border-b border-edge/70',
@@ -376,9 +412,9 @@ function RoomList({
                                     : 'Attachment')
                             : 'No messages yet'}
                         </span>
-                        {r.unread > 0 && (
+                        {unread > 0 && (
                           <span className="min-w-[20px] h-5 px-1.5 grid place-items-center rounded-full bg-gold text-on-gold text-2xs font-semibold shrink-0">
-                            {r.unread > 99 ? '99+' : r.unread}
+                            {unread > 99 ? '99+' : unread}
                           </span>
                         )}
                       </div>
@@ -429,7 +465,7 @@ function RoomHeader({
   onForwardSelected: () => void;
 }) {
   const peers = useStore((s) => s.peers);
-  const messages = useStore((s) => s.messages[room.id] ?? []);
+  const messages = useThreadMessages(room.id);
   const saved = useStore((s) => s.saved);
   const transfers = useStore((s) => s.transfers);
   const startCall = useStore((s) => s.startCall);
@@ -861,7 +897,7 @@ function RoomHeader({
 /* -------------------------------------------------------- Pinned drawer */
 
 function PinnedDrawer({ room, onClose }: { room: Room; onClose: () => void }) {
-  const messages = useStore((s) => s.messages[room.id] ?? []);
+  const messages = useThreadMessages(room.id);
   const togglePin = useStore((s) => s.togglePin);
   const pinned = room.pinned
     .map((id) => messages.find((m) => m.id === id))

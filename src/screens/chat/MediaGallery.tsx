@@ -1,6 +1,7 @@
 import React from 'react';
 import { File as FileIcon, X } from 'lucide-react';
 import { Empty, IconButton, Segmented } from '../../components/ui';
+import { useThreadMessages } from '../../lib/threads';
 import { useStore } from '../../lib/store';
 import { clockTime, formatBytes } from '../../lib/utils';
 import type { Room } from '../../lib/types';
@@ -8,7 +9,7 @@ import type { Room } from '../../lib/types';
 type Kind = 'all' | 'image' | 'file';
 
 export function MediaGallery({ room, onClose }: { room: Room; onClose: () => void }) {
-  const messages = useStore((s) => s.messages[room.id] ?? []);
+  const messages = useThreadMessages(room.id);
   const [kind, setKind] = React.useState<Kind>('all');
 
   const images = messages.flatMap((m) =>

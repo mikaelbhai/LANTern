@@ -3,11 +3,12 @@ import { X } from 'lucide-react';
 import { IconButton } from '../../components/ui';
 import { MessageItem } from './MessageItem';
 import { Composer } from './Composer';
+import { useThreadMessages } from '../../lib/threads';
 import { useStore } from '../../lib/store';
 import type { Room } from '../../lib/types';
 
 export function ThreadPanel({ room, rootId }: { room: Room; rootId: string }) {
-  const messages = useStore((s) => s.messages[room.id] ?? []);
+  const messages = useThreadMessages(room.id);
   const openThread = useStore((s) => s.openThread);
 
   const root = messages.find((m) => m.id === rootId);

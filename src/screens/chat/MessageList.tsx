@@ -4,6 +4,7 @@ import { ArrowDown, Upload } from 'lucide-react';
 import { Avatar } from '../../components/Avatar';
 import { Empty } from '../../components/ui';
 import { MessageItem } from './MessageItem';
+import { useThreadMessages } from '../../lib/threads';
 import { useStore } from '../../lib/store';
 import { dayKey, dayLabel } from '../../lib/utils';
 import type { Message, Room } from '../../lib/types';
@@ -33,7 +34,7 @@ export function MessageList({
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
 }) {
-  const all = useStore((s) => s.messages[room.id] ?? []);
+  const all = useThreadMessages(room.id);
   const typing = useStore((s) => s.typing[room.id]);
   const peers = useStore((s) => s.peers);
   const profile = useStore((s) => s.profile);

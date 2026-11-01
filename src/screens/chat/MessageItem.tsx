@@ -292,7 +292,11 @@ export function MessageItem({
         {!grouped && (
           <div className="flex items-baseline gap-2 mb-0.5">
             <span className="text-xs font-semibold">
-              {mine ? profile.name || 'You' : (author?.name ?? 'Unknown peer')}
+              {mine
+                ? profile.name || 'You'
+                : // A device that has been retired is nobody now, but the room it
+                  // wrote in is still called after the person.
+                  (author?.name ?? (room?.kind === 'dm' ? room.name : null) ?? 'Unknown peer')}
             </span>
             <Tooltip content={exactTime(m.ts)} delay={250}>
               <span className="text-[10px] text-muted">{relativeTime(m.ts)}</span>
