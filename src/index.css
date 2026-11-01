@@ -202,7 +202,10 @@
     --c-gold: 255 255 255;
     --c-on-gold: 0 0 0;
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    letter-spacing: -0.005em;
+    /* Not tightened: on a television the gaps between words are what go first, and "Shows & collections" read as one word. */
+    letter-spacing: 0.005em;
+    word-spacing: 0.08em;
+    text-rendering: optimizeLegibility;
   }
 
   /* A card or a button taking the focus: a lift and a light, never a colour. */

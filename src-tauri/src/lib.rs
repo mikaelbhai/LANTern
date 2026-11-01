@@ -147,6 +147,8 @@ pub fn run() {
             commands::start_services,
             commands::host_os,
             commands::update_download,
+            commands::update_download_lan,
+            commands::update_scan_local,
             commands::open_external,
             commands::open_privacy_settings,
             commands::profile_announce,

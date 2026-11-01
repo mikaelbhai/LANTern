@@ -147,15 +147,15 @@ export function TvDetail({
         <div className="flex-1 min-h-0 flex flex-col justify-end">
           <div
             className="font-bold leading-[1.02] line-clamp-2"
-            style={{ fontSize: u(6.4), maxWidth: '60%', letterSpacing: '-0.025em', textShadow: '0 0.2rem 1.6rem rgba(0,0,0,0.7)' }}
+            style={{ fontSize: u(6.4), maxWidth: '60%', letterSpacing: '-0.01em', textShadow: '0 0.2rem 1.6rem rgba(0,0,0,0.7)' }}
           >
             {title}
           </div>
-          <div className="text-white/75 font-medium" style={{ fontSize: u(1.9), marginTop: u(1.3) }}>
+          <div className="text-white/75 font-medium" style={{ fontSize: u(2.2), marginTop: u(1.3) }}>
             {metaOf(tile).join('   ·   ')}
           </div>
           {(it?.synopsis || start.synopsis) && (
-            <p className="text-white/65 line-clamp-3" style={{ fontSize: u(1.85), marginTop: u(1), maxWidth: '48%', lineHeight: 1.45 }}>
+            <p className="text-white/65 line-clamp-3" style={{ fontSize: u(2.05), marginTop: u(1), maxWidth: '48%', lineHeight: 1.45 }}>
               {it?.synopsis ?? start.synopsis}
             </p>
           )}
@@ -273,11 +273,11 @@ function EpisodeCard({
         )}
       </div>
       <div className={cn('tv-lift', focused ? 'opacity-100' : 'opacity-70')} style={{ marginTop: u(1), paddingInline: u(0.3) }}>
-        <div className="font-semibold leading-tight truncate" style={{ fontSize: u(1.75) }}>
+        <div className="font-semibold leading-tight truncate" style={{ fontSize: u(2.0) }}>
           {ep.episode ? `${ep.episode}. ` : ''}
           {name}
         </div>
-        <div className="text-white/60 truncate" style={{ fontSize: u(1.4), marginTop: u(0.2) }}>
+        <div className="text-white/60 truncate" style={{ fontSize: u(1.65), marginTop: u(0.2) }}>
           {ep.durationSec > 0 ? runtime(ep.durationSec) : ''}
           {ep.progressSec > 30 && !done ? ` · ${runtime(ep.durationSec - ep.progressSec)} left` : ''}
         </div>

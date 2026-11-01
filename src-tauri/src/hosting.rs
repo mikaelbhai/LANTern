@@ -35,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         // shadow it - and answering only inside `lantern-host`.
         .route("/host/handover", get(handover))
         .route("/get/:name", get(serve_installer))
+        .route("/installers.json", get(installers_json))
         .route("/unlock", get(unlock))
         .route("/watch/:slug/*path", get(watch))
         // A peer's profile picture, fetched like any other file this device
@@ -547,6 +548,7 @@ struct Installer {
     platform: String,
     /// Size, with the filename after it.
     detail: String,
+    size: u64,
 }
 
 /// What the host has put in the installer folder, newest of each platform.
@@ -611,6 +613,7 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
                 name: name.to_string(),
                 platform: platform.to_string(),
                 detail: format!("{} · {}", human(size), name),
+                size,
             },
         ));
     }
@@ -652,6 +655,24 @@ fn installer_list(state: &AppState) -> Vec<Installer> {
     };
     out.sort_by_key(|i| rank(&i.platform));
     out
+}
+
+/// `GET /installers.json`: what `/get/` would hand over, as data.
+///
+/// For another LANTern that wants to update itself from this one: the landing
+/// page lists the same installers for a person to read, and a television cannot
+/// read a page. The same list, the same rule - newest of each platform - and the
+/// same openness: nothing here is anything `/` does not already say.
+async fn installers_json(State(state): State<Arc<AppState>>) -> Response {
+    let list: Vec<serde_json::Value> = installer_list(&state)
+        .into_iter()
+        .map(|i| serde_json::json!({ "name": i.name, "platform": i.platform, "size": i.size }))
+        .collect();
+    (
+        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"))],
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()),
+    )
+        .into_response()
 }
 
 /// Hands over one installer.

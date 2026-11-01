@@ -1,13 +1,63 @@
 import React from 'react';
-import { Monitor, RefreshCw, Smartphone } from 'lucide-react';
+import { Download, Monitor, RefreshCw, Smartphone } from 'lucide-react';
 
 import { cn } from '../lib/utils';
 import type { MediaItem, Peer } from '../lib/types';
 import { intentOf } from './remote';
+import { install, look, type Chosen, type Found } from './tvUpdate';
 import { u } from './units';
 
+type Phase =
+  | { k: 'idle' }
+  | { k: 'checking' }
+  | { k: 'current'; found: Found }
+  | { k: 'ready'; found: Found; chosen: Chosen }
+  | { k: 'working'; fraction: number }
+  | { k: 'error'; message: string };
+
+/** What the update button says, for where it has got to. */
+function updateLabel(p: Phase): string {
+  switch (p.k) {
+    case 'checking':
+      return 'Looking for a newer version…';
+    case 'current':
+      return `LANTV ${p.found.current} is the newest`;
+    case 'ready':
+      return `Install ${p.chosen.version}`;
+    case 'working':
+      return p.fraction > 0 && p.fraction < 1 ? `Downloading ${Math.round(p.fraction * 100)}%` : 'Installing…';
+    case 'error':
+      return 'Try again';
+    default:
+      return 'Check for update';
+  }
+}
+
+/** The line under it: where the new version would come from, or why there is none. */
+function updateNote(p: Phase): string {
+  switch (p.k) {
+    case 'ready':
+      return p.chosen.source === 'network'
+        ? `From ${p.chosen.peer ?? 'a device on your network'} - no internet needed.`
+        : 'From the internet.';
+    case 'current': {
+      const { askedNetwork, askedOnline } = p.found;
+      if (!askedNetwork && !askedOnline) return 'Could not reach your network or the internet.';
+      return askedOnline ? 'Checked your network and the internet.' : 'Checked your network. The internet could not be reached.';
+    }
+    case 'working':
+      return p.fraction >= 1 ? 'Confirm on the screen that follows.' : 'Keep this open until it finishes.';
+    case 'error':
+      return p.message;
+    case 'checking':
+      return 'Asking the other devices, then GitHub.';
+    default:
+      return 'Looks on your network first, then online, and installs the newest.';
+  }
+}
+
 /**
- * Who is sharing what.
+ * Who is sharing what, and the way to update LANTV.
  *
  * A television cannot tell anybody why its shelf is empty, and "nothing is
  * published" is not an answer when the real one is that the computer is off.
@@ -35,28 +85,84 @@ export function TvDevices({
     return out;
   }, [items]);
 
-  const handlers = React.useRef({ onRefresh, onUp });
-  handlers.current = { onRefresh, onUp };
-  const on = React.useRef(active);
-  on.current = active;
+  // 0 is Refresh, 1 is the update button.
+  const [at, setAt] = React.useState<0 | 1>(0);
+  const [phase, setPhase] = React.useState<Phase>({ k: 'idle' });
+
+  const check = React.useCallback(async () => {
+    setPhase({ k: 'checking' });
+    try {
+      const found = await look();
+      setPhase(found.chosen ? { k: 'ready', found, chosen: found.chosen } : { k: 'current', found });
+    } catch (e) {
+      setPhase({ k: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }, []);
+
+  const go = React.useCallback(async (found: Found, chosen: Chosen) => {
+    setPhase({ k: 'working', fraction: 0 });
+    try {
+      await install(chosen, found.online ? { asset: found.online.asset } : null, (fraction) =>
+        setPhase({ k: 'working', fraction }),
+      );
+      // The system's installer has the screen now; if it comes back unfinished
+      // the button is as it was.
+      setPhase({ k: 'ready', found, chosen });
+    } catch (e) {
+      setPhase({ k: 'error', message: e instanceof Error ? e.message : String(e) });
+    }
+  }, []);
+
+  const press = () => {
+    if (at === 0) return onRefresh();
+    if (phase.k === 'ready') void go(phase.found, phase.chosen);
+    else if (phase.k !== 'checking' && phase.k !== 'working') void check();
+  };
+
+  const live = React.useRef({ at, press, onUp, active });
+  live.current = { at, press, onUp, active };
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!on.current) return;
+      const s = live.current;
+      if (!s.active) return;
       const intent = intentOf(e);
       if (!intent || intent === 'back') return;
       e.preventDefault();
       e.stopPropagation();
-      if (intent === 'up') handlers.current.onUp();
-      else if (intent === 'ok') handlers.current.onRefresh();
+      if (intent === 'up') {
+        if (s.at === 0) s.onUp();
+        else setAt(0);
+      } else if (intent === 'down') setAt(1);
+      else if (intent === 'ok') s.press();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
+  const button = (focused: boolean, children: React.ReactNode, key?: string) => (
+    <span
+      key={key}
+      className={cn(
+        'tv-lift inline-flex items-center rounded-full font-semibold',
+        focused ? 'bg-white text-black' : 'bg-white/15 text-white/80',
+      )}
+      style={{
+        gap: u(1.1),
+        height: u(5.4),
+        paddingInline: u(3.2),
+        fontSize: u(2.1),
+        transform: focused ? 'scale(1.08)' : 'scale(1)',
+        boxShadow: focused ? '0 0.8rem 2rem rgba(0,0,0,0.55)' : undefined,
+      }}
+    >
+      {children}
+    </span>
+  );
+
   return (
     <div className="h-full overflow-hidden" style={{ padding: `${u(10)} ${u(5)} ${u(4)}` }}>
-      <h1 className="font-bold" style={{ fontSize: u(4.4), marginBottom: u(2), letterSpacing: '-0.02em' }}>
+      <h1 className="font-bold" style={{ fontSize: u(4.4), marginBottom: u(2), letterSpacing: '-0.01em' }}>
         Devices
       </h1>
 
@@ -78,7 +184,7 @@ export function TvDevices({
                   <div className="font-semibold truncate" style={{ fontSize: u(2.2) }}>
                     {p.name}
                   </div>
-                  <div className="text-white/60 truncate" style={{ fontSize: u(1.55), marginTop: u(0.2) }}>
+                  <div className="text-white/60 truncate" style={{ fontSize: u(1.7), marginTop: u(0.2) }}>
                     {p.hostOnly ? 'Sharing with nobody signed in' : (p.deviceName ?? p.name)}
                     {n > 0 ? ` · ${n} ${n === 1 ? 'title' : 'titles'}` : ''}
                   </div>
@@ -89,23 +195,32 @@ export function TvDevices({
         </div>
       )}
 
-      <span
-        className={cn(
-          'tv-lift inline-flex items-center rounded-full font-semibold',
-          active ? 'bg-white text-black' : 'bg-white/15 text-white/80',
+      <div className="flex items-start" style={{ marginTop: u(3), gap: u(2.4) }}>
+        {button(
+          active && at === 0,
+          <>
+            <RefreshCw className={busy ? 'animate-spin' : undefined} style={{ width: u(2.3), height: u(2.3) }} />
+            {busy ? 'Refreshing…' : 'Refresh'}
+          </>,
         )}
-        style={{
-          marginTop: u(3),
-          gap: u(1.1),
-          height: u(5.4),
-          paddingInline: u(3.2),
-          fontSize: u(2.1),
-          transform: active ? 'scale(1.08)' : 'scale(1)',
-        }}
-      >
-        <RefreshCw className={busy ? 'animate-spin' : undefined} style={{ width: u(2.3), height: u(2.3) }} />
-        {busy ? 'Refreshing…' : 'Refresh'}
-      </span>
+        <div>
+          {button(
+            active && at === 1,
+            <>
+              <Download style={{ width: u(2.3), height: u(2.3) }} />
+              {updateLabel(phase)}
+            </>,
+          )}
+          <div className="text-white/60" style={{ fontSize: u(1.7), marginTop: u(1), maxWidth: u(60) }}>
+            {updateNote(phase)}
+          </div>
+          {phase.k === 'working' && (
+            <div className="rounded-full bg-white/20 overflow-hidden" style={{ height: u(0.8), marginTop: u(1.2), width: u(40) }}>
+              <div className="h-full bg-white" style={{ width: `${Math.round(phase.fraction * 100)}%` }} />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

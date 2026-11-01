@@ -88,15 +88,15 @@ export function TvHero({
       >
         <div
           className="font-bold leading-[1.02] line-clamp-2"
-          style={{ fontSize: u(6.2), maxWidth: '58%', letterSpacing: '-0.025em', textShadow: '0 0.2rem 1.6rem rgba(0,0,0,0.7)' }}
+          style={{ fontSize: u(6.2), maxWidth: '58%', letterSpacing: '-0.01em', textShadow: '0 0.2rem 1.6rem rgba(0,0,0,0.7)' }}
         >
           {title}
         </div>
-        <div className="text-white/75 font-medium" style={{ fontSize: u(1.9), marginTop: u(1.3) }}>
+        <div className="text-white/75 font-medium" style={{ fontSize: u(2.2), marginTop: u(1.3) }}>
           {metaOf(tile).join('   ·   ')}
         </div>
         {it?.synopsis && (
-          <p className="text-white/65 line-clamp-2" style={{ fontSize: u(1.85), marginTop: u(1), maxWidth: '46%', lineHeight: 1.4 }}>
+          <p className="text-white/65 line-clamp-2" style={{ fontSize: u(2.05), marginTop: u(1), maxWidth: '46%', lineHeight: 1.4 }}>
             {it.synopsis}
           </p>
         )}
@@ -133,7 +133,7 @@ export function TvHero({
           >
             <Info style={{ width: u(2.4), height: u(2.4) }} />
           </span>
-          {left && <span className="text-white/65" style={{ fontSize: u(1.7), marginLeft: u(0.6) }}>{left} left</span>}
+          {left && <span className="text-white/65" style={{ fontSize: u(1.9), marginLeft: u(0.6) }}>{left} left</span>}
         </div>
 
         {count > 1 && (

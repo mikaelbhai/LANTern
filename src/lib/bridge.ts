@@ -574,6 +574,15 @@ export const api = {
       call<string>('update_download', { url, name, expected: expected ?? null }),
     /** Opens it with the system installer. */
     launch: (path: string) => call<void>('update_launch', { path }),
+    /**
+     * Installers the other devices on this network offer for a platform
+     * ("Android TV", "Android", "Windows"), from their /installers.json.
+     */
+    scanLocal: (platform: string) =>
+      call<{ peer: string; name: string; size: number; url: string }[]>('update_scan_local', { platform }),
+    /** The same as `download`, from one of those devices rather than from GitHub. */
+    downloadLan: (url: string, name: string, expected?: string) =>
+      call<string>('update_download_lan', { url, name, expected: expected ?? null }),
   },
   /** WebRTC negotiation. The media itself never comes through here. */
   call: {

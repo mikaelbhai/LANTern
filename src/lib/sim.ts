@@ -755,6 +755,12 @@ export async function handle(cmd: string, args: any): Promise<any> {
     case 'peers_trusted':
       return [];
 
+    // Updating from the television: nothing on the network, nothing to fetch.
+    case 'update_scan_local':
+      return [];
+    case 'update_download_lan':
+      return '/sim/installer.apk';
+
     // Start-up hosting: the switch and its Windows prompt, minus the prompt.
     case 'host_boot_status':
       return { supported: true, registered: simBootHost };

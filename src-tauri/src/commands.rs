@@ -2598,6 +2598,45 @@ pub async fn fetch_update(
     url: &str,
     dest: &std::path::Path,
     expected: Option<&str>,
+    on_progress: impl FnMut(u64, u64),
+) -> Result<(), String> {
+    fetch_update_from(url, dest, expected, false, on_progress).await
+}
+
+/// Whether an address is a device on this network: a private IPv4 on a plain
+/// `http` URL, asking for `/get/<one filename>` and nothing else.
+///
+/// Narrow on purpose. This is the one place the app will fetch an installer
+/// over plain HTTP, so it may only ever be from a machine in the house and only
+/// from the folder that machine offers installers in. Android will still refuse
+/// the package unless it was signed with the same key as the one it replaces.
+fn is_lan_installer(url: &reqwest::Url) -> bool {
+    if url.scheme() != "http" {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let Ok(ip) = host.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    if !(ip.is_private() || ip.is_link_local() || ip.is_loopback()) {
+        return false;
+    }
+    let mut parts = url.path().trim_start_matches('/').split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some("get"), Some(name), None) if is_plain_filename(name)
+    )
+}
+
+/// `fetch_update`, from a source of the caller's choosing: the project's
+/// releases, or a device on this network.
+pub async fn fetch_update_from(
+    url: &str,
+    dest: &std::path::Path,
+    expected: Option<&str>,
+    lan: bool,
     mut on_progress: impl FnMut(u64, u64),
 ) -> Result<(), String> {
     use futures_util::StreamExt;
@@ -2605,8 +2644,13 @@ pub async fn fetch_update(
     use std::io::Write;
 
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("not a usable address: {e}"))?;
-    if !is_github(&parsed) {
-        return Err("updates only come from the project's own releases".into());
+    let allowed = |u: &reqwest::Url| if lan { is_lan_installer(u) } else { is_github(u) };
+    if !allowed(&parsed) {
+        return Err(if lan {
+            "that is not an installer offered by a device on this network".into()
+        } else {
+            "updates only come from the project's own releases".into()
+        });
     }
 
     let client = reqwest::Client::builder()
@@ -2622,8 +2666,8 @@ pub async fn fetch_update(
         .map_err(|e| format!("could not reach GitHub: {e}"))?;
 
     // Wherever the redirects ended up has to be somewhere we would have gone.
-    if !is_github(response.url()) {
-        return Err("the download was redirected off GitHub".into());
+    if !allowed(response.url()) {
+        return Err("the download was redirected somewhere it should not go".into());
     }
     if !response.status().is_success() {
         return Err(format!("GitHub answered {}", response.status()));
@@ -2703,6 +2747,88 @@ pub async fn update_download(
     })
     .await?;
 
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// What the other devices on this network offer to install, for `platform`.
+///
+/// Each device that is serving is asked for its `/installers.json`, all at
+/// once and with a short patience: most have nothing to say, and a television
+/// should not wait on the ones that are asleep. Answers come back as
+/// `{ peer, name, size, url }`; the caller decides which version is newest.
+#[tauri::command]
+pub async fn update_scan_local(
+    state: State<'_, AppState>,
+    platform: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let ids: Vec<(String, String)> = state.with(|s| {
+        s.peers.values().map(|p| (p.id.clone(), p.name.clone())).collect()
+    });
+    let state: AppState = (*state).clone();
+    let mut asks = tokio::task::JoinSet::new();
+    for (id, name) in ids {
+        let state = state.clone();
+        let platform = platform.clone();
+        asks.spawn(async move {
+            let (address, port) = crate::library::reachable_address(&state, &id).await?;
+            let body = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                crate::library::get(&address, port, "/installers.json"),
+            )
+            .await
+            .ok()?
+            .ok()?;
+            let list: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
+            let found: Vec<serde_json::Value> = list
+                .into_iter()
+                .filter(|i| i["platform"].as_str() == Some(platform.as_str()))
+                .filter_map(|i| {
+                    let file = i["name"].as_str()?.to_string();
+                    let size = i["size"].as_u64().unwrap_or(0);
+                    Some(serde_json::json!({
+                        "peer": name,
+                        "name": file,
+                        "size": size,
+                        "url": format!("http://{address}:{port}/get/{file}"),
+                    }))
+                })
+                .collect();
+            Some(found)
+        });
+    }
+    let mut out = Vec::new();
+    while let Some(done) = asks.join_next().await {
+        if let Ok(Some(mut found)) = done {
+            out.append(&mut found);
+        }
+    }
+    Ok(out)
+}
+
+/// `update_download`, from a device on this network instead of from GitHub.
+///
+/// The address has to be a private one asking for `/get/<filename>`
+/// (`is_lan_installer`), and a checksum is checked if the caller has one - it
+/// has, when the same release is also published online.
+#[tauri::command]
+pub async fn update_download_lan(
+    app: AppHandle,
+    url: String,
+    name: String,
+    expected: Option<String>,
+) -> Result<String, String> {
+    if !is_plain_filename(&name) {
+        return Err("refusing an update file with a suspicious name".into());
+    }
+    let dir = update_dir(&app)?;
+    let path = dir.join(&name);
+    prune_staged(&dir, &name);
+
+    let emitter = app.clone();
+    fetch_update_from(&url, &path, expected.as_deref(), true, move |done, total| {
+        let _ = emitter.emit("update:progress", serde_json::json!({ "done": done, "total": total }));
+    })
+    .await?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -5334,5 +5460,32 @@ mod companion_tests {
         set_trusted(&state, "stranger", true);
         assert!(state.with(|s| s.trusted.contains("stranger")));
         assert!(!state.with(|s| s.companions.contains("stranger")));
+    }
+}
+
+#[cfg(test)]
+mod lan_installer_tests {
+    use super::is_lan_installer;
+
+    fn ok(url: &str) -> bool {
+        is_lan_installer(&reqwest::Url::parse(url).unwrap())
+    }
+
+    #[test]
+    fn a_device_in_the_house_offering_a_file_is_fine() {
+        assert!(ok("http://192.168.100.117:7981/get/LANTV-1.3.4.apk"));
+        assert!(ok("http://10.0.0.5:7981/get/LANTern-1.3.4-phone.apk"));
+    }
+
+    #[test]
+    fn anything_else_is_refused() {
+        // Not the internet, not a name, not https, not another path.
+        assert!(!ok("http://8.8.8.8:7981/get/LANTV-1.3.4.apk"));
+        assert!(!ok("http://example.com/get/LANTV-1.3.4.apk"));
+        assert!(!ok("https://192.168.100.117:7981/get/LANTV-1.3.4.apk"));
+        assert!(!ok("http://192.168.100.117:7981/media/film.mkv"));
+        assert!(!ok("http://192.168.100.117:7981/get/../secret.apk"));
+        assert!(!ok("http://192.168.100.117:7981/get/a/b.apk"));
+        assert!(!ok("http://192.168.100.117:7981/get/"));
     }
 }

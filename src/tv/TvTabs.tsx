@@ -62,7 +62,7 @@ export function TvTabs({
                 cursor ? 'bg-white text-black' : here ? 'bg-white/20 text-white' : 'text-white/60',
               )}
               style={{
-                fontSize: u(2),
+                fontSize: u(2.2),
                 paddingInline: u(2.6),
                 height: u(4.6),
                 display: 'inline-flex',
@@ -77,7 +77,7 @@ export function TvTabs({
         })}
       </div>
 
-      <div className="flex items-center justify-end text-white/60" style={{ width: u(14), gap: u(1.2), fontSize: u(1.5) }}>
+      <div className="flex items-center justify-end text-white/60" style={{ width: u(14), gap: u(1.2), fontSize: u(1.8) }}>
         {deviceCount > 0 && <span>{deviceCount === 1 ? '1 device' : `${deviceCount} devices`}</span>}
         <span
           className={cn(

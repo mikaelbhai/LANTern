@@ -110,10 +110,10 @@ export function TvCard({
         className={cn('tv-lift', focused ? 'opacity-100' : 'opacity-70')}
         style={{ marginTop: u(1.1), paddingInline: u(0.3), transform: focused ? `translateY(${u(0.4)})` : undefined }}
       >
-        <div className="font-semibold leading-tight truncate" style={{ fontSize: u(1.8) }}>
+        <div className="font-semibold leading-tight truncate" style={{ fontSize: u(2.1) }}>
           {title}
         </div>
-        <div className="text-white/60 truncate" style={{ fontSize: u(1.45), marginTop: u(0.2) }}>
+        <div className="text-white/60 truncate" style={{ fontSize: u(1.7), marginTop: u(0.2) }}>
           {subtitleOf(tile)}
         </div>
       </div>
