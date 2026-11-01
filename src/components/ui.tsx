@@ -335,12 +335,15 @@ export function Toggle({
   label,
   hint,
   disabled,
+  small = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: React.ReactNode;
   hint?: string;
   disabled?: boolean;
+  /** For a setting that belongs to another one and should read as its detail. */
+  small?: boolean;
 }) {
   return (
     <label
@@ -361,7 +364,8 @@ export function Toggle({
         className={cn(
           // The switch is drawn small; the finger that has to hit it is not. An
           // invisible margin of the same button makes it a target worth aiming at.
-          'relative h-[18px] w-[32px] rounded-pill shrink-0 transition-colors duration-200 border',
+          'relative rounded-pill shrink-0 transition-colors duration-200 border',
+          small ? 'h-[14px] w-[25px]' : 'h-[18px] w-[32px]',
           'before:absolute before:-inset-x-2 before:-inset-y-3 before:content-[""]',
           checked ? 'bg-gold/90 border-gold shadow-glow' : 'bg-raised border-edge',
         )}
@@ -370,8 +374,13 @@ export function Toggle({
           layout
           transition={spring}
           className={cn(
-            'absolute top-[2px] h-[12px] w-[12px] rounded-full',
-            checked ? 'left-[16px] bg-on-gold' : 'left-[2px] bg-dim',
+            'absolute top-[2px] rounded-full',
+            small ? 'h-[8px] w-[8px]' : 'h-[12px] w-[12px]',
+            checked
+              ? small
+                ? 'left-[13px] bg-on-gold'
+                : 'left-[16px] bg-on-gold'
+              : 'left-[2px] bg-dim',
           )}
         />
       </button>

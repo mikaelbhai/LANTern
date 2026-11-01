@@ -417,6 +417,19 @@ function GuestAccess() {
     Awaited<ReturnType<typeof api.guest.list>>
   >([]);
   const toast = useStore((s) => s.toast);
+  const net = useStore((s) => s.net);
+  const [copiedLink, setCopiedLink] = React.useState(false);
+
+  // What a guest types. The port is part of it: the file server is not on the
+  // usual one, so the address with no port reaches nothing.
+  const guestLink = net?.ip ? `http://${net.ip}:${net.hostPort}/guest/` : '';
+  const copyLink = async () => {
+    if (!guestLink) return;
+    if (await copyText(guestLink)) {
+      setCopiedLink(true);
+      window.setTimeout(() => setCopiedLink(false), 1500);
+    }
+  };
 
   const refresh = React.useCallback(() => {
     void api.guest.list().then(setGuests).catch(() => setGuests([]));
@@ -470,15 +483,30 @@ function GuestAccess() {
 
       {on_ && (
         <div className="mt-2.5 pt-2.5 border-t border-edge">
-          <div className="flex items-start gap-3 mb-2.5">
+          {guestLink && (
+            <div className="mb-2.5">
+              <p className="text-2xs text-muted mb-1">
+                Send this link. The <code className="font-mono">:{net?.hostPort}</code> at the end matters - without it the page
+                does not open.
+              </p>
+              <div className="flex items-center gap-1.5 rounded-input border border-edge bg-base pl-2 pr-1 py-1">
+                <code className="flex-1 min-w-0 truncate text-2xs font-mono select-all">{guestLink}</code>
+                <IconButton label="Copy the link" size="xs" onClick={() => void copyLink()}>
+                  {copiedLink ? <Check size={11} className="text-cyan" /> : <Copy size={11} />}
+                </IconButton>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-2.5 mb-2.5 pl-1">
             <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium">Let guests in without asking</p>
-              <p className="text-2xs text-muted leading-relaxed mt-0.5">
+              <p className="text-2xs font-medium">Let guests in without asking</p>
+              <p className="text-2xs text-muted leading-relaxed">
                 Anybody on this network who opens the page joins straight away, and you are told
                 who. Fine at home; leave it off anywhere you do not know everyone.
               </p>
             </div>
             <Toggle
+              small
               checked={auto}
               onChange={(v) =>
                 void api.guest
