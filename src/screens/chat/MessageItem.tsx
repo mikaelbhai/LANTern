@@ -372,7 +372,7 @@ export function MessageItem({
                   />
                 </div>
               ))}
-            {m.attachments.length > 0 && <Attachments items={m.attachments} />}
+            {m.attachments.length > 0 && <Attachments items={m.attachments} sentAt={m.ts} mine={mine} />}
           </>
         )}
 
@@ -654,7 +654,7 @@ function EditBox({
  * third shape — neither — is only what a message written before this
  * existed can still contain, kept so old history does not throw.
  */
-function Attachments({ items }: { items: Attachment[] }) {
+function Attachments({ items, sentAt, mine }: { items: Attachment[]; sentAt: number; mine: boolean }) {
   const [viewing, setViewing] = React.useState<Attachment | null>(null);
 
   const pasted = items.filter((a) => a.dataUrl && !a.transferId);
@@ -678,7 +678,7 @@ function Attachments({ items }: { items: Attachment[] }) {
       )}
 
       {withTransfer.map((a) => (
-        <TransferAttachment key={a.id} attachment={a} onView={() => setViewing(a)} />
+        <TransferAttachment key={a.id} attachment={a} sentAt={sentAt} mine={mine} onView={() => setViewing(a)} />
       ))}
 
       {bare.map((a) => (
@@ -713,9 +713,13 @@ function Attachments({ items }: { items: Attachment[] }) {
  */
 function TransferAttachment({
   attachment,
+  sentAt,
+  mine,
   onView,
 }: {
   attachment: Attachment;
+  sentAt: number;
+  mine: boolean;
   onView: () => void;
 }) {
   const t = useStore((s) => (attachment.transferId ? s.transfers[attachment.transferId] : undefined));
@@ -726,6 +730,26 @@ function TransferAttachment({
   // events crossed — rare, and resolves itself the moment the offer lands,
   // so this is a quiet placeholder rather than an error.
   if (!t) {
+    // Only quiet for the first moments. An offer is held for a limited time, and
+    // one nobody accepted is dropped - and then there is no transfer to arrive,
+    // ever. It used to stay a name and a size for good: it looked like a file,
+    // did nothing when pressed, and nothing said why.
+    const gone = Date.now() - sentAt > 2 * 60_000;
+    if (gone) {
+      return (
+        <div className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm">
+          <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">
+            {attachment.name.split('.').pop()?.slice(0, 3)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs truncate">{attachment.name}</div>
+            <div className="text-2xs text-muted">
+              {formatBytes(attachment.size)} · {mine ? 'Was not accepted in time' : 'Expired - ask them to send it again'}
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-2.5 p-2 rounded-card border border-edge bg-raised max-w-sm">
         <span className="h-8 w-8 rounded-input bg-base border border-edge grid place-items-center text-2xs uppercase text-muted shrink-0">

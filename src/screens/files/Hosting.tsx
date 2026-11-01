@@ -3,6 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   AppWindow,
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -587,6 +589,38 @@ function HostDown({ port }: { port: number }) {
   );
 }
 
+/**
+ * The switches, folded away.
+ *
+ * Five settings sat above the folders, each a paragraph tall, and the page
+ * opened onto them instead of onto what was published. They are still all
+ * here, in one box that starts shut; what stays outside it is what is wrong
+ * right now (a dead server, a network that is not private), which is not
+ * something to fold.
+ *
+ * The contents are kept mounted while it is shut and only hidden, so each
+ * setting goes on reading its own state and nothing waits to load when it is
+ * opened.
+ */
+function MoreOptions({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="mb-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left rounded-card border border-edge bg-surface hover:bg-raised/50 transition-colors"
+      >
+        {open ? <ChevronDown size={15} className="text-muted" /> : <ChevronRight size={15} className="text-muted" />}
+        <span className="text-xs font-medium">More options</span>
+        <span className="text-2xs text-muted">Keep serving, start-up, the landing page, guests</span>
+      </button>
+      <div className={open ? 'mt-3' : 'hidden'}>{children}</div>
+    </div>
+  );
+}
+
 export function Hosting() {
   const shares = useStore((s) => s.shares);
   const setShares = useStore((s) => s.setShares);
@@ -644,10 +678,12 @@ export function Hosting() {
         <HostDown port={net ? net.hostPort : 7981} />
         {/* Publishing is exactly where "nobody can reach my files" matters. */}
         <NetworkPrivacy />
-        <KeepHosting />
-        <HostAtBoot />
-        <OfferTheApp />
-        <GuestAccess />
+        <MoreOptions>
+          <KeepHosting />
+          <HostAtBoot />
+          <OfferTheApp />
+          <GuestAccess />
+        </MoreOptions>
 
         {shares.length === 0 ? (
           <Empty
