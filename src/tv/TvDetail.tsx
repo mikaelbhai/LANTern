@@ -168,8 +168,10 @@ export function TvDetail({
               return (
                 <span
                   key={b.id}
+                  onMouseEnter={() => active && (setZone('buttons'), setButton(i))}
+                  onClick={() => active && (setZone('buttons'), setButton(i), b.run())}
                   className={cn(
-                    'tv-lift inline-flex items-center rounded-full font-semibold',
+                    'tv-lift inline-flex items-center rounded-full font-semibold cursor-pointer',
                     focused ? 'bg-white text-black' : 'bg-white/25 text-white',
                   )}
                   style={{
@@ -204,8 +206,14 @@ export function TvDetail({
                   return (
                     <span
                       key={s.season}
+                      onClick={() => {
+                        if (!active) return;
+                        setSeason(s.season);
+                        setEpAt(0);
+                        setZone('seasons');
+                      }}
                       className={cn(
-                        'tv-lift rounded-full font-semibold',
+                        'tv-lift rounded-full font-semibold cursor-pointer',
                         cursor ? 'bg-white text-black' : here ? 'bg-white/25 text-white' : 'text-white/55',
                       )}
                       style={{
@@ -225,7 +233,15 @@ export function TvDetail({
             )}
             <div className="flex overflow-hidden" style={{ gap: u(1.8), padding: `${u(1.2)} 0 ${u(1)}` }}>
               {episodes.map((ep, i) => (
-                <EpisodeCard key={ep.id} ep={ep} n={i} fallbackTitle={collection?.title ?? ''} focused={active && zone === 'episodes' && i === epAt} />
+                <EpisodeCard
+                  key={ep.id}
+                  ep={ep}
+                  n={i}
+                  fallbackTitle={collection?.title ?? ''}
+                  focused={active && zone === 'episodes' && i === epAt}
+                  onHover={() => active && (setZone('episodes'), setEpAt(i))}
+                  onPick={() => active && onPlay(ep)}
+                />
               ))}
             </div>
           </div>
@@ -240,17 +256,27 @@ function EpisodeCard({
   n,
   fallbackTitle,
   focused,
+  onHover,
+  onPick,
 }: {
   ep: MediaItem;
   n: number;
   fallbackTitle: string;
   focused: boolean;
+  onHover?: () => void;
+  onPick?: () => void;
 }) {
   const pct = ep.durationSec > 0 ? (ep.progressSec / ep.durationSec) * 100 : 0;
   const done = isFinished(ep);
   const name = ep.title === fallbackTitle ? `Episode ${ep.episode ?? n + 1}` : ep.title;
   return (
-    <div data-ep={n} className="shrink-0" style={{ width: EP_W }}>
+    <div
+      data-ep={n}
+      className="shrink-0"
+      style={{ width: EP_W, cursor: onPick ? 'pointer' : undefined }}
+      onMouseEnter={onHover}
+      onClick={onPick}
+    >
       <div
         className="tv-lift relative overflow-hidden bg-white/10"
         style={{

@@ -140,11 +140,18 @@ export function TvDevices({
     return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
-  const button = (focused: boolean, children: React.ReactNode, key?: string) => (
+  const button = (focused: boolean, children: React.ReactNode, which: 0 | 1) => (
     <span
-      key={key}
+      onMouseEnter={() => active && setAt(which)}
+      onClick={() => {
+        if (!active) return;
+        setAt(which);
+        if (which === 0) onRefresh();
+        else if (phase.k === 'ready') void go(phase.found, phase.chosen);
+        else if (phase.k !== 'checking' && phase.k !== 'working') void check();
+      }}
       className={cn(
-        'tv-lift inline-flex items-center rounded-full font-semibold',
+        'tv-lift inline-flex items-center rounded-full font-semibold cursor-pointer',
         focused ? 'bg-white text-black' : 'bg-white/15 text-white/80',
       )}
       style={{
@@ -162,13 +169,16 @@ export function TvDevices({
 
   return (
     <div className="h-full overflow-hidden" style={{ padding: `${u(10)} ${u(5)} ${u(4)}` }}>
-      <h1 className="font-bold" style={{ fontSize: u(4.4), marginBottom: u(2), letterSpacing: '-0.01em' }}>
+      <h1 className="font-bold" style={{ fontSize: u(4.4), marginBottom: u(0.6), letterSpacing: '-0.01em' }}>
         Devices
       </h1>
+      <p className="text-white/60" style={{ fontSize: u(1.8), marginBottom: u(2) }}>
+        Sharing a library right now
+      </p>
 
       {!peers.length ? (
         <p className="text-white/60" style={{ fontSize: u(2.2), maxWidth: u(80) }}>
-          No other device has been found yet. Open LANTern on a computer or phone on this Wi-Fi.
+          No device is sharing a library right now. Open LANTern on a computer or phone on this Wi-Fi and publish a media folder.
         </p>
       ) : (
         <div className="grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: u(1.6), maxWidth: u(130) }}>
@@ -202,6 +212,7 @@ export function TvDevices({
             <RefreshCw className={busy ? 'animate-spin' : undefined} style={{ width: u(2.3), height: u(2.3) }} />
             {busy ? 'Refreshing…' : 'Refresh'}
           </>,
+          0,
         )}
         <div>
           {button(
@@ -210,6 +221,7 @@ export function TvDevices({
               <Download style={{ width: u(2.3), height: u(2.3) }} />
               {updateLabel(phase)}
             </>,
+            1,
           )}
           <div className="text-white/60" style={{ fontSize: u(1.7), marginTop: u(1), maxWidth: u(60) }}>
             {updateNote(phase)}

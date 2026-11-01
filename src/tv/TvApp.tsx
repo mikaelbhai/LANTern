@@ -115,8 +115,8 @@ export function TvApp() {
    * line with the stack - and the next Back went straight through the question
    * and out of the app, which is the whole app then loading again from nothing.
    */
-  const where = React.useRef({ detail, zone });
-  where.current = { detail, zone };
+  const where = React.useRef({ detail, zone, playing });
+  where.current = { detail, zone, playing };
   useRootBack(() => {
     const w = where.current;
     if (w.detail) setDetail(null);
@@ -125,7 +125,70 @@ export function TvApp() {
   });
   React.useEffect(() => on('tv:backhold', () => setLeaving(true)), []);
 
-  const peerList = React.useMemo(() => Object.values(peers), [peers]);
+  /*
+   * A mouse.
+   *
+   * A television is driven by a remote and has no pointer, so the cursor was
+   * hidden and nothing answered a click. A mouse plugged in is now another way
+   * of pressing the same buttons: moving it shows the cursor (and hides it again
+   * when it rests), hovering a card or button puts the cursor there, a click is
+   * OK, the wheel is Up and Down, and the right button is Back.
+   *
+   * The wheel and the right button do not know about any page: they press the
+   * key the remote would, so every page already handles them.
+   */
+  const [pointer, setPointer] = React.useState(false);
+  React.useEffect(() => {
+    let idle: number | undefined;
+    let lastWheel = 0;
+    const key = (name: string, code: number) =>
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: name, keyCode: code, bubbles: true, cancelable: true }),
+      );
+    const move = () => {
+      setPointer(true);
+      window.clearTimeout(idle);
+      idle = window.setTimeout(() => setPointer(false), 4000);
+    };
+    const wheel = (e: WheelEvent) => {
+      // A film has no list to scroll, and a menu inside it has its own rows.
+      if (where.current.playing || Math.abs(e.deltaY) < 4) return;
+      const now = Date.now();
+      if (now - lastWheel < 140) return;
+      lastWheel = now;
+      key(e.deltaY > 0 ? 'ArrowDown' : 'ArrowUp', e.deltaY > 0 ? 40 : 38);
+    };
+    const context = (e: MouseEvent) => {
+      e.preventDefault();
+      history.back();
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('wheel', wheel, { passive: true });
+    window.addEventListener('contextmenu', context);
+    return () => {
+      window.clearTimeout(idle);
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('wheel', wheel);
+      window.removeEventListener('contextmenu', context);
+    };
+  }, []);
+
+  /*
+   * Only the devices that are hosting, right now.
+   *
+   * A television has nothing to do with a phone's chat or a laptop that is only
+   * browsing: what it wants to know about the network is who it can watch from.
+   * So the list - and the count in the bar - is the devices that are serving a
+   * library at this moment, or serving with nobody signed in, and nothing is
+   * kept about the rest.
+   */
+  const peerList = React.useMemo(() => {
+    const serving = new Set<string>();
+    for (const i of items) if (i.peerId) serving.add(i.peerId);
+    return Object.values(peers).filter(
+      (p) => p.hostOnly || serving.has(p.id) || serving.has(p.deviceId),
+    );
+  }, [peers, items]);
   const devices = React.useMemo(() => peerList.map((p) => p.name).filter(Boolean), [peerList]);
 
   const peerOverrides = usePeerOverrides();
@@ -200,7 +263,7 @@ export function TvApp() {
   return (
     <div
       className="cinema tv-apple fixed inset-0 bg-black text-white overflow-hidden select-none"
-      style={{ ['--u' as string]: UNIT, cursor: 'none' }}
+      style={{ ['--u' as string]: UNIT, cursor: pointer ? 'default' : 'none' }}
     >
       <div className={playing ? 'invisible h-full' : 'h-full'}>
         <div className="relative h-full">
@@ -226,7 +289,22 @@ export function TvApp() {
           </div>
 
           {!detail && (
-            <TvTabs current={tab} stop={stop} focused={barActive} busy={busy} deviceCount={peerList.length} />
+            <TvTabs
+              current={tab}
+              stop={stop}
+              focused={barActive}
+              busy={busy}
+              deviceCount={peerList.length}
+              onPointer={(s, kind) => {
+                if (playing || leaving) return;
+                setStop(s);
+                setZone('tabs');
+                if (kind === 'click') {
+                  if (s === TABS.length) void rescanRef.current();
+                  else setZone('page');
+                }
+              }}
+            />
           )}
         </div>
 

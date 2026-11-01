@@ -50,6 +50,8 @@ export function TvHero({
   count,
   focused,
   infoFocused,
+  onPlayPointer,
+  onInfoPointer,
 }: {
   tile: Tile;
   index: number;
@@ -58,6 +60,9 @@ export function TvHero({
   focused: boolean;
   /** ...or on the information button beside it. */
   infoFocused: boolean;
+  /** A mouse over (hover) or on (click) the Play button, and the same for information. */
+  onPlayPointer?: (kind: 'hover' | 'click') => void;
+  onInfoPointer?: (kind: 'hover' | 'click') => void;
 }) {
   const cover = coverOf(tile);
   const title = titleOf(tile);
@@ -103,8 +108,10 @@ export function TvHero({
 
         <div className="flex items-center" style={{ gap: u(1.4), marginTop: u(2.2) }}>
           <span
+            onMouseEnter={() => onPlayPointer?.('hover')}
+            onClick={() => onPlayPointer?.('click')}
             className={cn(
-              'tv-lift inline-flex items-center rounded-full font-semibold',
+              'tv-lift inline-flex items-center rounded-full font-semibold cursor-pointer',
               focused ? 'bg-white text-black' : 'bg-white/25 text-white',
             )}
             style={{
@@ -120,8 +127,10 @@ export function TvHero({
             {playLabel(tile)}
           </span>
           <span
+            onMouseEnter={() => onInfoPointer?.('hover')}
+            onClick={() => onInfoPointer?.('click')}
             className={cn(
-              'tv-lift grid place-items-center rounded-full',
+              'tv-lift grid place-items-center rounded-full cursor-pointer',
               infoFocused ? 'bg-white text-black' : 'bg-white/25 text-white',
             )}
             style={{

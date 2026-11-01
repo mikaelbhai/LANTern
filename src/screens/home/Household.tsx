@@ -89,6 +89,14 @@ export function Household({
 
   const [open, setOpen] = React.useState<string | null>(null);
   const [known, setKnown] = React.useState<Wakeable[]>([]);
+  // The devices paired as this one's own (companions).
+  const [mine, setMine] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => {
+    void api.peers
+      .companions()
+      .then((list) => setMine(new Set(Array.isArray(list) ? list.map((c) => c.deviceId) : [])))
+      .catch(() => setMine(new Set()));
+  }, [peers]);
   const [woken, setWoken] = React.useState<Record<string, string>>({});
 
   // Machines this device knows the hardware address of. Nothing acknowledges
@@ -140,8 +148,15 @@ export function Household({
 
   const needle = query.trim().toLowerCase();
 
+  // Hardware address by device, for joining the ones that are one machine.
+  const macOf = React.useMemo(() => {
+    const by = new Map<string, string>();
+    for (const d of known) if (d.mac) by.set(d.deviceId, d.mac.toLowerCase().replace(/-/g, ':'));
+    return by;
+  }, [known]);
+
   const people = React.useMemo(() => {
-    const all = group(Object.values(peers));
+    const all = group(Object.values(peers), macOf, mine);
     if (!needle) return all;
     // Their own name, or the name of any machine they are at: looking for
     // "pixel" should find the person holding it.
@@ -150,7 +165,7 @@ export function Household({
         p.name.toLowerCase().includes(needle) ||
         p.devices.some((d) => (d.deviceName || '').toLowerCase().includes(needle)),
     );
-  }, [peers, needle]);
+  }, [peers, needle, macOf, mine]);
 
   /*
    * The rooms that are not one person.
@@ -751,13 +766,42 @@ function isAppliance(peer: Peer): boolean {
  * Latency is `-1` until it has been measured, which must not sort as nearer
  * than a device that has actually answered.
  */
-function group(peers: Peer[]): Person[] {
+function group(
+  peers: Peer[],
+  macOf: Map<string, string> = new Map(),
+  mine: Set<string> = new Set(),
+): Person[] {
   const by = new Map<string, Peer[]>();
+  // Names are compared as people compare them: "Mikael" and "MIKAEL" are one
+  // name, and the same name with a space on the end is too. It was the exact
+  // string, so a PC called Mikael and a phone called MIKAEL - the same person,
+  // two devices paired as each other's own - were two rows in the list.
+  const same = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+  const shown = new Map<string, string>();
+  // Two entries with one hardware address are one machine, whatever each is
+  // called: it was reinstalled, or its profile was reset, and it came back as a
+  // new device under a new name. The name stays the weak join it was, but the
+  // address overrules it.
+  const keyByMac = new Map<string, string>();
+  // Devices this one has paired as its own are one person by definition.
+  let ownKey: string | null = null;
   for (const peer of peers) {
     const name = isAppliance(peer)
       ? peer.deviceName || peer.name || 'Unknown'
       : peer.name || peer.deviceName || 'Unknown';
-    by.set(name, [...(by.get(name) ?? []), peer]);
+    let key = same(name);
+    if (mine.has(peer.deviceId) && !isAppliance(peer)) {
+      ownKey ??= key;
+      key = ownKey;
+    }
+    const mac = macOf.get(peer.deviceId);
+    if (mac) {
+      const already = keyByMac.get(mac);
+      if (already) key = already;
+      else keyByMac.set(mac, key);
+    }
+    if (!shown.has(key)) shown.set(key, name);
+    by.set(key, [...(by.get(key) ?? []), peer]);
   }
 
   const nearest = (a: Peer, b: Peer) => {
@@ -765,9 +809,9 @@ function group(peers: Peer[]): Person[] {
     return cost(a) - cost(b);
   };
 
-  const people: Person[] = [...by.entries()].map(([name, devices]) => {
+  const people: Person[] = [...by.entries()].map(([key, devices]) => {
     const here = devices.filter((d) => d.status !== 'offline').sort(nearest);
-    return { name, devices: [...devices].sort(nearest), here, best: here[0] ?? devices[0] };
+    return { name: shown.get(key) ?? key, devices: [...devices].sort(nearest), here, best: here[0] ?? devices[0] };
   });
 
   /*

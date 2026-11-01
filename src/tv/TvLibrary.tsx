@@ -157,7 +157,25 @@ export function TvHome({
   return (
     <div ref={root} className="relative h-full">
       <div data-scroller className="h-full overflow-hidden" style={{ paddingBottom: u(6) }}>
-        {hero && <TvHero tile={hero} index={heroAt} count={heroes.length} focused={active && focus.r < 0 && focus.c === 0} infoFocused={active && focus.r < 0 && focus.c === 1} />}
+        {hero && (
+          <TvHero
+            tile={hero}
+            index={heroAt}
+            count={heroes.length}
+            focused={active && focus.r < 0 && focus.c === 0}
+            infoFocused={active && focus.r < 0 && focus.c === 1}
+            onPlayPointer={(k) => {
+              if (!active) return;
+              setFocus({ r: -1, c: 0 });
+              if (k === 'click') handlers.current.onPlay(playTarget(hero));
+            }}
+            onInfoPointer={(k) => {
+              if (!active) return;
+              setFocus({ r: -1, c: 1 });
+              if (k === 'click') handlers.current.onOpen(hero);
+            }}
+          />
+        )}
 
         <div style={{ paddingTop: hero ? 0 : u(10) }}>
           {shelves.map((shelf, r) => {
@@ -186,7 +204,14 @@ export function TvHome({
                 <div className="flex overflow-hidden" style={{ padding: `${u(1.6)} ${u(5)} ${u(2.2)}`, gap: CARD_GAP }}>
                   {from > 0 && <div className="shrink-0" style={{ width: `calc(${from} * ${CARD_STEP})` }} />}
                   {shelf.tiles.slice(from, to).map((tile, i) => (
-                    <TvCard key={tile.key} tile={tile} focused={active && r === focus.r && from + i === focus.c} at={`${r}-${from + i}`} />
+                    <TvCard
+                      key={tile.key}
+                      tile={tile}
+                      focused={active && r === focus.r && from + i === focus.c}
+                      at={`${r}-${from + i}`}
+                      onHover={() => active && setFocus({ r, c: from + i })}
+                      onPick={() => active && handlers.current.onOpen(tile)}
+                    />
                   ))}
                   {to < shelf.tiles.length && (
                     <div className="shrink-0" style={{ width: `calc(${shelf.tiles.length - to} * ${CARD_STEP})` }} />

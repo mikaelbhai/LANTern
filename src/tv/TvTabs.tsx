@@ -28,7 +28,10 @@ export function TvTabs({
   focused,
   busy,
   deviceCount,
+  onPointer,
 }: {
+  /** A mouse over (hover) or on (click) a stop on the bar. */
+  onPointer?: (stop: number, kind: 'hover' | 'click') => void;
   current: Tab;
   /** Which stop has the cursor: 0-3 a tab, 4 Refresh. */
   stop: number;
@@ -57,8 +60,10 @@ export function TvTabs({
           return (
             <span
               key={t.id}
+              onMouseEnter={() => onPointer?.(i, 'hover')}
+              onClick={() => onPointer?.(i, 'click')}
               className={cn(
-                'tv-lift rounded-full font-semibold',
+                'tv-lift rounded-full font-semibold cursor-pointer',
                 cursor ? 'bg-white text-black' : here ? 'bg-white/20 text-white' : 'text-white/60',
               )}
               style={{
@@ -80,8 +85,10 @@ export function TvTabs({
       <div className="flex items-center justify-end text-white/60" style={{ width: u(14), gap: u(1.2), fontSize: u(1.8) }}>
         {deviceCount > 0 && <span>{deviceCount === 1 ? '1 device' : `${deviceCount} devices`}</span>}
         <span
+          onMouseEnter={() => onPointer?.(TABS.length, 'hover')}
+          onClick={() => onPointer?.(TABS.length, 'click')}
           className={cn(
-            'tv-lift grid place-items-center rounded-full',
+            'tv-lift grid place-items-center rounded-full cursor-pointer',
             focused && stop === TABS.length ? 'bg-white text-black' : 'bg-white/10 text-white/80',
           )}
           style={{

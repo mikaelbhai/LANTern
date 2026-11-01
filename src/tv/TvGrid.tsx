@@ -103,6 +103,8 @@ export function TvGrid({
                         focused={active && r * COLUMNS + c === at}
                         at={`${r}-${c}`}
                         width={COL_W}
+                        onHover={() => active && setAt(r * COLUMNS + c)}
+                        onPick={() => active && handlers.current.onOpen(tile)}
                       />
                     ))}
                   </div>

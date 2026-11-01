@@ -4522,6 +4522,12 @@ fn remember_macs(state: &AppState) {
     });
 
     for (device_id, ip, name, device_name, os) in seen {
+        // A browser guest is here for as long as its tab is, and nothing of it
+        // is kept: no progress, no history. Writing it down put every guest
+        // ever let in on the list of devices "not here right now", for good.
+        if os == "unknown" {
+            continue;
+        }
         // A paired device that has told us its own address is not asked again.
         // The ARP table answers with whatever is on the far side of the nearest
         // hop - a router's address, for a machine on another network - and a
@@ -4559,6 +4565,66 @@ fn remember_macs(state: &AppState) {
             }
         });
     }
+}
+
+/// Sleeping records that are only the shadow of a device that is here.
+///
+/// `rows` are (name, machine name) and `alive` says which are here. A record
+/// that is not here, whose name and machine name are both filled in and match
+/// (ignoring case) a record that is, is a ghost of it. Where either is empty
+/// nothing is claimed, so two unnamed machines are never taken for one.
+fn ghosts_of_live(rows: &[(String, String)], alive: &[bool]) -> Vec<usize> {
+    let key = |r: &(String, String)| {
+        let (a, b) = (r.0.trim().to_lowercase(), r.1.trim().to_lowercase());
+        if a.is_empty() || b.is_empty() { None } else { Some(format!("{a}\u{1}{b}")) }
+    };
+    let live: std::collections::HashSet<String> = rows
+        .iter()
+        .zip(alive)
+        .filter(|(_, here)| **here)
+        .filter_map(|(r, _)| key(r))
+        .collect();
+    rows.iter()
+        .zip(alive)
+        .enumerate()
+        .filter(|(_, (r, here))| !**here && key(r).is_some_and(|k| live.contains(&k)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Which remembered devices are really one machine.
+///
+/// `rows` are (hardware address, last seen) and `alive` says which are here
+/// right now. Rows with the same, non-empty address are one machine: the one
+/// that is here wins, otherwise the most recently seen, and the rest are
+/// returned to be forgotten. A row with no address is never merged with
+/// anything - nothing says it is the same as another.
+///
+/// Returns `(keep, forget)`: a flag per row, and the indexes to delete.
+fn merge_by_mac(rows: &[(String, i64)], alive: &[bool]) -> (Vec<bool>, Vec<usize>) {
+    let mut keep = vec![true; rows.len()];
+    let mut forget = Vec::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, (mac, _)) in rows.iter().enumerate() {
+        if mac.is_empty() {
+            continue;
+        }
+        let key = mac.to_ascii_lowercase().replace('-', ":");
+        match seen.get(&key).copied() {
+            None => {
+                seen.insert(key, i);
+            }
+            Some(j) => {
+                // Alive beats asleep; between equals, the newer.
+                let better = |a: usize, b: usize| (alive[a], rows[a].1) > (alive[b], rows[b].1);
+                let (winner, loser) = if better(i, j) { (i, j) } else { (j, i) };
+                keep[loser] = false;
+                forget.push(loser);
+                seen.insert(key, winner);
+            }
+        }
+    }
+    (keep, forget)
 }
 
 /// Whether a magic packet has any chance of reaching this kind of machine.
@@ -4628,7 +4694,7 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
             return Vec::new();
         };
         let Ok(mut q) = db.prepare(
-            "SELECT device_id, mac, name, device_name, os FROM device_macs ORDER BY name, device_name",
+            "SELECT device_id, mac, name, device_name, os, seen_at FROM device_macs ORDER BY name, device_name",
         ) else {
             return Vec::new();
         };
@@ -4640,15 +4706,56 @@ pub fn wakeable(state: State<'_, AppState>) -> Vec<serde_json::Value> {
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3).unwrap_or_default(),
                 row.get::<_, String>(4).unwrap_or_default(),
+                row.get::<_, i64>(5).unwrap_or(0),
             ))
         });
         let Ok(rows) = rows else {
             return Vec::new();
         };
 
+        // Guests were remembered by older builds; they are not any more, and the
+        // ones already written down are dropped here.
+        let rows: Vec<(String, String, String, String, String, i64)> =
+            rows.flatten().filter(|r| r.4 != "unknown").collect();
+        // The same machine under two ids (a reinstall, or a profile that was
+        // reset) has the same hardware address: one of them is here, or newer,
+        // and the other is only a ghost of it that shows as "not here right now"
+        // beside the real one.
+        let alive: Vec<bool> = rows
+            .iter()
+            .map(|r| s.peers.values().any(|p| p.device_id == r.0))
+            .collect();
+        let (mut keep, mut forgotten) = merge_by_mac(
+            &rows.iter().map(|r| (r.1.clone(), r.5)).collect::<Vec<_>>(),
+            &alive,
+        );
+        // A device whose address was never learned (a phone cannot read ARP) can
+        // still be recognised: the same name on the same kind of machine as one
+        // that is here now is that machine, remembered under an id it no longer
+        // uses. Only ever the sleeping copy is dropped.
+        let ghosts = ghosts_of_live(
+            &rows.iter().map(|r| (r.2.clone(), r.3.clone())).collect::<Vec<_>>(),
+            &alive,
+        );
+        for i in ghosts {
+            if keep[i] {
+                keep[i] = false;
+                forgotten.push(i);
+            }
+        }
+        if let Some(db) = s.db.as_ref() {
+            for i in forgotten {
+                let _ = db.execute("DELETE FROM device_macs WHERE device_id = ?1", [&rows[i].0]);
+            }
+            let _ = db.execute("DELETE FROM device_macs WHERE os = 'unknown'", []);
+        }
+
         let mut out: Vec<serde_json::Value> = Vec::new();
-        for row in rows.flatten() {
-            let (device_id, mac, name, device_name, os) = row;
+        for (index, row) in rows.into_iter().enumerate() {
+            if !keep[index] {
+                continue;
+            }
+            let (device_id, mac, name, device_name, os, _seen) = row;
             let peer = s.peers.values().find(|p| p.device_id == device_id);
 
             // A peer that is here is the better source: it may have been
@@ -5509,5 +5616,77 @@ mod lan_installer_tests {
         assert!(!ok("http://192.168.100.117:7981/get/../secret.apk"));
         assert!(!ok("http://192.168.100.117:7981/get/a/b.apk"));
         assert!(!ok("http://192.168.100.117:7981/get/"));
+    }
+}
+
+#[cfg(test)]
+mod same_machine_tests {
+    use super::merge_by_mac;
+
+    fn rows(list: &[(&str, i64)]) -> Vec<(String, i64)> {
+        list.iter().map(|(m, t)| (m.to_string(), *t)).collect()
+    }
+
+    #[test]
+    fn two_ids_with_one_address_become_one_and_the_live_one_stays() {
+        // The old id (asleep, seen longer ago) and the new one (here now).
+        let r = rows(&[("aa:bb:cc:dd:ee:01", 100), ("AA-BB-CC-DD-EE-01", 900)]);
+        let (keep, forget) = merge_by_mac(&r, &[false, true]);
+        assert_eq!(keep, vec![false, true]);
+        assert_eq!(forget, vec![0]);
+    }
+
+    #[test]
+    fn neither_here_the_newer_stays() {
+        let r = rows(&[("aa:bb:cc:dd:ee:01", 900), ("aa:bb:cc:dd:ee:01", 100)]);
+        let (keep, _) = merge_by_mac(&r, &[false, false]);
+        assert_eq!(keep, vec![true, false]);
+    }
+
+    #[test]
+    fn different_addresses_and_missing_addresses_are_left_alone() {
+        let r = rows(&[("aa:bb:cc:dd:ee:01", 1), ("aa:bb:cc:dd:ee:02", 2), ("", 3), ("", 4)]);
+        let (keep, forget) = merge_by_mac(&r, &[true, true, false, false]);
+        assert_eq!(keep, vec![true, true, true, true]);
+        assert!(forget.is_empty());
+    }
+
+    #[test]
+    fn three_of_one_machine_leave_exactly_one() {
+        let r = rows(&[("aa:bb:cc:dd:ee:01", 5), ("aa:bb:cc:dd:ee:01", 9), ("aa:bb:cc:dd:ee:01", 7)]);
+        let (keep, forget) = merge_by_mac(&r, &[false, false, false]);
+        assert_eq!(keep.iter().filter(|k| **k).count(), 1);
+        assert_eq!(forget.len(), 2);
+        assert!(keep[1], "the most recently seen is kept");
+    }
+}
+
+#[cfg(test)]
+mod ghost_tests {
+    use super::ghosts_of_live;
+
+    fn rows(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn a_sleeping_copy_of_a_device_that_is_here_is_a_ghost() {
+        // The Pixel, remembered twice: once under the id it has now, once under an old one.
+        let r = rows(&[("Mikael", "Pixel 9a"), ("MIKAEL", "pixel 9a")]);
+        assert_eq!(ghosts_of_live(&r, &[true, false]), vec![1]);
+        assert_eq!(ghosts_of_live(&r, &[false, true]), vec![0]);
+    }
+
+    #[test]
+    fn two_that_are_both_asleep_or_both_here_are_left_alone() {
+        let r = rows(&[("Mikael", "Pixel 9a"), ("Mikael", "Pixel 9a")]);
+        assert!(ghosts_of_live(&r, &[false, false]).is_empty());
+        assert!(ghosts_of_live(&r, &[true, true]).is_empty());
+    }
+
+    #[test]
+    fn a_different_machine_or_an_unnamed_one_is_not_claimed() {
+        let r = rows(&[("Mikael", "MIKAEL-PC"), ("Mikael", "Pixel 9a"), ("", ""), ("", "")]);
+        assert!(ghosts_of_live(&r, &[true, false, true, false]).is_empty());
     }
 }

@@ -398,6 +398,22 @@ export function TvPlayer({
   const pressRef = React.useRef(press);
   pressRef.current = press;
 
+  // The buttons, pressed by a mouse: the same action OK has on each.
+  const runButton = (i: number) => {
+    const chosen = buttons[i];
+    if (!chosen) return;
+    if (chosen.id === 'prev' && previous) onPlay(previous);
+    else if (chosen.id === 'next' && next) onPlay(next);
+    else if (chosen.id === 'subs') {
+      setMenuAt(subtitle + 1);
+      setMenu('subs');
+    } else if (chosen.id === 'audio') {
+      setMenuAt(audioTrack + 1);
+      setMenu('audio');
+    }
+  };
+  const barRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (suspendedRef.current) return;
@@ -475,7 +491,30 @@ export function TvPlayer({
   const barFocus = zone === 'bar';
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black text-white overflow-hidden select-none">
+    <div
+      className="fixed inset-0 z-[60] bg-black text-white overflow-hidden select-none"
+      // A mouse moving brings the controls up; a click on the picture is OK.
+      onMouseMove={() => {
+        wake();
+        setZone((z) => (z === 'hidden' ? 'bar' : z));
+      }}
+      onClick={() => pressRef.current('ok', 0)}
+    >
+      {/* The way back, for somebody with a mouse. */}
+      <div
+        className={cn(
+          'absolute z-10 grid place-items-center rounded-full bg-black/55 cursor-pointer transition-opacity duration-200',
+          controls && !failed ? 'opacity-100' : 'opacity-0 pointer-events-none',
+        )}
+        style={{ top: u(3), right: u(4), width: u(5.4), height: u(5.4) }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        aria-label="Close"
+      >
+        <span style={{ fontSize: u(3.2), lineHeight: 1 }}>×</span>
+      </div>
       <video
         key={attempt}
         ref={videoRef}
@@ -617,8 +656,15 @@ export function TvPlayer({
                   return (
                     <div
                       key={`${label}-${i}`}
+                      onMouseEnter={() => setMenuAt(i)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (menu === 'subs') chooseSubtitle(i - 1);
+                        else chooseAudio(i - 1);
+                        setMenu(null);
+                      }}
                       className={cn(
-                        'flex items-center justify-between rounded-xl',
+                        'flex items-center justify-between rounded-xl cursor-pointer',
                         i === menuAt ? 'bg-gold text-on-gold font-semibold' : 'text-white/85',
                       )}
                       style={{ height: u(5), paddingInline: u(1.8), fontSize: u(2.1) }}
@@ -636,8 +682,18 @@ export function TvPlayer({
           <>
             {/* The bar: thin and white, thicker with the cursor on it. */}
             <div
-              className="relative rounded-full bg-white/25 transition-all"
+              ref={barRef}
+              className="relative rounded-full bg-white/25 transition-all cursor-pointer"
               style={{ height: barFocus ? u(1) : u(0.6) }}
+              onClick={(e) => {
+                // Anywhere along the bar is that far into the film.
+                e.stopPropagation();
+                const box = barRef.current?.getBoundingClientRect();
+                if (!box || box.width <= 0 || !(latest.current.duration > 0)) return;
+                const fraction = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+                wake();
+                seekTo(fraction * latest.current.duration);
+              }}
             >
               <div className="absolute inset-y-0 left-0 rounded-full bg-white/40" style={{ width: `${donePct}%` }} />
               <div className="absolute inset-y-0 left-0 rounded-full bg-white" style={{ width: `${pct}%` }} />
@@ -666,8 +722,19 @@ export function TvPlayer({
                   return (
                     <div
                       key={b.id}
+                      onMouseEnter={() => {
+                        setZone('buttons');
+                        setButton(i);
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        wake();
+                        setZone('buttons');
+                        setButton(i);
+                        runButton(i);
+                      }}
                       className={cn(
-                        'tv-lift flex items-center justify-center rounded-full',
+                        'tv-lift flex items-center justify-center rounded-full cursor-pointer',
                         focused ? 'bg-white text-black font-semibold' : 'bg-white/20 text-white',
                       )}
                       style={{

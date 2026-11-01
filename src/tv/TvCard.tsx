@@ -47,12 +47,18 @@ export function TvCard({
   focused,
   at,
   width = CARD_W,
+  onHover,
+  onPick,
 }: {
   tile: Tile;
   focused: boolean;
   /** Where it is on the page, for scrolling it into view. */
   at: string;
   width?: string;
+  /** A mouse over it: the cursor moves here. */
+  onHover?: () => void;
+  /** A click on it: the same as OK. */
+  onPick?: () => void;
 }) {
   const cover = coverOf(tile);
   const title = titleOf(tile);
@@ -61,7 +67,13 @@ export function TvCard({
   const done = tile.kind === 'item' && isFinished(tile.item);
 
   return (
-    <div data-tile={at} className="shrink-0" style={{ width }}>
+    <div
+      data-tile={at}
+      className="shrink-0"
+      style={{ width, cursor: onPick ? 'pointer' : undefined }}
+      onMouseEnter={onHover}
+      onClick={onPick}
+    >
       <div
         className="tv-lift relative overflow-hidden bg-white/10"
         style={{

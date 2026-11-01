@@ -104,10 +104,12 @@ export function TvExitPrompt({ onStay, onLeave }: { onStay: () => void; onLeave:
 
   const button = (label: string, index: 0 | 1) => (
     <div
+      onMouseEnter={() => setAt(index)}
+      onClick={() => (index === 1 ? leave : stay).current()}
       className={
         at === index
-          ? 'rounded-2xl font-bold bg-white text-black ring-4 ring-white/40'
-          : 'rounded-2xl font-bold bg-white/10 text-white/80'
+          ? 'rounded-2xl font-bold bg-white text-black ring-4 ring-white/40 cursor-pointer'
+          : 'rounded-2xl font-bold bg-white/10 text-white/80 cursor-pointer'
       }
       style={{ fontSize: u(2.4), padding: `${u(1.4)} ${u(5)}`, minWidth: u(16), textAlign: 'center' }}
     >
