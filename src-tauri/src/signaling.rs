@@ -1260,6 +1260,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         // a TXT record is a few hundred bytes and a picture is not, so the
         // announcement says who is there and this says what they look like.
         "profile" => "peer:profile",
+        // "Send me yours." A device that has not got a peer's picture asks for
+        // it, rather than waiting for the peer to push one at a moment when
+        // the link may not be up.
+        "profilereq" => "peer:profilereq",
         // An address on a network this one cannot be found from, passed on
         // by a peer that already had it. Handled natively rather than in the
         // frontend: the dialling is native, and a device with no window open

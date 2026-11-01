@@ -62,6 +62,57 @@ export async function toAvatar(file: File | Blob): Promise<string> {
 }
 
 /**
+ * How long a stored picture may be, as a data URL, before it is made smaller.
+ *
+ * About eighteen kilobytes of picture. A 128px JPEG is five to ten, so anything
+ * over this was not made by `toAvatar`: it is a picture saved by an older
+ * version, which kept the original or a large PNG. The native side refuses to
+ * send one over 96 KB at all - silently, to the person who set it - so a photo
+ * that showed on its own device never reached any other.
+ */
+export const AVATAR_MAX_CHARS = 24_000;
+
+/**
+ * Makes a stored picture small enough to send, or returns it unchanged when it
+ * already is.
+ *
+ * The same 128px centred square as a fresh upload, then a lower quality if that
+ * is still too big. Never returns something larger than it was given. If the
+ * picture cannot be read at all it is returned as it was: a picture that cannot
+ * be shrunk is for the caller to leave out of what it sends, not for this to
+ * delete.
+ */
+export async function fitAvatar(dataUrl: string, max = AVATAR_MAX_CHARS): Promise<string> {
+  if (!dataUrl || dataUrl.length <= max) return dataUrl;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('unreadable'));
+      i.src = dataUrl;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    const sx = (img.naturalWidth - side) / 2;
+    const sy = (img.naturalHeight - side) / 2;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, SIZE, SIZE);
+    for (const quality of [QUALITY, 0.65, 0.5]) {
+      const out = canvas.toDataURL('image/jpeg', quality);
+      if (out.length <= max) return out.length < dataUrl.length ? out : dataUrl;
+    }
+    const last = canvas.toDataURL('image/jpeg', 0.4);
+    return last.length < dataUrl.length ? last : dataUrl;
+  } catch {
+    return dataUrl;
+  }
+}
+
+/**
  * A decoded frame, by whichever route this webview supports.
  *
  * `createImageBitmap` is the cheap one and is what Android's WebView has.

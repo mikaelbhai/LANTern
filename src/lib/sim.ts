@@ -755,6 +755,9 @@ export async function handle(cmd: string, args: any): Promise<any> {
     case 'peers_trusted':
       return [];
 
+    case 'profile_request':
+      return true;
+
     // Updating from the television: nothing on the network, nothing to fetch.
     case 'update_scan_local':
       return [];

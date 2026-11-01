@@ -30,6 +30,7 @@ import type {
   VoiceClip,
   GameSession,
 } from './types';
+import { fitAvatar } from './avatar';
 import { canForwardMessage, uid } from './utils';
 
 /**
@@ -365,6 +366,8 @@ interface State {
   setProfile: (p: Partial<Profile>) => void;
   /** Sends this device's appearance to one peer, or to all of them. */
   shareProfile: (peerId?: string) => Promise<void>;
+  /** Asks a peer for its picture, retrying until the link is up. */
+  requestProfile: (peerId: string) => Promise<void>;
   setSettings: (fn: (s: Settings) => Settings) => void;
 
   ensureDm: (peerId: string) => string;
@@ -1010,6 +1013,17 @@ export const useStore = create<State>((set, get) => {
         })
         .catch(() => {});
 
+      // A picture saved by an older version may be far too big to send; make it
+      // the size a new one is, once, and tell the network.
+      if (get().profile.avatar) {
+        void fitAvatar(get().profile.avatar!).then((smaller) => {
+          if (smaller === get().profile.avatar) return;
+          set((s) => ({ profile: { ...s.profile, avatar: smaller } }));
+          persist(get());
+          void get().shareProfile();
+        });
+      }
+
       on('peer:joined', (p: Peer) => {
         rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
         set((s) => ({ peers: { ...s.peers, [p.id]: p } }));
@@ -1020,11 +1034,21 @@ export const useStore = create<State>((set, get) => {
         // before it is up is a no-op that nothing retries. One second is
         // long enough for the reconciler to have connected and short enough
         // that a face appears while somebody is still looking at the row.
+        // Ask for theirs as well as sending ours: whichever side's link comes
+        // up first, both pictures get exchanged.
+        void get().requestProfile(p.id);
         setTimeout(() => {
           void get().shareProfile(p.id);
           void flushPendingSend(p.deviceId ?? p.id, p.id);
           void flushFailed(p.deviceId ?? p.id);
         }, 1000);
+      });
+      // Somebody asked for our picture: send it, to them only.
+      on('peer:profilereq', (p: { from: string }) => {
+        const id = Object.keys(get().peers).find(
+          (k) => get().peers[k].deviceId === p.from || k === p.from,
+        );
+        if (id) void get().shareProfile(id);
       });
       on('peer:updated', (p: Peer) => {
         rtc.setPeerRoute(p.deviceId ?? p.id, p.localAddress);
@@ -1618,15 +1642,36 @@ export const useStore = create<State>((set, get) => {
       void get().shareProfile();
     },
 
+    async requestProfile(peerId) {
+      // The same patience as sending: a link that is not up yet answers false.
+      for (const wait of [1000, 3000, 7000, 15000]) {
+        await new Promise((r) => setTimeout(r, wait));
+        const sent = await api.profile.request(peerId).catch(() => false);
+        if (sent !== false) return;
+      }
+    },
+
     async shareProfile(peerId) {
-      const { name, color, emoji, avatar } = get().profile;
+      const { name, color, emoji, avatar: stored } = get().profile;
+      // Whatever is stored, what is sent fits: the native side drops a picture
+      // over 96 KB without telling anybody, and a photo that looked fine here
+      // simply never appeared on any other device.
+      const avatar = stored ? await fitAvatar(stored) : stored;
       const targets = peerId ? [peerId] : Object.keys(get().peers);
       await Promise.allSettled(
-        // Failures are silent and deliberate: a peer whose link is not up
-        // yet simply does not have one, and there is nothing for the person
-        // who changed their picture to do about it. They get it next time
-        // the link comes up, from the `peer:joined` handler.
-        targets.map((id) => api.profile.send(id, { name, color, emoji, avatar })),
+        // A link that is not up yet answers false, and used to be given up on:
+        // the picture is sent once, a second after a device is found, which is
+        // often before the connection is made - and then never again until
+        // somebody changed it. It is tried a few times over the next seconds.
+        targets.map(async (id) => {
+          for (const wait of [0, 2000, 5000, 12000]) {
+            if (wait) await new Promise((r) => setTimeout(r, wait));
+            const sent = await api.profile
+              .send(id, { name, color, emoji, avatar })
+              .catch(() => false);
+            if (sent !== false) return;
+          }
+        }),
       );
     },
 

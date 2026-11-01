@@ -153,6 +153,7 @@ pub fn run() {
             commands::open_privacy_settings,
             commands::profile_announce,
             commands::profile_set_avatar,
+            commands::profile_request,
             commands::profile_has_avatar,
             commands::identity_device_id,
             commands::pip_set_playing,

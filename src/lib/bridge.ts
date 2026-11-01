@@ -173,6 +173,7 @@ export async function startBridge() {
       'companion:fetched',
       'rating:unlocked',
       'peer:profile',
+      'peer:profilereq',
       'installers:progress',
       // A paired device's watch history arrived.
       'history:changed',
@@ -917,6 +918,8 @@ export const api = {
      * hostname, so the network was a list of machines rather than of people.
      */
     announce: (name: string) => call<void>('profile_announce', { name }),
+    /** Asks a peer to send its profile and picture. False when no link is up yet. */
+    request: (peerId: string) => call<boolean>('profile_request', { peerId }),
     /** Stores a 500x500 PNG. An empty array clears it. */
     setAvatar: (png: number[]) => call<void>('profile_set_avatar', { png }),
     hasAvatar: () => call<boolean>('profile_has_avatar'),

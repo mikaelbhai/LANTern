@@ -3773,6 +3773,28 @@ pub fn profile_send(
     ))
 }
 
+/// Asks one peer to send its profile - name, colour and picture - to us.
+///
+/// The pull side of `profile_send`. A push is made once, when a device is found,
+/// and is a no-op if the link is not up yet; this is what a device that is
+/// missing a face can say whenever it likes, and the answer is an ordinary
+/// `profile` message. Carries nothing but the request.
+#[tauri::command]
+pub fn profile_request(state: State<'_, AppState>, peer_id: String) -> Result<bool, String> {
+    let (links, me, device_id) = state.with(|s| {
+        let device = s
+            .peers
+            .get(&peer_id)
+            .map(|p| p.device_id.clone())
+            .unwrap_or_else(|| peer_id.clone());
+        (s.links.clone(), s.device_id.clone(), device)
+    });
+    Ok(links.send(
+        &device_id,
+        &Envelope { v: 1, from: me, kind: "profilereq".into(), payload: serde_json::json!({}) },
+    ))
+}
+
 /// Records this player's progress and reports the race back.
 #[tauri::command]
 pub fn game_report(
