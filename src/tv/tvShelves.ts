@@ -48,9 +48,13 @@ export function homeShelves(items: MediaItem[], grouping: Grouping): Shelf[] {
     .slice(0, 20);
   if (again.length) out.push({ label: 'Watch again', tiles: again.map(itemTile) });
 
-  if (grouping.collections.length) {
-    out.push({ label: 'Shows & collections', tiles: grouping.collections.map(showTile) });
-  }
+  // Series and collections of films are different things to look for: a series
+  // is something you follow, a collection is something you pick a film from.
+  // They were one shelf, and Shows was every collection there was.
+  const series = grouping.collections.filter((c) => c.kind === 'series');
+  const sagas = grouping.collections.filter((c) => c.kind !== 'series');
+  if (series.length) out.push({ label: 'Shows', tiles: series.map(showTile) });
+  if (sagas.length) out.push({ label: 'Movie collections', tiles: sagas.map(showTile) });
 
   const recent = [...grouping.singles].sort((a, b) => b.addedAt - a.addedAt).slice(0, 24);
   if (recent.length) out.push({ label: 'Recently added', tiles: recent.map(itemTile) });
@@ -65,17 +69,29 @@ export function homeShelves(items: MediaItem[], grouping: Grouping): Shelf[] {
   return out;
 }
 
-/** Everything that is a film or a clip, by title. The Movies tab. */
+/**
+ * Everything that is a film or a clip, with the collections of films first.
+ * The Movies tab: a collection is where a film in it is found, so it belongs
+ * here and not only on the home page.
+ */
 export function movieTiles(grouping: Grouping): Tile[] {
-  return grouping.singles
+  const sagas = grouping.collections
+    .filter((c) => c.kind !== 'series')
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map(showTile);
+  const films = grouping.singles
     .filter((i) => i.kind !== 'episode')
     .sort((a, b) => a.title.localeCompare(b.title))
     .map(itemTile);
+  return [...sagas, ...films];
 }
 
-/** Series and collections, by title. The Shows tab. */
+/** Series, by title - only series. The Shows tab. */
 export function showTiles(grouping: Grouping): Tile[] {
-  return [...grouping.collections].sort((a, b) => a.title.localeCompare(b.title)).map(showTile);
+  return grouping.collections
+    .filter((c) => c.kind === 'series')
+    .sort((a, b) => a.title.localeCompare(b.title))
+    .map(showTile);
 }
 
 /** What the hero rotates through: what is being watched first, then the newest. At most five. */

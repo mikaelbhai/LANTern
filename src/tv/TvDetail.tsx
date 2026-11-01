@@ -35,7 +35,9 @@ export function TvDetail({
   onPlay: (i: MediaItem) => void;
 }) {
   const collection: Collection | null = tile.kind === 'show' ? tile.collection : null;
-  const series = collection && collection.kind === 'series' ? collection : null;
+  // Anything made of several titles gets the row beneath: a series' episodes,
+  // or a collection's films. Only a series has seasons to choose between.
+  const series = collection;
   const start = playTarget(tile);
   const cover = coverOf(tile);
   const title = titleOf(tile);
