@@ -1852,13 +1852,21 @@ export const useStore = create<State>((set, get) => {
     },
 
     markRoomRead(roomId) {
+      let changed = false;
       set((s) => {
         const room = s.rooms[roomId];
         if (!room || (room.unread === 0 && room.lastReadAt > Date.now() - 1000)) return {};
+        changed = true;
         return {
           rooms: { ...s.rooms, [roomId]: { ...room, unread: 0, lastReadAt: Date.now() } },
         };
       });
+      // The count is stored with the rooms, and the arrival that raised it was
+      // saved - but reading it only changed it in memory. Anything that quit or
+      // reloaded the page before the next unrelated save brought the old number
+      // back from storage, so a badge that had been cleared came back every time
+      // the app started.
+      if (changed) persist(get());
       get().acknowledgeSeen(roomId);
     },
 

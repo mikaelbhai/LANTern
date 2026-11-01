@@ -145,6 +145,12 @@ pub fn boot(app: AppHandle, state: AppState) {
                 s.instance = device_name.clone();
             });
             state.with(|s| s.thumb_dir = Some(dir.join("thumbnails")));
+            // So ffmpeg's location can be shared with the background host, which
+            // cannot see this user's PATH; asked for once now to write it down.
+            crate::audiotrack::set_data_dir(&dir);
+            std::thread::spawn(|| {
+                let _ = crate::audiotrack::ffmpeg_path();
+            });
             match crate::db::open(&dir) {
                 Ok(conn) => {
                     // Blocks are read before anything can connect, so a device

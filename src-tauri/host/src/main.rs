@@ -121,10 +121,17 @@ async fn main() {
     // The folders the app published, exactly as it left them.
     let restored = shares::restore(&state);
     let live = restored.iter().filter(|s| s.running).count();
+    // The app's own cache of thumbnails, so a frame it has cut is not cut again,
+    // and the place it wrote down where ffmpeg is: this process runs as the
+    // system account when it starts with the computer, and cannot find a
+    // person's ffmpeg by itself.
+    lantern_lib::audiotrack::set_data_dir(&args.data_dir);
+    let thumbs = args.data_dir.join("thumbnails");
     state.with(|s| {
         s.shares = restored;
         s.net.host_port = args.port;
         s.instance = args.name.clone();
+        s.thumb_dir = Some(thumbs);
     });
 
     if live == 0 {

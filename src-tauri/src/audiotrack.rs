@@ -25,27 +25,68 @@ use std::process::Stdio;
 /// here.
 const WEB_SAFE_AUDIO: [&str; 4] = ["AAC", "Opus", "Vorbis", "FLAC"];
 
+static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Tells this module where the app keeps its data, before ffmpeg is first asked
+/// for. Called by the app and by the background host, so that both can read and
+/// write the same `ffmpeg.path`.
+pub fn set_data_dir(dir: &Path) {
+    let _ = DATA_DIR.set(dir.to_path_buf());
+}
+
+fn hint_file() -> Option<std::path::PathBuf> {
+    DATA_DIR.get().map(|d| d.join("ffmpeg.path"))
+}
+
+/// The first directory on a PATH-style list that holds `name`.
+///
+/// Split from the lookup so it can be checked without an ffmpeg installed.
+fn first_on_path(path_var: &str, name: &str, exists: impl Fn(&Path) -> bool) -> Option<std::path::PathBuf> {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    path_var
+        .split(sep)
+        .filter(|d| !d.trim().is_empty())
+        .map(|d| Path::new(d.trim()).join(name))
+        .find(|p| exists(p))
+}
+
 /// Where ffmpeg is, if it is anywhere.
 ///
 /// Resolved once and cached: the answer does not change during a session, and
 /// probing the filesystem on every request would show up as a stutter when
 /// someone scrubs.
+///
+/// An ffmpeg installed for one person (WinGet puts it in their own profile and
+/// on their own PATH) is invisible to the background host that serves the
+/// library before anybody has signed in, which runs as the system account: it
+/// had no thumbnails, no sound on anything its browser could not decode, and no
+/// subtitle tracks, until somebody signed in and the app took over. So the app
+/// writes down where it found it (`ffmpeg.path`, beside its database), and a
+/// process that cannot find one on its own PATH tries that.
 pub fn ffmpeg_path() -> Option<&'static Path> {
     use std::sync::OnceLock;
     static FOUND: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
 
     FOUND
         .get_or_init(|| {
-            // PATH first, then the places Windows package managers put it.
-            let candidates = [
-                "ffmpeg",
-                #[cfg(windows)]
-                r"C:\ffmpeg\bin\ffmpeg.exe",
-                #[cfg(windows)]
-                r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-            ];
+            // PATH first, then what the app last found, then the places
+            // Windows package managers put it.
+            let remembered = hint_file()
+                .and_then(|f| std::fs::read_to_string(f).ok())
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty());
+            let mut candidates: Vec<String> = vec!["ffmpeg".into()];
+            if let Some(r) = remembered.clone() {
+                candidates.push(r);
+            }
+            #[cfg(windows)]
+            {
+                candidates.push(String::from(r"C:fmpeginfmpeg.exe"));
+                candidates.push(String::from(r"C:Program Filesfmpeginfmpeg.exe"));
+            }
 
             for candidate in candidates {
+                let candidate = candidate.as_str();
                 let mut probe = std::process::Command::new(candidate);
                 probe
                     .arg("-version")
@@ -64,6 +105,18 @@ pub fn ffmpeg_path() -> Option<&'static Path> {
                 }
 
                 if probe.status().map(|s| s.success()).unwrap_or(false) {
+                    // Found on this process's own PATH: write down where, for
+                    // whoever cannot see that PATH.
+                    if candidate == "ffmpeg" {
+                        let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+                        let here = std::env::var("PATH").ok().and_then(|p| first_on_path(&p, exe, |f| f.is_file()));
+                        if let (Some(here), Some(file)) = (here, hint_file()) {
+                            let text = here.to_string_lossy().to_string();
+                            if remembered.as_deref() != Some(text.as_str()) {
+                                let _ = std::fs::write(file, text);
+                            }
+                        }
+                    }
                     return Some(std::path::PathBuf::from(candidate));
                 }
             }
@@ -346,6 +399,18 @@ pub fn stream_origin(framecrc: &str, at_sec: f64) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use super::first_on_path;
+    use std::path::Path;
+
+    #[test]
+    fn the_first_directory_holding_the_program_wins() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let list = ["/one", "/two", "/three"].join(sep);
+        let found = first_on_path(&list, "ffmpeg", |p| p == Path::new("/two").join("ffmpeg") || p == Path::new("/three").join("ffmpeg"));
+        assert_eq!(found, Some(Path::new("/two").join("ffmpeg")));
+        assert_eq!(first_on_path(&list, "ffmpeg", |_| false), None);
+        assert_eq!(first_on_path("", "ffmpeg", |_| true), None, "an empty PATH holds nothing");
+    }
 
     /// The numbers from a real file: `-ss 25` into a stream with a keyframe
     /// every ten seconds, which ffmpeg answers with the keyframe at 20 -

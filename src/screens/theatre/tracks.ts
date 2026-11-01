@@ -107,6 +107,12 @@ function authoredName(label: string | undefined): string {
   if (/^track(\s+\d+)?$/i.test(first)) return '';
   // A bare language code is what languageName already tried.
   if (/^[a-z]{2,3}$/i.test(first)) return '';
+  // A codec is not a name. A release with thirty-eight tracks all labelled
+  // "SubRip" was shown as "SubRip 22" ... "SubRip 38", which says what the
+  // text is stored as and nothing about which one to pick.
+  if (/^(subrip|srt|ass|ssa|webvtt|vtt|mov_text|text|timed text|hdmv_pgs_subtitle|pgs|dvd_subtitle|dvdsub|vobsub|subtitles?)$/i.test(first)) {
+    return '';
+  }
   return first;
 }
 

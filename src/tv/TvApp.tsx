@@ -3,7 +3,6 @@ import React from 'react';
 import { api, on } from '../lib/bridge';
 import { claimArrowKeys } from '../lib/tv';
 import { useStore } from '../lib/store';
-import { useBackDismiss } from '../lib/hooks';
 import { emptyOverrides, groupLibrary } from '../lib/collections';
 import { mergeOverrides, usePeerOverrides } from '../lib/peerCollections';
 import type { MediaItem } from '../lib/types';
@@ -105,13 +104,26 @@ export function TvApp() {
     if (!s.onboarded) s.completeOnboarding({ name: 'LANTV' });
   }, []);
 
-  // Back at the bottom of everything, and Back held down anywhere.
-  useRootBack(() => setLeaving(true));
+  /*
+   * Back is one handler, armed once, that works out what it means when it is
+   * pressed: a title's page closes, then the page gives the cursor back to the
+   * bar, then - with nothing left - it asks.
+   *
+   * It used to be a layer for each of those, pushed and released as the cursor
+   * moved between the bar and a page. Each release rewinds the browser's
+   * history asynchronously, so quick presses left the history a step out of
+   * line with the stack - and the next Back went straight through the question
+   * and out of the app, which is the whole app then loading again from nothing.
+   */
+  const where = React.useRef({ detail, zone });
+  where.current = { detail, zone };
+  useRootBack(() => {
+    const w = where.current;
+    if (w.detail) setDetail(null);
+    else if (w.zone === 'page') setZone('tabs');
+    else setLeaving(true);
+  });
   React.useEffect(() => on('tv:backhold', () => setLeaving(true)), []);
-
-  // A title's page closes first; then the page gives the cursor back to the bar.
-  useBackDismiss(!!detail, () => setDetail(null));
-  useBackDismiss(zone === 'page' && !detail, () => setZone('tabs'));
 
   const peerList = React.useMemo(() => Object.values(peers), [peers]);
   const devices = React.useMemo(() => peerList.map((p) => p.name).filter(Boolean), [peerList]);
@@ -230,6 +242,9 @@ export function TvApp() {
           onPlay={setPlaying}
           onClose={() => {
             setPlaying(null);
+            // Back from a film lands on the library, not on the page that was
+            // opened to start it.
+            setDetail(null);
             // What was watched has a new position now.
             void load();
           }}

@@ -9,7 +9,7 @@
 // that links this library. Everything else stays private to it.
 #[cfg(target_os = "android")]
 mod apkinstall;
-mod audiotrack;
+pub mod audiotrack;
 mod battery;
 mod callaudio;
 mod clientlog;

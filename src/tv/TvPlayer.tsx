@@ -37,6 +37,8 @@ type Zone = 'hidden' | 'bar' | 'buttons';
 type Menu = 'subs' | 'audio' | null;
 
 const HIDE_AFTER_MS = 4000;
+/** Rows of a track menu that are on screen at once. */
+const MENU_ROWS = 7;
 const SCRUB_COMMIT_MS = 900;
 
 const clock = (sec: number): string => {
@@ -579,31 +581,57 @@ export function TvPlayer({
         style={{ padding: `${u(10)} ${u(4)} ${u(3.5)}` }}
       >
         {menu ? (
-          <div
-            className="mx-auto bg-neutral-900/95 border border-white/10"
-            style={{ width: u(46), padding: u(1.2), borderRadius: u(2) }}
-          >
-            <div className="text-white/60 uppercase tracking-wider" style={{ fontSize: u(1.5), padding: `${u(0.6)} ${u(1.4)}` }}>
-              {menu === 'subs' ? 'Subtitles' : 'Audio'}
-            </div>
-            {menuItems.map((label, i) => {
-              const current = (menu === 'subs' ? subtitle : audioTrack) === i - 1;
-              return (
+          /*
+           * A window of the list with the cursor in the middle of it.
+           *
+           * Every row used to be drawn: a file with thirty-eight subtitle
+           * tracks made a panel taller than the screen, anchored to the bottom,
+           * so its top - where "Off" and the first language are - was above the
+           * edge, and the cursor was a row somewhere in the middle of it.
+           * Seven rows are shown, and the list slides under the cursor.
+           */
+          (() => {
+            const start = Math.max(0, Math.min(menuAt - Math.floor(MENU_ROWS / 2), menuItems.length - MENU_ROWS));
+            const shown = menuItems.slice(start, start + MENU_ROWS);
+            const above = start;
+            const below = Math.max(0, menuItems.length - (start + shown.length));
+            return (
+              <div
+                className="mx-auto border border-white/10"
+                style={{ width: u(46), padding: u(1.2), borderRadius: u(2), background: '#151515' }}
+              >
                 <div
-                  key={`${label}-${i}`}
-                  className={cn(
-                    'flex items-center justify-between rounded-xl transition-colors',
-                    i === menuAt ? 'bg-gold text-on-gold font-semibold' : 'text-white/85',
-                  )}
-                  style={{ height: u(5), paddingInline: u(1.8), fontSize: u(2.1) }}
-                  data-active={i === menuAt}
+                  className="flex items-center justify-between text-white/60 uppercase tracking-wider"
+                  style={{ fontSize: u(1.5), padding: `${u(0.6)} ${u(1.4)}` }}
                 >
-                  <span className="truncate">{label}</span>
-                  {current && <span style={{ fontSize: u(1.7) }}>●</span>}
+                  <span>{menu === 'subs' ? 'Subtitles' : 'Audio'}</span>
+                  <span className="normal-case tracking-normal">
+                    {above > 0 ? `▲ ${above}` : ''}
+                    {above > 0 && below > 0 ? '   ' : ''}
+                    {below > 0 ? `▼ ${below}` : ''}
+                  </span>
                 </div>
-              );
-            })}
-          </div>
+                {shown.map((label, k) => {
+                  const i = start + k;
+                  const current = (menu === 'subs' ? subtitle : audioTrack) === i - 1;
+                  return (
+                    <div
+                      key={`${label}-${i}`}
+                      className={cn(
+                        'flex items-center justify-between rounded-xl',
+                        i === menuAt ? 'bg-gold text-on-gold font-semibold' : 'text-white/85',
+                      )}
+                      style={{ height: u(5), paddingInline: u(1.8), fontSize: u(2.1) }}
+                      data-active={i === menuAt}
+                    >
+                      <span className="truncate">{label}</span>
+                      {current && <span style={{ fontSize: u(1.7) }}>●</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()
         ) : (
           <>
             {/* The bar: thin and white, thicker with the cursor on it. */}
