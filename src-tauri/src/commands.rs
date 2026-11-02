@@ -5308,6 +5308,12 @@ pub fn ratings_set_device(
     device_id: String,
     max_age: u8,
 ) -> Res<()> {
+    ratings_set_device_apply(&app, &state, device_id, max_age)
+}
+
+/// The body of `ratings_set_device`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn ratings_set_device_apply(app: &AppHandle, state: &AppState, device_id: String, max_age: u8) -> Res<()> {
     state.with(|s| {
         s.device_ages.insert(device_id.clone(), max_age);
         if let Some(db) = s.db.as_ref() {
@@ -5327,6 +5333,12 @@ pub fn ratings_set_device(
 /// The age allowed to a device nobody has set.
 #[tauri::command]
 pub fn ratings_set_default(app: AppHandle, state: State<'_, AppState>, max_age: u8) -> Res<()> {
+    ratings_set_default_apply(&app, &state, max_age)
+}
+
+/// The body of `ratings_set_default`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn ratings_set_default_apply(app: &AppHandle, state: &AppState, max_age: u8) -> Res<()> {
     state.with(|s| {
         if let Some(db) = s.db.as_ref() {
             let _ = db.execute(
@@ -5365,6 +5377,12 @@ pub fn host_set_audience(
     unlisted: bool,
     device_ids: Vec<String>,
 ) -> Res<()> {
+    host_set_audience_apply(&app, &state, share_id, unlisted, device_ids)
+}
+
+/// The body of `host_set_audience`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn host_set_audience_apply(app: &AppHandle, state: &AppState, share_id: String, unlisted: bool, device_ids: Vec<String>) -> Res<()> {
     shares::save_audience(&state, &share_id, &device_ids);
     let updated = state.with(|s| {
         let share = s.shares.iter_mut().find(|sh| sh.id == share_id).map(|share| {
@@ -5403,6 +5421,12 @@ pub fn ratings_approve(
     stream_path: String,
     minutes: Option<u32>,
 ) -> Res<()> {
+    ratings_approve_apply(&app, &state, device_id, stream_path, minutes)
+}
+
+/// The body of `ratings_approve`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn ratings_approve_apply(app: &AppHandle, state: &AppState, device_id: String, stream_path: String, minutes: Option<u32>) -> Res<()> {
     let expires = match minutes {
         Some(m) => crate::model::now_ms() + (m as u64) * 60_000,
         None => crate::rating::NEVER_EXPIRES,
@@ -5438,6 +5462,12 @@ pub fn ratings_revoke(
     device_id: String,
     stream_path: String,
 ) -> Res<()> {
+    ratings_revoke_apply(&app, &state, device_id, stream_path)
+}
+
+/// The body of `ratings_revoke`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn ratings_revoke_apply(app: &AppHandle, state: &AppState, device_id: String, stream_path: String) -> Res<()> {
     state.with(|s| {
         s.approvals.remove(&(device_id.clone(), stream_path.clone()));
         if let Some(db) = s.db.as_ref() {
@@ -5511,6 +5541,12 @@ pub fn ratings_set_titles(
     stream_paths: Vec<String>,
     min_age: Option<u8>,
 ) -> Res<usize> {
+    ratings_set_titles_apply(&app, &state, stream_paths, min_age)
+}
+
+/// The body of `ratings_set_titles`, over the state alone, so the owner key can make the same change on
+/// this machine's behalf (admin.rs) without a second copy of it to drift.
+pub(crate) fn ratings_set_titles_apply(app: &AppHandle, state: &AppState, stream_paths: Vec<String>, min_age: Option<u8>) -> Res<usize> {
     let count = state.with(|s| {
         for path in &stream_paths {
             match min_age {

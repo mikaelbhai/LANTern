@@ -4,6 +4,38 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
+/// Reads the host's own rules about its titles into `state`: the ratings it
+/// set by hand and the titles it hid.
+///
+/// For the detached `lantern-host`, which opens the database and nothing else.
+/// Without this it served with an empty rating table, so a film the owner had
+/// rated 18 by hand was served to anybody the moment the window was closed and
+/// the background host took over - and a hidden title with it. The application
+/// reads the same tables at boot (`commands::boot`), together with the rest.
+pub fn load_policy(state: &crate::state::AppState) {
+    state.with(|s| {
+        let Some(db) = s.db.as_ref() else {
+            return;
+        };
+        let mut ages = std::collections::HashMap::new();
+        if let Ok(mut stmt) = db.prepare("SELECT stream_path, min_age FROM title_ages") {
+            if let Ok(rows) =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u8)))
+            {
+                ages.extend(rows.flatten());
+            }
+        }
+        let mut hidden = std::collections::HashSet::new();
+        if let Ok(mut stmt) = db.prepare("SELECT stream_path FROM hidden_titles") {
+            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                hidden.extend(rows.flatten());
+            }
+        }
+        s.title_ages = ages;
+        s.hidden = hidden;
+    });
+}
+
 pub fn open(dir: &Path) -> anyhow::Result<Connection> {
     std::fs::create_dir_all(dir)?;
     let conn = Connection::open(dir.join("lantern.db"))?;
@@ -410,5 +442,26 @@ fn decode_title_paths(conn: &Connection) {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[test]
+    fn the_background_host_reads_the_hand_set_ratings_and_hidden_titles() {
+        let state = crate::state::AppState::default();
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+        conn.execute("INSERT INTO title_ages (stream_path, min_age) VALUES ('/m/a.mkv', 18)", [])
+            .unwrap();
+        conn.execute("INSERT INTO hidden_titles (stream_path) VALUES ('/m/b.mkv')", []).unwrap();
+        state.with(|s| s.db = Some(conn));
+
+        load_policy(&state);
+
+        assert_eq!(state.with(|s| s.title_ages.get("/m/a.mkv").copied()), Some(18));
+        assert!(state.with(|s| s.hidden.contains("/m/b.mkv")));
     }
 }

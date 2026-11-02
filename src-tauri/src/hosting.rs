@@ -825,6 +825,7 @@ async fn collections_json(
         )
     });
 
+    let hidden = state.with(|s| s.hidden.clone());
     let allowed = |item: &serde_json::Value| {
         if local {
             return true;
@@ -834,6 +835,9 @@ async fn collections_json(
             .and_then(|v| v.as_str())
             .map(crate::rating::stream_path)
             .unwrap_or_default();
+        if hidden.contains(&path) {
+            return false;
+        }
         let name = item.get("relPath").and_then(|v| v.as_str()).unwrap_or_default();
         crate::rating::may_serve_as(&state, caller.clone(), &path, name)
     };
@@ -853,6 +857,14 @@ async fn collections_json(
         body.to_string(),
     )
         .into_response()
+}
+
+/// Whether the owner key has hidden this title (by decoded stream path).
+///
+/// Takes the state lock and nothing else: call it outside any closure that
+/// already holds that lock, as for `for_this_caller`.
+fn is_hidden(state: &AppState, stream_path: &str) -> bool {
+    state.with(|s| !s.hidden.is_empty() && s.hidden.contains(stream_path))
 }
 
 async fn serve_path(
@@ -881,13 +893,23 @@ async fn serve_path(
     // Every variant is the same title, so they share one identity: the path,
     // without the parameters that only say how to serve it.
     let stream_path = format!("/{slug}/{path}");
+    // A title the owner key took out of the listings is not there for anyone
+    // else, at any address: same answer as a title that never existed, and
+    // checked here for the same reason as the rest - `?thumb=` and `?audio=`
+    // are this title by another door. Nothing lifts it, not being trusted and
+    // not being approved for the rating, because those say what a device may
+    // watch and this says whether the title exists for it at all.
+    let local = from_this_machine(&state, from);
+    if !local && is_hidden(&state, &stream_path) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
     // A peer presents a key; a browser names itself with the cookie this
     // server minted for it. Without the second, every browser in the house
     // was one anonymous caller, so a pass phrase typed on any of them would
     // have opened the title on all of them.
     let caller = crate::rating::requester(&state, params.get("k").map(String::as_str))
         .or_else(|| browser_id(&headers));
-    if !from_this_machine(&state, from)
+    if !local
         && !crate::rating::may_serve_as(&state, caller, &stream_path, &path)
     {
         return (
@@ -1470,11 +1492,13 @@ async fn respond(
             // down, at the last point before bytes leave, which is where a
             // restriction has to live to mean anything.
             //
+            // Hidden titles are left out of both forms of the listing.
+            let hidden = state.with(|s| s.hidden.clone());
             // `?json=1` is another LANTern asking; anything else is a browser.
             if as_json {
-                return listing_json(&root, &target, &slug).await;
+                return listing_json(&root, &target, &slug, &hidden).await;
             }
-            return listing(&target, &rel, &slug).await;
+            return listing(&target, &rel, &slug, &hidden).await;
         } else {
             None
         }
@@ -1693,6 +1717,19 @@ async fn media_manifest(
     // can see is easier to ask about than a gap they cannot - but the bytes
     // behind them do not move.
     let mut items = items;
+    // Hidden titles are not listed at all, rather than listed and locked: the
+    // point of hiding one is that nobody is told it exists.
+    let hidden = state.with(|s| s.hidden.clone());
+    if !hidden.is_empty() {
+        items.retain(|item| {
+            let path = item
+                .get("streamUrl")
+                .and_then(|v| v.as_str())
+                .map(crate::rating::stream_path)
+                .unwrap_or_default();
+            !hidden.contains(&path)
+        });
+    }
     for item in &mut items {
         let Some(object) = item.as_object_mut() else {
             continue;
@@ -1791,7 +1828,12 @@ fn resolve(root: &Path, rel: &str) -> Option<PathBuf> {
 /// with no app at all, and that stays. But a peer's own Files screen needs the
 /// same information as data, and scraping the HTML for it would be absurd.
 /// `?json=1` returns the entries directly.
-async fn listing_json(root: &Path, dir: &Path, slug: &str) -> Response {
+async fn listing_json(
+    root: &Path,
+    dir: &Path,
+    slug: &str,
+    hidden: &std::collections::HashSet<String>,
+) -> Response {
     let rel = dir.strip_prefix(root).unwrap_or(Path::new(""));
     let rel_str = rel.to_string_lossy().replace('\\', "/");
 
@@ -1808,6 +1850,9 @@ async fn listing_json(root: &Path, dir: &Path, slug: &str) -> Response {
             } else {
                 format!("{rel_str}/{name}")
             };
+            if hidden.contains(&format!("/{slug}/{path}")) {
+                continue;
+            }
             entries.push(serde_json::json!({
                 "name": name,
                 "isDir": is_dir,
@@ -1846,7 +1891,12 @@ async fn listing_json(root: &Path, dir: &Path, slug: &str) -> Response {
         .into_response()
 }
 
-async fn listing(dir: &Path, rel: &str, slug: &str) -> Response {
+async fn listing(
+    dir: &Path,
+    rel: &str,
+    slug: &str,
+    hidden: &std::collections::HashSet<String>,
+) -> Response {
     /*
      * The relative path is passed in, not worked out by subtraction.
      *
@@ -1873,6 +1923,10 @@ async fn listing(dir: &Path, rel: &str, slug: &str) -> Response {
                 Ok(m) => (m.is_dir(), m.len()),
                 Err(_) => (false, 0),
             };
+            let shown = if rel_str.is_empty() { name.clone() } else { format!("{rel_str}/{name}") };
+            if hidden.contains(&format!("/{slug}/{shown}")) {
+                continue;
+            }
             entries.push((name, is_dir, size));
         }
     }
@@ -2012,6 +2066,9 @@ async fn watch(
 
     let name = path.rsplit('/').next().unwrap_or(&path).to_string();
     let stream_path = format!("/{slug}/{path}");
+    if !from_this_machine(&state, from) && is_hidden(&state, &stream_path) {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
 
     // The same identity the file itself is gated on, so the page and the
     // stream behind it can never disagree about who is asking.
@@ -2399,6 +2456,104 @@ mod tests {
         let (addr, _root) = serve_fixture(ShareMode::Files).await;
         let response = get(addr, "/test/hello.txt?audio=0", "").await;
         assert!(!response.starts_with("HTTP/1.1 403"), "{response}");
+    }
+
+    /// A share with a hidden title and one beside it that is not, reached by a
+    /// device that is trusted - as much as a peer can be short of this machine.
+    async fn serve_hidden(trust_local: bool) -> std::net::SocketAddr {
+        let root = std::env::temp_dir().join(format!("lantern-hidden-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("film.mkv"), b"picture and sound").unwrap();
+        std::fs::write(root.join("other.mkv"), b"nothing to hide").unwrap();
+
+        let state = AppState::new();
+        state.with(|s| {
+            s.trust_local_requests = trust_local;
+            s.hidden.insert("/test/film.mkv".to_string());
+            s.trusted.insert("owner".to_string());
+            s.issued_keys.insert("owner".to_string(), "key-owner".to_string());
+            s.shares.push(Share {
+                id: "t".into(),
+                name: "Test".into(),
+                path: root.to_string_lossy().to_string(),
+                slug: "test".into(),
+                mode: ShareMode::Media,
+                running: true,
+                require_phrase: false,
+                phrase: None,
+                allow_upload: false,
+                unlisted: false,
+                audience: Vec::new(),
+                file_count: 2,
+                total_bytes: 32,
+                created_at: now_ms(),
+                requests: 0,
+                bytes_served: 0,
+                active_viewers: 0,
+                last_request_at: None,
+            })
+        });
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                router(state).into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+        addr
+    }
+
+    /// Every door to one title, with and without the key of a trusted device.
+    /// Hiding is not a rating: being trusted lifts a rating and must not lift this.
+    #[tokio::test]
+    async fn a_hidden_title_is_not_there_at_any_address_for_anyone_but_this_machine() {
+        let addr = serve_hidden(false).await;
+        for suffix in [
+            "",
+            "?audio=0",
+            "?subtitle=0",
+            "?thumb=1",
+            "?keyframe=1",
+            "?syncaudio=1",
+            "?audio=0&subtitle=0&thumb=1&t=5",
+        ] {
+            for key in ["", "k=key-owner"] {
+                let path = match (suffix.is_empty(), key.is_empty()) {
+                    (true, true) => "/test/film.mkv".to_string(),
+                    (true, false) => format!("/test/film.mkv?{key}"),
+                    (false, true) => format!("/test/film.mkv{suffix}"),
+                    (false, false) => format!("/test/film.mkv{suffix}&{key}"),
+                };
+                let response = get(addr, &path, "").await;
+                assert!(response.starts_with("HTTP/1.1 404"), "{path}: {response}");
+                assert!(!response.contains("picture and sound"), "{path}: {response}");
+            }
+        }
+        let page = get(addr, "/watch/test/film.mkv?k=key-owner", "").await;
+        assert!(page.starts_with("HTTP/1.1 404"), "{page}");
+    }
+
+    #[tokio::test]
+    async fn and_it_is_left_out_of_the_listings_while_its_neighbour_stays() {
+        let addr = serve_hidden(false).await;
+        let data = get(addr, "/test/?json=1&k=key-owner", "").await;
+        assert!(data.contains("other.mkv"), "the neighbour went too: {data}");
+        assert!(!data.contains("film.mkv"), "the hidden title is listed: {data}");
+        let page = get(addr, "/test/", "").await;
+        assert!(page.contains("other.mkv"), "{page}");
+        assert!(!page.contains("film.mkv"), "{page}");
+    }
+
+    /// The publisher is not one of its own guests: a rule for everybody else
+    /// that locked its owner out of the title would be a rule against itself.
+    #[tokio::test]
+    async fn this_machine_still_gets_what_it_hid() {
+        let addr = serve_hidden(true).await;
+        let response = get(addr, "/test/film.mkv", "").await;
+        assert!(response.contains("picture and sound"), "{response}");
     }
 
     /// A folder published to one device only.

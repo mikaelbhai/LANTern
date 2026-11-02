@@ -118,6 +118,10 @@ async fn main() {
         }
     }
 
+    // What the owner rated by hand and what was hidden, before the first request:
+    // a restriction that is not loaded is not in force.
+    lantern_lib::db::load_policy(&state);
+
     // The folders the app published, exactly as it left them.
     let restored = shares::restore(&state);
     let live = restored.iter().filter(|s| s.running).count();

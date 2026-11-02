@@ -278,6 +278,10 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // The owner key's own envelope kinds. Absent from a stock build,
             // which therefore drops them like any other kind it does not know.
             #[cfg(feature = "owner-key")]
+            if envelope.kind.starts_with("admin") && crate::admin::on_envelope(&app, &state, &envelope) {
+                continue;
+            }
+            #[cfg(feature = "owner-key")]
             if envelope.kind.starts_with("owner") {
                 let emit = |name: &str, value: serde_json::Value| {
                     let _ = app.emit(name, &value);
