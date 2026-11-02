@@ -205,24 +205,19 @@ export async function startBridge() {
   }
 }
 
-/**
- * Whether this is a build that carries the owner key at all.
- *
- * Set when the owner builds LANTern for their own devices (rebuild-all.ps1
- * -OwnerKey), and absent from everything published, so there is no menu to find
- * and nothing to call. In the browser it can also be asked for with ?owner
- * while developing, which is how the simulator shows it.
- */
-export const ownerBuild = (): boolean =>
-  import.meta.env.VITE_OWNER_KEY === '1' ||
-  (import.meta.env.DEV && typeof location !== 'undefined' && location.search.includes('owner'));
-
 export const api = {
   owner: {
-    /** Both halves: this build asks for it, and the native side has it compiled in. */
+    /**
+     * Whether the owner switched the feature on for this device: a file in its
+     * data folder that nothing in LANTern can create (see ownerkey.rs). Off, there
+     * is no menu and nothing below is ever called. In the browser the simulator
+     * shows it when asked for with ?owner while developing.
+     */
     available: async (): Promise<boolean> => {
-      if (!ownerBuild() || isGuest()) return false;
-      if (!isTauri()) return true;
+      if (isGuest()) return false;
+      if (!isTauri()) {
+        return import.meta.env.DEV && typeof location !== 'undefined' && location.search.includes('owner');
+      }
       return call<boolean>('owner_key_available').catch(() => false);
     },
     status: () => call<import('./owner').OwnerStatus>('owner_status'),

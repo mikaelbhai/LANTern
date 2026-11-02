@@ -225,8 +225,8 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
             min_age     INTEGER NOT NULL
         );
 
-        -- The owner key (owner-key builds only; the tables are harmless empty
-        -- in a stock one). `owner_identity` is the key's own seed, on the phone
+        -- The owner key (dormant, and these tables empty, unless its owner has
+        -- switched it on). `owner_identity` is the key's own seed, on the phone
         -- that is the key. `owner_keys` is the machine's record of the one key
         -- it agreed to. `owner_machines` is what the key remembers about the
         -- machines that agreed to it, for the list it shows.

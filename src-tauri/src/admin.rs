@@ -35,7 +35,7 @@ type Res<T> = Result<T, String>;
 
 /// The device that is currently the owner key on a live link.
 pub(crate) fn is_owner(state: &AppState, device: &str) -> bool {
-    state.with(|s| s.owner.proven.contains(device))
+    crate::ownerkey::enabled(state) && state.with(|s| s.owner.proven.contains(device))
 }
 
 fn reply(state: &AppState, to: &str, id: &str, result: Res<Value>) {
@@ -296,6 +296,10 @@ fn record(app: &AppHandle, state: &AppState, from: &str, op: &str, args: &Value)
 }
 
 pub(crate) fn on_envelope(app: &AppHandle, state: &AppState, envelope: &Envelope) -> bool {
+    // Silent when switched off: not even a refusal, which would say the code is here.
+    if !crate::ownerkey::enabled(state) {
+        return envelope.kind.starts_with("admin");
+    }
     match envelope.kind.as_str() {
         "adminreq" => {
             let from = envelope.from.clone();
@@ -336,6 +340,9 @@ pub async fn admin_call(
     op: String,
     args: Value,
 ) -> Res<Value> {
+    if !crate::ownerkey::enabled(&state) {
+        return Err("not switched on".into());
+    }
     let (links, me, device) = state.with(|s| {
         (
             s.links.clone(),
@@ -393,6 +400,7 @@ mod tests {
             s.device_id = "pc".into();
             s.links.insert("phone".into(), tx);
         });
+        crate::ownerkey::tests::switch_on(&st);
         (st, rx)
     }
 

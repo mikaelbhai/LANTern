@@ -16,11 +16,6 @@ param(
   # Also build LANTV: the same application under its own name and package, so
   # it can sit on a television beside the phone build rather than replacing it.
   [switch]$Tv,
-  # The owner's own build: the phone-as-key feature compiled in and its menu shown.
-  # Only ever for the owner's own devices - see src-tauri/src/ownerkey.rs. It must
-  # never be published, so it is refused together with -Split and -Tv, the two
-  # switches whose output is copied into the folder the release APKs live in.
-  [switch]$OwnerKey,
   # Also write one APK per processor architecture.
   #
   # Four fifths of the package is three copies of the same Rust library and a
@@ -35,22 +30,6 @@ param(
 # progress there. Exit codes are checked explicitly instead.
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
-
-# The owner key is a Cargo feature plus a frontend flag, and both have to agree:
-# the flag shows the menu, the feature is what answers it. A published build has
-# neither.
-if ($OwnerKey -and ($Split -or $Tv)) {
-  Write-Error "-OwnerKey builds are for the owner's own devices only; they cannot be combined with -Split or -Tv, whose output is the published packages."
-  exit 1
-}
-$androidFeatures = "custom-protocol"
-if ($OwnerKey) {
-  $env:VITE_OWNER_KEY = "1"
-  $androidFeatures = "custom-protocol,owner-key"
-  Write-Host "OWNER KEY BUILD - for your own devices, never to be published" -ForegroundColor Yellow
-} else {
-  Remove-Item Env:\VITE_OWNER_KEY -ErrorAction SilentlyContinue
-}
 . "$root\android-env.ps1" | Out-Null
 
 # Stop LANTern and wait for Windows to actually release the binary.
@@ -94,13 +73,8 @@ if (-not $SkipDesktop) {
   # NSIS only for the installer - the MSI target needs the WiX toolset, a
   # second multi-hundred-megabyte download for an installer nobody asked for.
   function Invoke-DesktopBuild {
-    # Four literal lines rather than a splatted feature list, for the reason above.
-    if ($Installer -and $OwnerKey) {
-      npm run tauri build -- --bundles nsis --features owner-key
-    } elseif ($Installer) {
+    if ($Installer) {
       npm run tauri build -- --bundles nsis
-    } elseif ($OwnerKey) {
-      npm run tauri build -- --no-bundle --features owner-key
     } else {
       npm run tauri build -- --no-bundle
     }
@@ -216,7 +190,7 @@ if (-not $SkipAndroid) {
     # 16 KB pages; without this flag the OS shows a compatibility warning and
     # future releases will refuse to load the library at all.
     $env:RUSTFLAGS = "-C link-arg=-Wl,-z,max-page-size=16384"
-    cargo build --release --target $abi.target --lib --features $androidFeatures
+    cargo build --release --target $abi.target --lib --features custom-protocol
     if ($LASTEXITCODE -ne 0) { Write-Error "$($abi.jni) rust build failed"; exit 1 }
     Remove-Item Env:\RUSTFLAGS -ErrorAction SilentlyContinue
 

@@ -73,16 +73,23 @@ export const useOwner = create<OwnerStore>((set) => ({
 
 let started = false;
 
-/** Finds out whether this build has the owner key, and if so keeps it current. */
+/** Finds out whether the owner switched this device on, and if so keeps it current. */
 export async function initOwner(): Promise<void> {
   if (started) return;
   started = true;
-  const available = await api.owner.available();
-  useOwner.setState({ available });
-  if (!available) return;
   const refresh = () => void useOwner.getState().refresh();
-  refresh();
+  const check = async () => {
+    const available = await api.owner.available();
+    if (available !== useOwner.getState().available) {
+      useOwner.setState({ available, status: available ? useOwner.getState().status : null });
+    }
+    if (available) refresh();
+  };
+  await check();
   for (const event of ['owner:requested', 'owner:ready', 'owner:result', 'owner:changed']) {
     on(event, refresh);
   }
+  // Switching it on or off means making or deleting a file outside the app, so
+  // it is looked for again whenever the window comes back to the front.
+  window.addEventListener('focus', () => void check());
 }

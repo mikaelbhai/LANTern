@@ -55,9 +55,8 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
 ] }
 sha2 = "0.10"
-# Owner key signatures. Already in the lockfile through rustls; optional so a
-# stock build does not link it for a feature it does not have.
-ring = { version = "0.17", optional = true }
+# Owner key signatures. Already in the lockfile, and linked, through rustls.
+ring = "0.17"
 futures-util = "0.3"
 tauri-plugin-clipboard-manager = "2"
 async-stream = "0.3.6"
@@ -74,10 +73,6 @@ tauri-plugin-single-instance = "2"
 [features]
 # Used by the Tauri CLI when producing a release bundle.
 custom-protocol = ["tauri/custom-protocol"]
-# A phone that administers the machines that agreed to it. Built only into the
-# owner's own builds (rebuild-all.ps1 -OwnerKey): a stock build has none of the
-# code, the menu or the envelope kinds, so there is nothing to find or to ask.
-owner-key = ["dep:ring"]
 
 [profile.release]
 codegen-units = 1

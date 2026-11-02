@@ -42,6 +42,15 @@ Never run `cargo build --bin lantern` and ship the result: that skips Tauri's
 frontend step, so the binary points at a dev server that is not running.
 macOS is built by CI on a tag push; it cannot be cross-compiled from here.
 
+## Owner key (dormant)
+
+A phone that administers machines that agreed to it (`ownerkey.rs`, `admin.rs`,
+`src/screens/owner/`). In every build, off until a file named `owner-key.enabled` exists
+in the data folder; nothing in LANTern can create it. Windows: make it in
+`%APPDATA%app.lantern.desktop`. Android: find the folder with
+`adb shell run-as app.lantern.desktop find . -name lantern.db` and `touch` the file beside
+it with `run-as`. Delete the file to switch off; rights end at once.
+
 ## Verifying
 
 Claims about behaviour are checked against the running thing, not the source.

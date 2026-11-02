@@ -178,8 +178,7 @@ pub struct Inner {
     /// that only some builds enforce is a hole in the builds that do not.
     pub hidden: std::collections::HashSet<String>,
     /// The owner key's state: what this machine agreed to, and what it is
-    /// currently granting. Absent from a stock build.
-    #[cfg(feature = "owner-key")]
+    /// currently granting. Dormant unless the marker file is there.
     pub owner: crate::ownerkey::OwnerState,
 }
 
@@ -248,7 +247,6 @@ impl AppState {
             device_ages: std::collections::HashMap::new(),
             title_ages: std::collections::HashMap::new(),
             hidden: std::collections::HashSet::new(),
-            #[cfg(feature = "owner-key")]
             owner: Default::default(),
         })))
     }

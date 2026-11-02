@@ -271,17 +271,15 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
                 register_peer(&app, &state, &envelope);
                 // Whoever has just linked may be the owner key: ask it to prove
                 // it, which only the holder of the private key can.
-                #[cfg(feature = "owner-key")]
                 crate::ownerkey::challenge(&state, &envelope.from);
                 continue;
             }
-            // The owner key's own envelope kinds. Absent from a stock build,
-            // which therefore drops them like any other kind it does not know.
-            #[cfg(feature = "owner-key")]
+            // The owner key's own envelope kinds. Answered only on a device whose
+            // owner has switched the feature on (see ownerkey::enabled); anywhere
+            // else they are taken and dropped, as an unknown kind would be.
             if envelope.kind.starts_with("admin") && crate::admin::on_envelope(&app, &state, &envelope) {
                 continue;
             }
-            #[cfg(feature = "owner-key")]
             if envelope.kind.starts_with("owner") {
                 let emit = |name: &str, value: serde_json::Value| {
                     let _ = app.emit(name, &value);
@@ -1143,7 +1141,6 @@ async fn handle(
 
     links.remove(&peer_id, generation);
     // The owner key's rights end with its last link.
-    #[cfg(feature = "owner-key")]
     if !links.has(&peer_id) {
         crate::ownerkey::revoke(&state, &peer_id);
     }

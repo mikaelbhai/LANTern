@@ -1,9 +1,16 @@
 //! The owner key: one phone that administers the machines that agreed to it.
 //!
-//! Compiled only with the `owner-key` feature, which only the owner's own
-//! builds enable. A stock LANTern has none of this: no menu, no commands, no
-//! envelope kinds, so a stranger's device asking for owner access gets the
-//! silence any unknown envelope gets.
+//! Dormant in every build until its owner switches it on, on that device, by
+//! putting a file named `owner-key.enabled` in the data folder - by hand on
+//! Windows, and on Android over adb (`run-as` on the debug-signed APK), which is
+//! the point: reaching that folder takes physical or debugging access to the
+//! device, and nothing in LANTern, local or remote, can create the file. Until
+//! it exists there is no menu, every command refuses, and the envelope kinds
+//! below get the silence any unknown kind gets, so a stranger's device asking
+//! for owner access learns nothing, not even that the code is there.
+//!
+//! Removing the file switches it off again at once, and takes back any rights
+//! a key held at that moment.
 //!
 //! The one rule the rest of this follows: a key has power over a machine only
 //! because a person at that machine agreed to it, there, with a PIN typed on
@@ -78,6 +85,31 @@ pub struct OwnerState {
     pub challenges: HashMap<String, (String, u64)>,
     /// Devices whose proof is good on a link that is still open.
     pub proven: HashSet<String>,
+    /// The data folder, where the marker file is looked for.
+    pub dir: Option<std::path::PathBuf>,
+}
+
+/// The file whose presence switches the owner key on.
+pub const MARKER: &str = "owner-key.enabled";
+
+pub fn set_dir(state: &AppState, dir: &std::path::Path) {
+    state.with(|s| s.owner.dir = Some(dir.to_path_buf()));
+}
+
+/// Whether the owner key is switched on here.
+///
+/// Looked at each time rather than remembered, so that deleting the file is all
+/// it takes to turn it off: a key that is connected at that moment loses what
+/// it held before this returns.
+pub fn enabled(state: &AppState) -> bool {
+    let on = state.with(|s| s.owner.dir.as_ref().is_some_and(|d| d.join(MARKER).exists()));
+    if !on {
+        let live: Vec<String> = state.with(|s| s.owner.proven.iter().cloned().collect());
+        for device in live {
+            revoke(state, &device);
+        }
+    }
+    on
 }
 
 /* ------------------------------------------------------------- primitives */
@@ -317,6 +349,9 @@ fn on_request(state: &AppState, from: &str, payload: &Value, emit: Emit) {
 
 /// The machine's person said yes: show a PIN and tell the key to ask for it.
 pub fn allow(state: &AppState) -> Result<String, String> {
+    if !enabled(state) {
+        return Err("not switched on".into());
+    }
     let now = now_ms();
     let (from, pin) = state.with(|s| {
         let Some(request) = s.owner.incoming.as_mut().filter(|i| i.expires > now) else {
@@ -423,6 +458,9 @@ pub fn unenrol(state: &AppState) {
 
 /// A link has formed: ask whoever is on it to prove they hold the key.
 pub fn challenge(state: &AppState, peer: &str) {
+    if !enabled(state) {
+        return;
+    }
     let Some(pubkey) = state.with(|s| s.owner.enrolled.as_ref().map(|e| e.pubkey.clone())) else {
         return;
     };
@@ -460,6 +498,9 @@ fn on_proof(state: &AppState, from: &str, payload: &Value, emit: Emit) {
 
 /// Asks a machine to accept this device as its owner key.
 pub fn request(state: &AppState, peer: &str) -> Result<(), String> {
+    if !enabled(state) {
+        return Err("not switched on".into());
+    }
     let pubkey = public_hex(state, true).ok_or("could not make a key")?;
     let name = state.with(|s| s.instance.clone());
     state.with(|s| s.owner.outgoing = Some((peer.to_string(), now_ms() + REQUEST_TTL_MS)));
@@ -492,6 +533,9 @@ fn on_denied(state: &AppState, from: &str, emit: Emit) {
 
 /// Types the PIN the machine is showing.
 pub fn confirm(state: &AppState, pin: &str) -> Result<(), String> {
+    if !enabled(state) {
+        return Err("not switched on".into());
+    }
     let (peer, me) = state.with(|s| {
         (
             s.owner.outgoing.as_ref().filter(|(_, until)| *until > now_ms()).map(|(p, _)| p.clone()),
@@ -551,6 +595,11 @@ fn on_challenge(state: &AppState, from: &str, payload: &Value, emit: Emit) {
 
 /// Handles the owner-key envelope kinds. Returns whether it took the envelope.
 pub(crate) fn on_envelope(state: &AppState, envelope: &Envelope, emit: Emit) -> bool {
+    // Taken and dropped when switched off: the same silence as a kind nobody
+    // handles, so a device that asks cannot tell this one from any other.
+    if !enabled(state) {
+        return envelope.kind.starts_with("owner");
+    }
     let from = envelope.from.as_str();
     match envelope.kind.as_str() {
         "ownerrequest" => on_request(state, from, &envelope.payload, emit),
@@ -572,6 +621,9 @@ type Res<T> = Result<T, String>;
 /// Everything the Settings section shows, in one read.
 #[tauri::command]
 pub fn owner_status(state: tauri::State<'_, AppState>) -> Value {
+    if !enabled(&state) {
+        return json!({ "available": false });
+    }
     let now = now_ms();
     let identity = public_hex(&state, false);
     let machines: Vec<Value> = state.with(|s| {
@@ -626,6 +678,9 @@ pub fn owner_status(state: tauri::State<'_, AppState>) -> Value {
 /// This device's key, made if it has none. The fingerprint is for comparing.
 #[tauri::command]
 pub fn owner_identity(state: tauri::State<'_, AppState>) -> Res<Value> {
+    if !enabled(&state) {
+        return Err("not switched on".into());
+    }
     let key = public_hex(&state, true).ok_or("could not make a key")?;
     Ok(json!({ "fingerprint": fingerprint(&key) }))
 }
@@ -681,9 +736,17 @@ pub fn owner_forget_machine(state: tauri::State<'_, AppState>, device_id: String
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    /// A data folder with the marker in it, which is what switching it on is.
+    pub(crate) fn switch_on(st: &AppState) {
+        let dir = std::env::temp_dir().join(format!("lantern-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(MARKER), b"").unwrap();
+        set_dir(st, &dir);
+    }
 
     fn node(id: &str) -> (AppState, mpsc::UnboundedReceiver<String>) {
         let st = AppState::default();
@@ -694,6 +757,7 @@ mod tests {
             s.db = Some(conn);
             s.device_id = id.to_string();
         });
+        switch_on(&st);
         // A link to nobody in particular, so `send` has somewhere to put things.
         let _ = &tx;
         (st, rx)
@@ -912,6 +976,37 @@ mod tests {
         };
         on_envelope(&p.key, &env, &|_, _| {});
         assert!(p.machine_rx.try_recv().is_err(), "no signature for somebody else's key");
+    }
+
+    #[test]
+    fn switched_off_it_answers_nothing_and_grants_nothing() {
+        let mut p = pair();
+        enrol(&mut p);
+        let dir = p.machine.with(|s| s.owner.dir.clone().unwrap());
+        std::fs::remove_file(dir.join(MARKER)).unwrap();
+        assert!(!enabled(&p.machine));
+        // Rights the key held are gone the moment it is looked at.
+        assert_eq!(rights(&p.machine, "phone"), (false, false));
+        // A request now is taken and dropped, with nothing sent back and no prompt.
+        let fresh = Envelope {
+            v: 1,
+            from: "tv".into(),
+            kind: "ownerrequest".into(),
+            payload: json!({ "pubkey": "11".repeat(32), "name": "X" }),
+        };
+        assert!(on_envelope(&p.machine, &fresh, &|_, _| panic!("emitted")));
+        assert!(p.machine.with(|s| s.owner.incoming.is_none()));
+        assert!(allow(&p.machine).is_err());
+        assert!(request(&p.machine, "tv").is_err());
+        // And a new link is not even challenged.
+        challenge(&p.machine, "phone");
+        assert!(p.key_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn with_no_data_folder_it_is_off() {
+        let st = AppState::default();
+        assert!(!enabled(&st));
     }
 
     #[test]
