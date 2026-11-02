@@ -171,6 +171,16 @@ pub struct Inner {
     /// Keyed by the stream path the manifest advertises, so a title keeps its
     /// rating however the library is rescanned.
     pub title_ages: std::collections::HashMap<String, u8>,
+    /// Titles taken out of every listing, by decoded stream path.
+    ///
+    /// Only the owner key can set these, but the check that honours them is in
+    /// the serving code of every build: an empty set costs nothing, and a rule
+    /// that only some builds enforce is a hole in the builds that do not.
+    pub hidden: std::collections::HashSet<String>,
+    /// The owner key's state: what this machine agreed to, and what it is
+    /// currently granting. Absent from a stock build.
+    #[cfg(feature = "owner-key")]
+    pub owner: crate::ownerkey::OwnerState,
 }
 
 #[derive(Clone)]
@@ -237,6 +247,9 @@ impl AppState {
             trust_local_requests: true,
             device_ages: std::collections::HashMap::new(),
             title_ages: std::collections::HashMap::new(),
+            hidden: std::collections::HashSet::new(),
+            #[cfg(feature = "owner-key")]
+            owner: Default::default(),
         })))
     }
 

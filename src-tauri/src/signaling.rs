@@ -269,7 +269,26 @@ fn spawn_delivery(app: AppHandle, state: AppState) -> mpsc::UnboundedSender<Enve
             // accept it, and that record is what holds the source URL.
             if envelope.kind == LINKED {
                 register_peer(&app, &state, &envelope);
+                // Whoever has just linked may be the owner key: ask it to prove
+                // it, which only the holder of the private key can.
+                #[cfg(feature = "owner-key")]
+                crate::ownerkey::challenge(&state, &envelope.from);
                 continue;
+            }
+            // The owner key's own envelope kinds. Absent from a stock build,
+            // which therefore drops them like any other kind it does not know.
+            #[cfg(feature = "owner-key")]
+            if envelope.kind.starts_with("owner") {
+                let emit = |name: &str, value: serde_json::Value| {
+                    let _ = app.emit(name, &value);
+                };
+                if crate::ownerkey::on_envelope(&state, &envelope, &emit) {
+                    // Rights come and go with these, and the window shows
+                    // them on the peer.
+                    let peers: Vec<_> = state.with(|s| s.peers.values().cloned().collect());
+                    let _ = app.emit("peers:changed", &peers);
+                    continue;
+                }
             }
             if envelope.kind == "file" {
                 if let Some(offer) = envelope.payload.get("offer") {
@@ -1119,6 +1138,11 @@ async fn handle(
     let outcome = pump(&mut reader, &peer_id, &inbound).await;
 
     links.remove(&peer_id, generation);
+    // The owner key's rights end with its last link.
+    #[cfg(feature = "owner-key")]
+    if !links.has(&peer_id) {
+        crate::ownerkey::revoke(&state, &peer_id);
+    }
     heartbeat.abort();
     writer.abort();
     outcome

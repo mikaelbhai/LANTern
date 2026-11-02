@@ -240,7 +240,14 @@ pub fn boot(app: AppHandle, state: AppState) {
                             title_ages.extend(rows.flatten());
                         }
                     }
+                    let mut hidden = std::collections::HashSet::new();
+                    if let Ok(mut stmt) = conn.prepare("SELECT stream_path FROM hidden_titles") {
+                        if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                            hidden.extend(rows.flatten());
+                        }
+                    }
                     state.with(|s| {
+                        s.hidden = hidden;
                         s.blocked = blocked;
                         s.trusted = trusted;
                         s.companions = companions;
@@ -252,6 +259,8 @@ pub fn boot(app: AppHandle, state: AppState) {
                         s.title_ages = title_ages;
                         s.db = Some(conn);
                     });
+                    #[cfg(feature = "owner-key")]
+                    crate::ownerkey::load(&state);
                 }
                 Err(e) => eprintln!("history store unavailable: {e}"),
             }
@@ -1343,6 +1352,13 @@ pub fn peers_trust(app: AppHandle, state: State<'_, AppState>, peer_id: String, 
 
     let peers: Vec<Peer> = state.with(|s| s.peers.values().cloned().collect());
     let _ = app.emit("peers:changed", &peers);
+}
+
+/// Whether this build carries the owner key. The one owner-key command a stock
+/// build still has, so the window can tell "not here" from "something failed".
+#[tauri::command]
+pub fn owner_key_available() -> bool {
+    cfg!(feature = "owner-key")
 }
 
 /// Marks a device as this person's own — a phone or a second PC, not

@@ -40,6 +40,8 @@ mod model;
 mod mp4;
 mod net;
 mod phrase;
+#[cfg(feature = "owner-key")]
+mod ownerkey;
 mod crashlog;
 mod pip;
 mod storage;
@@ -154,6 +156,23 @@ pub fn run() {
             commands::profile_announce,
             commands::profile_set_avatar,
             commands::profile_request,
+            commands::owner_key_available,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_status,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_identity,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_request,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_allow,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_deny,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_confirm,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_unenrol,
+            #[cfg(feature = "owner-key")]
+            ownerkey::owner_forget_machine,
             commands::profile_has_avatar,
             commands::identity_device_id,
             commands::pip_set_playing,

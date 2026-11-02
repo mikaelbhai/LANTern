@@ -193,6 +193,41 @@ pub(crate) fn migrate(conn: &Connection) -> anyhow::Result<()> {
             min_age     INTEGER NOT NULL
         );
 
+        -- The owner key (owner-key builds only; the tables are harmless empty
+        -- in a stock one). `owner_identity` is the key's own seed, on the phone
+        -- that is the key. `owner_keys` is the machine's record of the one key
+        -- it agreed to. `owner_machines` is what the key remembers about the
+        -- machines that agreed to it, for the list it shows.
+        CREATE TABLE IF NOT EXISTS owner_identity (
+            id   INTEGER PRIMARY KEY CHECK (id = 1),
+            seed BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS owner_keys (
+            pubkey      TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            enrolled_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS owner_machines (
+            device_id TEXT PRIMARY KEY,
+            name      TEXT NOT NULL,
+            seen_at   INTEGER NOT NULL
+        );
+
+        -- A title taken out of every listing by the owner key, keyed like a
+        -- rating: by its decoded stream path, which is the one spelling the
+        -- serving side has in hand.
+        CREATE TABLE IF NOT EXISTS hidden_titles (
+            stream_path TEXT PRIMARY KEY
+        );
+
+        -- What the owner key changed here, so nothing it does is invisible.
+        CREATE TABLE IF NOT EXISTS admin_log (
+            at      INTEGER NOT NULL,
+            by_name TEXT NOT NULL,
+            op      TEXT NOT NULL,
+            detail  TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS control_allowed (
             device_id  TEXT PRIMARY KEY,
             name       TEXT NOT NULL DEFAULT '',
