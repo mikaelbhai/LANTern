@@ -15,6 +15,8 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Audience } from '../components/Audience';
+import { OwnerKeyTab } from './owner/OwnerKey';
+import { useOwner } from '../lib/owner';
 import { Avatar } from '../components/Avatar';
 import {
   Badge,
@@ -54,6 +56,7 @@ type Tab =
   | 'network'
   | 'system'
   | 'privacy'
+  | 'owner'
   | 'about';
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
@@ -72,11 +75,16 @@ const ACCENTS = ['#2BD97C', '#39D9C8', '#5BA9F5', '#9B8CFF', '#FF8FC7', '#F5A623
 
 export function Settings() {
   const [tab, setTab] = React.useState<Tab>('profile');
+  // Only in a build that carries the owner key. Nothing else mentions it.
+  const ownerKey = useOwner((s) => s.available);
+  const tabs = ownerKey
+    ? [...TABS.slice(0, -1), { id: 'owner' as Tab, label: 'Owner key', icon: Lock }, TABS[TABS.length - 1]]
+    : TABS;
 
   return (
     <div className="h-full flex">
       <nav className="w-44 shrink-0 border-r border-edge bg-surface/50 p-2 scroll-y hidden sm:block">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const Icon = t.icon;
           const on = tab === t.id;
           return (
@@ -97,7 +105,7 @@ export function Settings() {
 
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="sm:hidden h-11 border-b border-edge px-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -120,6 +128,7 @@ export function Settings() {
           {tab === 'network' && <NetworkTab />}
           {tab === 'system' && <SystemTab />}
           {tab === 'privacy' && <PrivacyTab />}
+          {tab === 'owner' && ownerKey && <OwnerKeyTab />}
           {tab === 'about' && <AboutTab />}
         </div>
       </div>

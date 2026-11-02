@@ -171,6 +171,40 @@ const MEDIA_SEED: Array<
 
 let startupWifi: string | null = null;
 let ratingDefault = 12;
+// The owner key, as the preview shows it. A device other than the one the
+// preview stands in for can be asked from the console: __simOwnerIncoming().
+const simOwner = {
+  asked: false,
+  outgoing: null as string | null,
+  incoming: null as { deviceId: string; name: string; fingerprint: string; pin: string | null } | null,
+  enrolled: null as { name: string; fingerprint: string; enrolledAt: number } | null,
+  machines: [] as { deviceId: string; name: string; seenAt: number; online: boolean }[],
+};
+const simAdmin = {
+  defaultAge: 12,
+  folders: [
+    { id: 'f1', name: 'Movies', slug: 'movies', unlisted: false, audience: [] as string[], running: true },
+    { id: 'f2', name: 'Home videos', slug: 'home', unlisted: true, audience: ['someone'], running: true },
+  ],
+  titles: [
+    ['Arrival', 13, true], ['Blade Runner', 17, true], ['Coco', 7, false], ['Dune', 13, false],
+    ['Heat', 17, true], ['Inside Out', null, false], ['Jaws', 13, false], ['Se7en', 18, true],
+  ].map(([title, minAge, hidden], i) => ({
+    streamPath: '/movies/' + title + '.mkv',
+    title: title as string,
+    relPath: title + '.mkv',
+    minAge: minAge as number | null,
+    ratedByHost: minAge !== null && i % 2 === 0,
+    hidden: hidden as boolean,
+    shareId: 'f1',
+  })),
+};
+if (typeof window !== 'undefined') {
+  (window as any).__simOwnerIncoming = () => {
+    simOwner.incoming = { deviceId: 'sim-key', name: 'Mikael Pixel', fingerprint: 'amber tiger velvet orbit lunar quill', pin: null };
+    emit('owner:requested', { deviceId: 'sim-key', name: 'Mikael Pixel', fingerprint: simOwner.incoming.fingerprint });
+  };
+}
 // Whether the simulated PC is set to serve from start-up.
 let simBootHost = false;
 const ratingAges: { deviceId: string; name: string; maxAge: number }[] = [
@@ -634,6 +668,89 @@ export async function handle(cmd: string, args: any): Promise<any> {
       if (found) found.maxAge = args.maxAge;
       else ratingAges.push({ deviceId: args.deviceId, name: 'Device', maxAge: args.maxAge });
       return null;
+    }
+
+    // ---- the owner key (preview only: a build without it never calls these)
+    case 'owner_status':
+      return {
+        available: true,
+        identity: simOwner.asked ? { fingerprint: 'amber tiger velvet orbit lunar quill' } : null,
+        enrolled: simOwner.enrolled,
+        incoming: simOwner.incoming,
+        outgoing: simOwner.outgoing,
+        proven: simOwner.enrolled ? ['sim-key'] : [],
+        machines: simOwner.machines,
+      };
+    case 'owner_identity':
+      simOwner.asked = true;
+      return { fingerprint: 'amber tiger velvet orbit lunar quill' };
+    case 'owner_request': {
+      simOwner.asked = true;
+      simOwner.outgoing = args.peerId;
+      const target = peers.find((p) => p.deviceId === args.peerId || p.id === args.peerId);
+      setTimeout(() => emit('owner:ready', { deviceId: args.peerId, name: target?.name ?? 'Device' }), 700);
+      return null;
+    }
+    case 'owner_allow':
+      if (simOwner.incoming) simOwner.incoming = { ...simOwner.incoming, pin: '482913' };
+      return '482913';
+    case 'owner_deny':
+      simOwner.incoming = null;
+      return null;
+    case 'owner_confirm': {
+      const target = peers.find((p) => p.deviceId === simOwner.outgoing || p.id === simOwner.outgoing);
+      const ok = args.pin === '482913';
+      if (ok && simOwner.outgoing) {
+        simOwner.machines = [
+          { deviceId: simOwner.outgoing, name: target?.name ?? 'Device', seenAt: Date.now(), online: true },
+          ...simOwner.machines.filter((m) => m.deviceId !== simOwner.outgoing),
+        ];
+        simOwner.outgoing = null;
+      }
+      setTimeout(
+        () => emit('owner:result', { deviceId: target?.deviceId, accepted: ok, name: target?.name }),
+        200,
+      );
+      return null;
+    }
+    case 'owner_unenrol':
+      simOwner.enrolled = null;
+      return null;
+    case 'owner_forget_machine':
+      simOwner.machines = simOwner.machines.filter((m) => m.deviceId !== args.deviceId);
+      return null;
+    case 'admin_call': {
+      const a = args.args ?? {};
+      switch (args.op) {
+        case 'library.list':
+          return {
+            total: simAdmin.titles.length,
+            offset: a.offset ?? 0,
+            titles: simAdmin.titles.slice(a.offset ?? 0, (a.offset ?? 0) + (a.limit ?? 300)),
+            folders: simAdmin.folders,
+            devices: [],
+            defaultAge: simAdmin.defaultAge,
+          };
+        case 'hide.titles':
+          for (const t of simAdmin.titles) if (a.paths.includes(t.streamPath)) t.hidden = a.hidden;
+          return { changed: a.paths.length };
+        case 'rating.titles':
+          for (const t of simAdmin.titles) {
+            if (a.paths.includes(t.streamPath)) {
+              t.minAge = a.minAge;
+              t.ratedByHost = a.minAge != null;
+            }
+          }
+          return { changed: a.paths.length };
+        case 'rating.default':
+          simAdmin.defaultAge = a.maxAge;
+          return null;
+        case 'audience.share':
+          for (const f of simAdmin.folders) if (f.id === a.shareId) f.unlisted = a.unlisted;
+          return null;
+        default:
+          throw new Error('unknown operation ' + args.op);
+      }
     }
 
     case 'ratings_set_default':

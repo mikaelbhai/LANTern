@@ -36,6 +36,8 @@ import { pushLayer } from './lib/backstack';
 import { isTv } from './lib/tv';
 import { TvApp } from './tv/TvApp';
 import { IncomingFile } from './components/IncomingFile';
+import { OwnerHost } from './screens/owner/OwnerKey';
+import { initOwner } from './lib/owner';
 import { IncomingGame } from './components/IncomingGame';
 import { NetworkStrip } from './components/NetworkStrip';
 import { useHud } from './lib/useHud';
@@ -87,7 +89,12 @@ export default function App() {
     // a backend problem shows as an app with no peers rather than a blank window.
     startBridge()
       .catch((err) => console.error('LANTern: bridge failed to start', err))
-      .finally(() => void init());
+      .finally(() => {
+        void init();
+        // Whether this build has the owner key. A stock build answers no and
+        // nothing else about it is ever touched.
+        void initOwner();
+      });
   }, [init]);
 
   // Theme + typography live on <html> so CSS variables cascade everywhere.
@@ -344,6 +351,7 @@ export default function App() {
           explains is the one that happens on the way into a call. */}
       <SystemPromptHost />
       <ControlConsent />
+      <OwnerHost />
       <Toasts />
     </div>
   );

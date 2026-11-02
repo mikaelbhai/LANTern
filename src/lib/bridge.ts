@@ -177,6 +177,12 @@ export async function startBridge() {
       'installers:progress',
       // A paired device's watch history arrived.
       'history:changed',
+      // The owner key (owner builds only; nothing sends these from a stock one).
+      'owner:requested',
+      'owner:ready',
+      'owner:result',
+      'owner:changed',
+      'admin:changed',
     ];
 
     await Promise.all(
@@ -199,7 +205,42 @@ export async function startBridge() {
   }
 }
 
+/**
+ * Whether this is a build that carries the owner key at all.
+ *
+ * Set when the owner builds LANTern for their own devices (rebuild-all.ps1
+ * -OwnerKey), and absent from everything published, so there is no menu to find
+ * and nothing to call. In the browser it can also be asked for with ?owner
+ * while developing, which is how the simulator shows it.
+ */
+export const ownerBuild = (): boolean =>
+  import.meta.env.VITE_OWNER_KEY === '1' ||
+  (import.meta.env.DEV && typeof location !== 'undefined' && location.search.includes('owner'));
+
 export const api = {
+  owner: {
+    /** Both halves: this build asks for it, and the native side has it compiled in. */
+    available: async (): Promise<boolean> => {
+      if (!ownerBuild() || isGuest()) return false;
+      if (!isTauri()) return true;
+      return call<boolean>('owner_key_available').catch(() => false);
+    },
+    status: () => call<import('./owner').OwnerStatus>('owner_status'),
+    identity: () => call<{ fingerprint: string }>('owner_identity'),
+    /** Asks a machine to accept this device as its owner key. */
+    request: (peerId: string) => call<void>('owner_request', { peerId }),
+    /** The person at this machine says yes; returns the PIN to show. */
+    allow: () => call<string>('owner_allow'),
+    deny: () => call<void>('owner_deny'),
+    confirm: (pin: string) => call<void>('owner_confirm', { pin }),
+    unenrol: () => call<void>('owner_unenrol'),
+    forgetMachine: (deviceId: string) => call<void>('owner_forget_machine', { deviceId }),
+  },
+  admin: {
+    /** One operation on a machine that accepted this key. The machine decides. */
+    call: <T = unknown>(peerId: string, op: string, args: unknown = {}) =>
+      call<T>('admin_call', { peerId, op, args }),
+  },
   net: {
     info: () => call<NetInfo>('net_info'),
     setRelayHub: (on: boolean) => call<void>('net_set_relay_hub', { on }),
