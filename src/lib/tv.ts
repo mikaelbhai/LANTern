@@ -31,7 +31,10 @@ export function isTv(): boolean {
 
   const ua = navigator.userAgent;
   const android = /Android/i.test(ua);
-  const saysTv = /\bTV\b|GoogleTV|AndroidTV|BRAVIA|AFT[A-Z]/i.test(ua);
+  // `LANTV` is appended by MainActivity when the system or the package says
+  // this is a television, which is the one signal that does not depend on what
+  // the set's WebView chooses to report.
+  const saysTv = /\bTV\b|GoogleTV|AndroidTV|BRAVIA|AFT[A-Z]|\bLANTV\b/i.test(ua);
 
   // `pointer: coarse` is a touchscreen; a TV reports `pointer: none` because
   // the remote cannot address a position on screen.

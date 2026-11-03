@@ -267,6 +267,15 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     pipWebView = webView
+    // The page cannot see the package name or the UI mode, and its own guess
+    // (a "TV" in the user agent, or no pointer) is wrong on a set whose WebView
+    // says neither - or whose mouse or air remote makes a pointer exist. The
+    // LANTV build then opened on the phone's profile screen. Saying so in the
+    // user agent is the one channel that is there before the first line of the
+    // page runs. See `isTv` in src/lib/tv.ts.
+    if (isTvDevice()) {
+      webView.settings.userAgentString = webView.settings.userAgentString + " LANTV"
+    }
   }
 
   private fun keepPageAwake() {
