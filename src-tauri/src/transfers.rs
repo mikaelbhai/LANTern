@@ -1333,12 +1333,6 @@ struct SyncJob {
     part: PathBuf,
     /// The size the listing gave, for a copy made from the file as it is.
     size: u64,
-    /// Asked for the sound to be converted first.
-    convert: bool,
-    /// The other device could not convert, so the file is taken as it is.
-    plain: bool,
-    /// How long the sender said the copy would be, once it has said.
-    expected: Option<u64>,
     /// Something is writing to the part file right now.
     running: bool,
 }
@@ -1382,10 +1376,12 @@ fn sweep_stale_parts(root: &Path) {
     walk(root);
 }
 
-fn converted_address(video_url: &str) -> String {
-    format!("{video_url}{}syncaudio=1", if video_url.contains('?') { '&' } else { '?' })
-}
-
+/// Copies a film from another device exactly as it is.
+///
+/// There used to be a mode that had the sharing device re-encode the sound first
+/// for a receiver that could not play it. It ran ffmpeg over the whole film
+/// before a byte moved, took many minutes, and was reported not to finish; the
+/// copy is now always the file's own bytes, tracks and all.
 pub async fn sync_media(
     app: AppHandle,
     state: AppState,
@@ -1396,9 +1392,6 @@ pub async fn sync_media(
     size: u64,
     subtitle_urls: Vec<String>,
     min_age: Option<u8>,
-    // Ask the sharing device to convert the film's sound first. Set by the
-    // receiver, which is the only one that knows what it cannot play.
-    convert_audio: bool,
 ) -> Result<(), String> {
     let share = ensure_synced_share(&app, &state)?;
     let root = PathBuf::from(&share.path);
@@ -1418,15 +1411,9 @@ pub async fn sync_media(
         .and_then(|n| n.to_str())
         .unwrap_or("video")
         .to_string();
-    let shown_name = if convert_audio {
-        format!("{name} (preparing the sound)")
-    } else {
-        name.clone()
-    };
-
     let transfer = Transfer {
         id: transfer_id.clone(),
-        name: shown_name,
+        name,
         size,
         sent: 0,
         peer_id: String::new(),
@@ -1439,7 +1426,7 @@ pub async fn sync_media(
         local_path: None,
         expires_at: None,
         bundle_id: None,
-        url: Some(if convert_audio { converted_address(&video_url) } else { video_url.clone() }),
+        url: Some(video_url.clone()),
         via_chat: false,
     };
     state.with(|s| s.transfers.push(transfer));
@@ -1456,9 +1443,6 @@ pub async fn sync_media(
             part: part_path(&target),
             target,
             size,
-            convert: convert_audio,
-            plain: false,
-            expected: None,
             running: false,
         },
     );
@@ -1486,88 +1470,28 @@ async fn run_sync(app: AppHandle, state: AppState, transfer_id: String) -> Resul
     result
 }
 
-fn with_job(id: &str, change: impl FnOnce(&mut SyncJob)) {
-    if let Some(job) = sync_jobs().lock().expect("sync jobs poisoned").get_mut(id) {
-        change(job);
-    }
-}
-
 async fn sync_download(
     app: &AppHandle,
     state: &AppState,
     transfer_id: &str,
     job: SyncJob,
 ) -> Result<(), String> {
-    let name = job
-        .target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("video")
-        .to_string();
     let emit = || emit_one(app, state, transfer_id);
 
-    let converting = job.convert && !job.plain;
     let have = std::fs::metadata(&job.part).map(|m| m.len()).unwrap_or(0);
     set_state(app, state, transfer_id, "active", have);
 
-    let url = if converting { converted_address(&job.video_url) } else { job.video_url.clone() };
-    let mut result = stream_to_file(
+    let result = stream_to_file(
         &emit,
         state,
         transfer_id,
-        &url,
+        &job.video_url,
         &job.part,
         have,
-        // The size of the original means nothing for a converted copy; the
-        // sender's own length is read from its answer.
-        if converting { 0 } else { job.size },
-        (converting && have == 0).then(|| name.clone()),
+        job.size,
+        None,
     )
     .await;
-
-    // The sharing device cannot convert (no ffmpeg there): the copy is made
-    // from the file as it is, which is what syncing did before this existed.
-    // It plays, without its sound, and says so.
-    if converting {
-        if let Err(e) = &result {
-            if e.to_string().contains("501") {
-                with_job(transfer_id, |j| j.plain = true);
-                state.with(|s| {
-                    if let Some(t) = s.transfers.iter_mut().find(|t| t.id == transfer_id) {
-                        t.name = name.clone();
-                        t.url = Some(job.video_url.clone());
-                    }
-                });
-                result =
-                    stream_to_file(&emit, state, transfer_id, &job.video_url, &job.part, 0, job.size, None).await;
-            }
-        }
-    }
-
-    // What the sender said it would send. A copy made again from scratch (the
-    // other device had to convert once more) need not be the same bytes as the
-    // one the first part came from, so a resumed one that comes out a different
-    // length starts over rather than being joined to the wrong file.
-    let announced = state.with(|s| {
-        s.transfers.iter().find(|t| t.id == transfer_id).map(|t| t.size).unwrap_or(0)
-    });
-    if converting && announced > 0 {
-        match job.expected {
-            Some(before) if before != announced && have > 0 => {
-                let _ = std::fs::remove_file(&job.part);
-                with_job(transfer_id, |j| j.expected = None);
-                return Box::pin(sync_download(
-                    app,
-                    state,
-                    transfer_id,
-                    SyncJob { expected: None, ..job },
-                ))
-                .await;
-            }
-            None => with_job(transfer_id, |j| j.expected = Some(announced)),
-            _ => {}
-        }
-    }
 
     match result {
         Ok(total) => {

@@ -62,7 +62,6 @@ import { isAndroid } from '../lib/picker';
 import { useStore } from '../lib/store';
 import { isContinuing, isFinished } from '../lib/watched';
 import { mergeOverrides, ownChoices, usePeerOverrides } from '../lib/peerCollections';
-import { browserCanPlay, needsRemux } from '../lib/audiocap';
 import { cn, formatBytes } from '../lib/utils';
 import type { MediaItem, RatingsStatus, WatchParty } from '../lib/types';
 import { PullToRefresh } from '../components/PullToRefresh';
@@ -155,23 +154,10 @@ export function Theatre() {
   }, []);
   const [syncTransfers, setSyncTransfers] = React.useState<Record<string, string>>({});
   const startSync = React.useCallback(async (item: MediaItem) => {
-    // A copy is only as playable as this device can decode. When every audio
-    // track in the file needs re-encoding, and this device cannot do that, the
-    // copy will have a picture and no sound - said now, while the original is
-    // still one tap away, and not found out on a plane.
-    const tracks = (item.audioTracks ?? []) as { codec?: string; webSafe?: boolean }[];
-    const needsConverting =
-      tracks.length > 0 &&
-      tracks.every((t) => needsRemux(t.codec ?? '', t.webSafe !== false, browserCanPlay)) &&
-      !(await api.media.canSwitchAudio().catch(() => false));
-    if (needsConverting) {
-      useStore.getState().toast({
-        kind: 'info',
-        title: `Preparing ${item.title}'s sound`,
-        body: 'This device cannot play its audio format, so the other device converts it first - a minute or two before the copy starts arriving. If it cannot, the copy will play without sound.',
-      });
-    }
-    const transferId = await api.media.sync(item, needsConverting);
+    // The file as it is. The other device used to convert the sound first for a
+    // receiver that could not play it; that took minutes, ran over the whole
+    // film, and was reported never to finish, so a copy is now the plain file.
+    const transferId = await api.media.sync(item);
     setSyncTransfers((prev) => ({ ...prev, [item.id]: transferId }));
   }, []);
   const removeSync = React.useCallback(async (item: MediaItem) => {

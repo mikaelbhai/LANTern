@@ -571,11 +571,8 @@ export const api = {
      * already had rather than syncing only the one the player happened to
      * be on.
      */
-    sync: (item: MediaItem, convertAudio = false) =>
+    sync: (item: MediaItem) =>
       call<string>('media_sync_start', {
-        // Ask the sharing device to convert the film's sound first. Only set
-        // by a receiver that cannot play it and cannot convert it itself.
-        convertAudio,
         itemId: item.id,
         videoUrl: item.streamUrl,
         videoRelPath: item.relPath,

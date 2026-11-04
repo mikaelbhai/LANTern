@@ -42,6 +42,7 @@ import { cn } from '../../lib/utils';
 import type { MediaItem, WatchParty } from '../../lib/types';
 import { useBackDismiss } from '../../lib/hooks';
 import { browserCanPlay, needsRemux } from '../../lib/audiocap';
+import { isAndroid } from '../../lib/picker';
 import { claimArrowKeys } from '../../lib/tv';
 import { RotationLock } from '../../components/RotationLock';
 import { streamOrigin } from './keyframe';
@@ -643,6 +644,13 @@ export function Player({
    */
   const autoPicked = React.useRef<string | null>(null);
   React.useEffect(() => {
+    // Only a phone is sent the re-cut stream unasked. A desktop app gets the
+    // file exactly as it is and decodes it itself: on a Windows machine whose
+    // webview said it could not play the sound, the re-cut stream (the video
+    // copied into a fragmented MP4) arrived with audio and no picture, while
+    // the same file played whole in the build it was compared with. A track
+    // chosen by hand from the Audio menu still asks for the re-cut.
+    if (!isAndroid()) return;
     if (autoPicked.current === item.id) return;
     // Not again once the re-cut stream has failed for this title: falling back
     // to the plain file sets the track to "none", which is exactly the state

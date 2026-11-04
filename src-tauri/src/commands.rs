@@ -1700,7 +1700,6 @@ pub fn media_sync_start(
     size: u64,
     subtitle_urls: Vec<String>,
     min_age: Option<u8>,
-    convert_audio: Option<bool>,
 ) -> String {
     let transfer_id = uid();
     let owned = (*state).clone();
@@ -1714,7 +1713,6 @@ pub fn media_sync_start(
         size,
         subtitle_urls,
         min_age,
-        convert_audio.unwrap_or(false),
     ));
     transfer_id
 }
