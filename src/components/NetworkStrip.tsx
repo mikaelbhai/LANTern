@@ -16,7 +16,7 @@
  * is always the more urgent of the two.
  */
 import React from 'react';
-import { AlertTriangle, ShieldAlert, WifiOff } from 'lucide-react';
+import { AlertTriangle, ShieldAlert } from 'lucide-react';
 
 import { api, on } from '../lib/bridge';
 import { useStore } from '../lib/store';
@@ -36,16 +36,11 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
   const call = useStore((s) => s.call);
   const peers = useStore((s) => s.peers);
 
-  /**
-   * Peers that answer on the signalling link but whose library cannot be
-   * read. Worth naming because it looks exactly like "they have published
-   * nothing", and it is usually a firewall.
-   */
-  const [unreachable, setUnreachable] = React.useState<string[]>([]);
-  React.useEffect(
-    () => on('library:unreachable', (names) => setUnreachable((names as string[]) ?? [])),
-    [],
-  );
+  // Whether this device publishes anything. The faults below are about other
+  // devices being unable to open what this one serves, so for a device that
+  // serves nothing - every phone and television - they describe a problem it
+  // cannot have, and a strip saying so was only confusing.
+  const hosting = useStore((s) => s.shares.some((x) => x.running));
 
   /** A service that could not bind. Arrives once, at startup. */
   const [service, setService] = React.useState<string | null>(null);
@@ -92,7 +87,7 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
   // A call owns this space while it is running.
   if (call && call.state !== 'ended') return null;
 
-  const fault = firstFault(net, unreachable, service, profiles, Object.keys(peers).length);
+  const fault = firstFault(net, hosting ? service : null, hosting ? profiles : []);
   if (!fault) return null;
 
   return (
@@ -122,10 +117,8 @@ export function NetworkStrip({ onNavigate }: { onNavigate: (s: Screen) => void }
  */
 function firstFault(
   net: ReturnType<typeof useStore.getState>['net'],
-  unreachable: string[],
   service: string | null,
   profiles: ConnectionProfile[],
-  peerCount: number,
 ): Fault | null {
   if (service) {
     return {
@@ -174,14 +167,15 @@ function firstFault(
     };
   }
 
-  if (unreachable.length > 0) {
-    const who = unreachable.length === 1 ? unreachable[0] : `${unreachable.length} devices`;
-    return {
-      title: `Can't read what ${who} is sharing`,
-      body: 'They answer, but their files are being refused. Usually a firewall',
-      icon: <WifiOff size={15} />,
-    };
-  }
+  /*
+   * No "can't read what X is sharing" here any more.
+   *
+   * That one was a problem on the host's side shown on everybody else's
+   * screen: a phone or a television can do nothing about another machine's
+   * firewall, and it appeared for devices that publish nothing at all. The
+   * host is told about its own problem above (a network set to Public, a port
+   * that would not bind); a recipient just sees what is there.
+   */
 
   /*
    * An empty network is not a fault.

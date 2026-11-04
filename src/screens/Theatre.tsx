@@ -85,21 +85,11 @@ export function Theatre() {
 
   React.useEffect(() => on('party:changed', (p) => setParty(p as WatchParty | null)), []);
 
-  /**
-   * Peers that are online but whose library could not be read.
-   *
-   * Worth saying out loud. An empty Theatre beside a peer that is plainly
-   * connected - you can call them - reads as "they have shared nothing", when
-   * what actually happened is that something between the two machines refused
-   * the connection to their file server. A firewall that allows the app on one
-   * network profile and not another produces exactly that, and gives no other
-   * sign anywhere in the app.
-   */
-  const [unreachable, setUnreachable] = React.useState<string[]>([]);
-  React.useEffect(
-    () => on('library:unreachable', (names) => setUnreachable((names as string[]) ?? [])),
-    [],
-  );
+  // A peer whose library cannot be read is not mentioned here. It used to be -
+  // "Can't read X's library, usually the firewall" - which put another
+  // machine's problem on the screen of whoever was trying to watch, who can do
+  // nothing about it, and it fired for devices that publish nothing. The host
+  // is told about its own side by the network strip.
   const [loading, setLoading] = React.useState(true);
   const [playing, setPlaying] = React.useState<MediaItem | null>(null);
   const [detail, setDetail] = React.useState<MediaItem | null>(null);
@@ -602,22 +592,6 @@ export function Theatre() {
           className="h-11 rounded-full bg-raised border-transparent pl-10 text-sm"
         />
       </div>
-
-      {unreachable.length > 0 && (
-        <div className="shrink-0 mx-4 mt-3 rounded-card border border-gold/30 bg-gold/10 px-3 py-2">
-          <p className="text-xs text-gold/90 leading-relaxed">
-            <span className="font-medium">
-              Can&rsquo;t read {unreachable.join(', ')}
-              {unreachable.length > 1 ? "'s libraries" : "'s library"}.
-            </span>{' '}
-            {unreachable.length > 1 ? 'Those devices are' : 'That device is'} online — messages
-            and calls work — but the connection to{' '}
-            {unreachable.length > 1 ? 'their' : 'its'} files is being refused. On Windows that
-            is usually the firewall: the network it is on has to be set to Private, or LANTern
-            allowed on a Public one.
-          </p>
-        </div>
-      )}
 
       <PullToRefresh className="flex-1" onRefresh={() => api.media.scan().then(setItems)}>
       <div>
