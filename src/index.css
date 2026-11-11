@@ -525,3 +525,17 @@ html[data-tv='true'] [role='button']:focus-visible {
 html[data-tv='true'] .dots-board {
   --dots-gap: 24px;
 }
+
+/*
+ * The television's picture is a native surface behind the page, not an element
+ * in it (see TvNativePlayer.kt), so everything the page paints behind the
+ * controls has to let it through: the document, the root, and the TV shell's own
+ * black. Set only while a film is playing through it; the pages underneath are
+ * already invisible then.
+ */
+html.tv-native-video,
+html.tv-native-video body,
+html.tv-native-video #root,
+html.tv-native-video .tv-apple {
+  background: transparent !important;
+}

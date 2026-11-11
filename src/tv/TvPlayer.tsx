@@ -12,6 +12,7 @@ import type { MediaItem } from '../lib/types';
 import { cn } from '../lib/utils';
 import { rememberPosition, startPosition } from '../lib/resumeMirror';
 import { intentOf, scrubbed, type Intent } from './remote';
+import { native, nativeAvailable, onNativeEvent } from './nativePlayer';
 import { u } from './units';
 
 /**
@@ -79,6 +80,11 @@ export function TvPlayer({
   const [scrub, setScrub] = React.useState<number | null>(null);
   const [failed, setFailed] = React.useState(false);
   const [attempt, setAttempt] = React.useState(0);
+  // Whether the film plays through the system's own decoder (TvNativePlayer.kt)
+  // and not this page's <video>. On when the shell offers it; turned off, for
+  // this title, if the system player refuses the file before showing a frame, so
+  // what the <video> could play still plays.
+  const [nativeOn, setNativeOn] = React.useState(nativeAvailable);
 
   const subtitles = item.subtitles ?? [];
   const audioTracks = item.audioTracks ?? [];
@@ -104,8 +110,10 @@ export function TvPlayer({
 
   /* ----------------------------------------------------------- the stream */
 
+  // The native player picks a track out of the file itself, so the host never
+  // re-cuts the film for it; only the <video> needs `?audio=`.
   const source =
-    audioTrack >= 0
+    audioTrack >= 0 && !nativeOn
       ? `${item.streamUrl}${item.streamUrl.includes('?') ? '&' : '?'}audio=${audioTrack}` +
         `&codec=${encodeURIComponent(audioTracks[audioTrack]?.codec ?? '')}` +
         `&t=${sourceOffset.toFixed(3)}`
@@ -113,7 +121,8 @@ export function TvPlayer({
 
   // A film from another device is read through the local buffer (readahead.rs),
   // and played from the address it came from if that cannot be had.
-  const relayable = isTauri() && !isGuest() && !!item.peerId && bufferMb > 0 && /^http:\/\//i.test(source);
+  const relayable =
+    !nativeOn && isTauri() && !isGuest() && !!item.peerId && bufferMb > 0 && /^http:\/\//i.test(source);
   const [relay, setRelay] = React.useState<{ for: string; url: string } | null>(null);
   const [relayFailed, setRelayFailed] = React.useState<string | null>(null);
   React.useEffect(() => {
@@ -177,6 +186,11 @@ export function TvPlayer({
   const seekTo = React.useCallback(
     (to: number) => {
       const target = Math.max(0, Math.min(to, latest.current.duration > 0 ? latest.current.duration - 1 : to));
+      if (nativeOn) {
+        native.seek(target);
+        setTime(target);
+        return;
+      }
       if (audioTrack >= 0) {
         restartAt(target);
         return;
@@ -185,7 +199,7 @@ export function TvPlayer({
       if (el) el.currentTime = target;
       setTime(target);
     },
-    [audioTrack, restartAt],
+    [audioTrack, restartAt, nativeOn],
   );
 
   // Saved as it goes, so a film left half-way is half-way next time.
@@ -210,11 +224,16 @@ export function TvPlayer({
   }, [item.id]);
 
   React.useEffect(() => {
+    if (nativeOn) {
+      if (playing) native.play();
+      else native.pause();
+      return;
+    }
     const el = videoRef.current;
     if (!el) return;
     if (playing) void el.play().catch(() => setPlaying(false));
     else el.pause();
-  }, [playing, playSrc]);
+  }, [playing, playSrc, nativeOn]);
 
   /* ---------------------------------------------------- what is on screen */
 
@@ -222,6 +241,90 @@ export function TvPlayer({
   const at = order.findIndex((i) => i.id === item.id);
   const previous = at > 0 ? order[at - 1] : null;
   const next = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
+
+  /* ------------------------------------------------- the system's own player */
+
+  const audioTrackRef = React.useRef(audioTrack);
+  audioTrackRef.current = audioTrack;
+  const playingRef = React.useRef(playing);
+  playingRef.current = playing;
+  const finishRef = React.useRef(() => {});
+  finishRef.current = () => {
+    void api.media.setProgress(item.id, latest.current.duration || latest.current.time).catch(() => {});
+    if (next) onPlay(next);
+    else onClose();
+  };
+
+  // Plays the film in TvNativePlayer and takes the clock, the length and the
+  // state from what it reports, in place of the <video>'s own events. Opened
+  // again on a retry (`attempt`), and closed whenever this unmounts - the next
+  // episode is a new TvPlayer, so closing then opening is in the right order.
+  React.useEffect(() => {
+    if (!nativeOn) return;
+    ready.current = false;
+    let sawFrame = false;
+    let chose = false;
+    const stop = onNativeEvent((e) => {
+      switch (e.type) {
+        case 'time': {
+          const here = e.positionMs / 1000;
+          setTime(here);
+          if (e.durationMs > 0) setDuration(e.durationMs / 1000);
+          if (ready.current && here > 0) bestKnown.current = here;
+          break;
+        }
+        case 'ready':
+          if (e.durationMs > 0) setDuration(e.durationMs / 1000);
+          ready.current = true;
+          break;
+        case 'firstFrame':
+          sawFrame = true;
+          ready.current = true;
+          break;
+        case 'playing':
+          setPlaying(e.playing);
+          break;
+        case 'ended':
+          finishRef.current();
+          break;
+        case 'tracks':
+          // The viewer's remembered language, applied once the file's own tracks
+          // are known.
+          if (!chose) {
+            chose = true;
+            if (audioTrackRef.current >= 0) native.selectAudio(audioTrackRef.current);
+          }
+          break;
+        case 'error':
+          ready.current = false;
+          // From where the film had got to, on whichever player takes over.
+          resumeAt.current = bestKnown.current;
+          // Refused before any picture: the <video> may still manage it. After
+          // one, it is a failure like any other, and the retry button's to deal with.
+          if (!sawFrame) setNativeOn(false);
+          else setFailed(true);
+          break;
+        default:
+          break;
+      }
+    });
+    const from = resumeAt.current ?? 0;
+    resumeAt.current = null;
+    native.open(item.streamUrl, from, playingRef.current);
+    return () => {
+      stop();
+      native.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeOn, item.streamUrl, attempt]);
+
+  // The picture is behind the page, so the page has to be see-through while a
+  // film plays: see `tv-native-video` in index.css.
+  React.useEffect(() => {
+    if (!nativeOn) return;
+    document.documentElement.classList.add('tv-native-video');
+    return () => document.documentElement.classList.remove('tv-native-video');
+  }, [nativeOn]);
 
   const buttons = React.useMemo(() => {
     const list: { id: 'prev' | 'next' | 'subs' | 'audio'; label: string; icon: React.ReactNode }[] = [];
@@ -258,6 +361,12 @@ export function TvPlayer({
     const here = latest.current.time;
     setAudioTrack(to);
     remember(to, subtitle);
+    if (nativeOn) {
+      // The file's own track, chosen in the player: nothing to re-cut, and no
+      // jump back to the start of a stream.
+      native.selectAudio(to);
+      return;
+    }
     if (to >= 0) {
       restartAt(here);
     } else {
@@ -492,7 +601,11 @@ export function TvPlayer({
 
   return (
     <div
-      className="fixed inset-0 z-[60] bg-black text-white overflow-hidden select-none"
+      className={cn(
+        'fixed inset-0 z-[60] text-white overflow-hidden select-none',
+        // See-through when the picture is a native surface behind the page.
+        nativeOn ? 'bg-transparent' : 'bg-black',
+      )}
       // A mouse moving brings the controls up; a click on the picture is OK.
       onMouseMove={() => {
         wake();
@@ -515,6 +628,7 @@ export function TvPlayer({
       >
         <span style={{ fontSize: u(3.2), lineHeight: 1 }}>×</span>
       </div>
+      {!nativeOn && (
       <video
         key={attempt}
         ref={videoRef}
@@ -558,6 +672,7 @@ export function TvPlayer({
           setFailed(true);
         }}
       />
+      )}
 
       <SubtitleOverlay cues={cues} time={time} style="large" chromeVisible={controls} />
 

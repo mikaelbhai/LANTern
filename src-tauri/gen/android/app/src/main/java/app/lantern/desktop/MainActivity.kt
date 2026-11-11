@@ -275,8 +275,16 @@ class MainActivity : TauriActivity() {
     // page runs. See `isTv` in src/lib/tv.ts.
     if (isTvDevice()) {
       webView.settings.userAgentString = webView.settings.userAgentString + " LANTV"
+      // The system's own video player, for the television only. A page that
+      // finds `LanternTv` plays through it; one that does not (a phone, a
+      // desktop, a browser) keeps the <video> it always had. See TvNativePlayer.
+      val native = TvNativePlayer(this, webView)
+      tvPlayer = native
+      webView.addJavascriptInterface(native, "LanternTv")
     }
   }
+
+  private var tvPlayer: TvNativePlayer? = null
 
   private fun keepPageAwake() {
     pipWebView?.let {
@@ -287,6 +295,9 @@ class MainActivity : TauriActivity() {
 
   override fun onPause() {
     super.onPause()
+    // The native player is not the page's: pausing the WebView does not pause
+    // it, so a film would play on, picture and sound, behind whatever replaced us.
+    tvPlayer?.hostPaused()
     // The base class has just paused the page. If this is the floating window
     // being entered, undo that; the mode-changed callback below covers the
     // order in which Android delivers the two.
@@ -406,6 +417,8 @@ class MainActivity : TauriActivity() {
   private external fun nativeRegisterInstaller()
 
   override fun onDestroy() {
+    runCatching { tvPlayer?.destroy() }
+    tvPlayer = null
     runCatching { unregisterReceiver(pipReceiver) }
     multicastLock?.let { lock ->
       if (lock.isHeld) {
