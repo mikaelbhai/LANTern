@@ -2348,7 +2348,8 @@ export function Player({
                           className="track-scrim fixed inset-0 z-20 cursor-default"
                           onClick={() => setSpeedOpen(false)}
                         />
-                        <div className="track-menu absolute bottom-7 right-0 z-30 w-24 rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg">
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-24 rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg max-h-[min(60vh,26rem)]">
+                          <MenuClose onClose={() => setSpeedOpen(false)} />
                           {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((s) => (
                             <button
                               key={s}
@@ -2413,7 +2414,8 @@ export function Player({
                           className="track-scrim fixed inset-0 z-20 cursor-default"
                           onClick={() => setSleepOpen(false)}
                         />
-                        <div className="track-menu absolute bottom-7 right-0 z-30 w-[170px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg">
+                        <div className="track-menu absolute bottom-7 right-0 z-30 w-[170px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg max-h-[min(60vh,26rem)]">
+                          <MenuClose onClose={() => setSleepOpen(false)} />
                           {[
                             { label: 'Off', apply: () => { setSleepAt(null); setSleepAtEnd(false); } },
                             ...[15, 30, 45, 60].map((m) => ({
@@ -2459,8 +2461,9 @@ export function Player({
                             onClick={() => setAudioOpen(false)}
                           />
                         <div className="track-menu absolute bottom-7 right-0 z-30 w-[210px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg flex flex-col max-h-[min(60vh,26rem)]">
+                          <MenuClose onClose={() => setAudioOpen(false)} />
                           {audioTracks.length > 1 && (
-                          <div className="overflow-y-auto overscroll-contain min-h-0">
+                          <div className="shrink-0">
                             <button
                               onClick={() => chooseAudio(-1)}
                               className={cn(
@@ -2587,7 +2590,8 @@ export function Player({
                             onClick={() => setTracksOpen(false)}
                           />
                         <div className="track-menu absolute bottom-7 right-0 z-30 w-[210px] rounded-card border border-edge bg-surface/95 backdrop-blur p-1 shadow-lg flex flex-col max-h-[min(60vh,26rem)]">
-                          <div className="overflow-y-auto overscroll-contain min-h-0">
+                          <MenuClose onClose={() => setTracksOpen(false)} />
+                          <div className="shrink-0">
                             <button
                               onClick={() => {
                                 setSubtitle(-1);
@@ -2856,6 +2860,29 @@ export function Player({
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * A way out of a menu that is always within reach.
+ *
+ * Pinned to the top of the panel while its contents scroll under it, faint so
+ * it does not read as part of the list, and zero-height so it takes no row from
+ * the options. A menu that could end up taller than the screen once left no
+ * reachable way to close it; this is the way out whatever else goes wrong.
+ */
+function MenuClose({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="sticky top-0 z-10 h-0 shrink-0 flex justify-end pointer-events-none">
+      <button
+        type="button"
+        aria-label="Close menu"
+        onClick={onClose}
+        className="pointer-events-auto h-8 w-8 rounded-full bg-black/40 text-white/60 grid place-items-center hover:bg-black/60 hover:text-white"
+      >
+        <X size={15} />
+      </button>
     </div>
   );
 }

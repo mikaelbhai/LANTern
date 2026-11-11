@@ -416,6 +416,21 @@ html[data-font='large'] body {
  * specificity, so the positioning utilities on the element do not have to be
  * removed for the sheet to take over.
  */
+/*
+ * The whole menu scrolls, on every device.
+ *
+ * Only the list of tracks inside it used to, with the sections under it (how the
+ * subtitles look, their delay) pinned below at full height. Choosing a subtitle
+ * adds those sections, and on a phone held sideways they were taller than the
+ * sheet: the list shrank to nothing, the rest ran off the bottom of the screen,
+ * and nothing in the menu could be scrolled to or dismissed.
+ */
+.track-menu {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 @media (pointer: coarse) {
   .track-menu {
     position: fixed;
