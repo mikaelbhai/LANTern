@@ -248,3 +248,59 @@ export function describeCollection(c: Collection): string {
   }
   return `${c.items.length} films`;
 }
+
+/**
+ * Follows a file that was moved to another folder.
+ *
+ * An item's id is the share and the path inside it, so moving a film from
+ * `Iron Man/x.mkv` to `Movies/Iron Man/x.mkv` gives it a new id, and every choice
+ * filed under the old one - which collection it is in, that it was pulled out of
+ * one, where it sits in a hand-made group - pointed at nothing. Worse, publishing
+ * keeps only choices about titles that exist, so the next publish wrote that loss
+ * to the database as well.
+ *
+ * A choice whose title is gone is carried over to the one title in the same share
+ * with the same file name. Only that: two files of one name, or none, leave it
+ * alone, because a choice about a drive that is merely unplugged must wait for
+ * it and never be handed to something else.
+ *
+ * Returns the same object when nothing moved, so it is safe to call whenever the
+ * library changes.
+ */
+export function rekeyMoved(overrides: Overrides, items: MediaItem[]): Overrides {
+  const own = items.filter((i) => !i.peerId && i.relPath);
+  if (!own.length) return overrides;
+
+  const present = new Set(own.map((i) => i.id));
+  const shares = new Set(own.map((i) => i.id.split(':')[0]));
+  const base = (path: string) => path.split('/').pop() ?? path;
+
+  const byName = new Map<string, string[]>();
+  for (const item of own) {
+    const name = `${item.id.split(':')[0]}:${base(item.relPath as string)}`;
+    byName.set(name, [...(byName.get(name) ?? []), item.id]);
+  }
+
+  const moved = new Map<string, string>();
+  const successor = (id: string): string => {
+    if (present.has(id)) return id;
+    const known = moved.get(id);
+    if (known) return known;
+    const colon = id.indexOf(':');
+    if (colon < 0 || !shares.has(id.slice(0, colon))) return id;
+    const found = byName.get(`${id.slice(0, colon)}:${base(id.slice(colon + 1))}`);
+    if (found?.length !== 1) return id;
+    moved.set(id, found[0]);
+    return found[0];
+  };
+
+  const itemToKey: Record<string, string> = {};
+  for (const [id, key] of Object.entries(overrides.itemToKey)) itemToKey[successor(id)] = key;
+  const detached = [...new Set(overrides.detached.map(successor))];
+  const memberOrder: Record<string, string[]> = {};
+  for (const [key, ids] of Object.entries(overrides.memberOrder ?? {})) {
+    memberOrder[key] = [...new Set(ids.map(successor))];
+  }
+
+  return moved.size ? { ...overrides, itemToKey, detached, memberOrder } : overrides;
+}

@@ -54,6 +54,7 @@ import {
   authoredKeys,
   describeCollection,
   emptyOverrides,
+  rekeyMoved,
   groupLibrary,
   sagaKey,
 } from '../lib/collections';
@@ -211,6 +212,14 @@ export function Theatre() {
     () => groupLibrary(items, mergeOverrides(peerOverrides, overrides)),
     [items, overrides, peerOverrides],
   );
+
+  // A film moved to another folder is a new id; its collection choices follow it
+  // rather than being left pointing at nothing (and then dropped from what is
+  // published, which is stored). See `rekeyMoved`.
+  React.useEffect(() => {
+    const next = rekeyMoved(overrides, items);
+    if (next !== overrides) setOverrides(next);
+  }, [items, overrides, setOverrides]);
 
   // And this device's own choices go the other way, so that whoever else is
   // looking at this library sees it grouped the way it was set up here.
