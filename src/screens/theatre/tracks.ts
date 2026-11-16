@@ -152,3 +152,44 @@ export function trackNames(
     return `${name} ${n}`;
   });
 }
+
+/** The language a title opens in when nobody has said otherwise. */
+const ENGLISH = new Set(['eng', 'en']);
+
+/**
+ * Which audio track a title should open on, or -1 for the file's own.
+ *
+ * In order: what this title was watched in; what was chosen a moment ago in this
+ * player (the next episode must open the way the last one was left - the library
+ * entry for it was read before that choice and still carries the old default, and
+ * it opened in the file's language instead); what is remembered as the usual
+ * choice; and failing all of those, English.
+ *
+ * An empty language is a choice too: it means "the file's own track" and is kept,
+ * not turned into English. A language the file does not have falls through to
+ * English rather than to whatever the release lists first.
+ *
+ * -1 also for a track that already is the file's default. Picking it by position
+ * would ask the host to re-cut a stream that plays as it is.
+ */
+export function pickAudioTrack(
+  item: { audioTracks?: { lang?: string; default?: boolean }[]; audioLang?: string; watchedAt?: number },
+  chosenHere?: string,
+): number {
+  const tracks = item.audioTracks;
+  if (!tracks?.length) return -1;
+  const at = (test: (lang: string) => boolean) =>
+    tracks.findIndex((t) => test((t.lang ?? '').trim().toLowerCase()));
+  const resolve = (language: string): number => {
+    const want = language.trim().toLowerCase();
+    if (!want) return -1;
+    const found = at((l) => l === want);
+    return found >= 0 ? found : at((l) => ENGLISH.has(l));
+  };
+  const chosen =
+    item.watchedAt && item.audioLang !== undefined
+      ? item.audioLang
+      : (chosenHere ?? item.audioLang);
+  const index = chosen === undefined ? at((l) => ENGLISH.has(l)) : resolve(chosen);
+  return index >= 0 && tracks[index]?.default ? -1 : index;
+}

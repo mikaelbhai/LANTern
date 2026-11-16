@@ -7,7 +7,7 @@ import { useStore } from '../lib/store';
 import { runtime, seriesOrder } from '../screens/Theatre';
 import { streamOrigin } from '../screens/theatre/keyframe';
 import { SubtitleOverlay, useSubtitleCues } from '../screens/theatre/Subtitles';
-import { trackNames } from '../screens/theatre/tracks';
+import { pickAudioTrack, trackNames } from '../screens/theatre/tracks';
 import type { MediaItem } from '../lib/types';
 import { cn } from '../lib/utils';
 import { rememberPosition, startPosition } from '../lib/resumeMirror';
@@ -36,6 +36,9 @@ import { u } from './units';
 
 type Zone = 'hidden' | 'bar' | 'buttons';
 type Menu = 'subs' | 'audio' | null;
+
+/** The audio language last picked on this television, for the next episode to open in. */
+let lastAudioChoice: string | undefined;
 
 const HIDE_AFTER_MS = 4000;
 /** Rows of a track menu that are on screen at once. */
@@ -98,11 +101,10 @@ export function TvPlayer({
     if (!item.subtitleLang) return -1;
     return subtitles.findIndex((s) => s.lang === item.subtitleLang);
   });
-  const [audioTrack, setAudioTrack] = React.useState(() => {
-    if (!item.audioLang) return -1;
-    const at = audioTracks.findIndex((a) => a.lang === item.audioLang);
-    return at >= 0 && !audioTracks[at].default ? at : -1;
-  });
+  // Opens on what was chosen last, then what this title remembers, then English:
+  // see pickAudioTrack. A new player is built for each episode, so the choice made
+  // in the last one is held outside it.
+  const [audioTrack, setAudioTrack] = React.useState(() => pickAudioTrack(item, lastAudioChoice));
   const [sourceOffset, setSourceOffset] = React.useState(0);
   const [streamStart, setStreamStart] = React.useState(0);
 
@@ -359,6 +361,7 @@ export function TvPlayer({
   const chooseAudio = (to: number) => {
     if (to === audioTrack) return;
     const here = latest.current.time;
+    lastAudioChoice = to >= 0 ? (audioTracks[to]?.lang ?? '') : '';
     setAudioTrack(to);
     remember(to, subtitle);
     if (nativeOn) {

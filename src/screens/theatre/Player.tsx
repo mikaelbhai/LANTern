@@ -49,7 +49,7 @@ import { streamOrigin } from './keyframe';
 import { recoveredPosition, rememberPosition, startPosition } from '../../lib/resumeMirror';
 import { pipTitle } from '../../lib/pipTitle';
 import { setBoost } from './loudness';
-import { trackNames } from './tracks';
+import { pickAudioTrack, trackNames } from './tracks';
 import { useDetectedSubtitles } from './useDetectedSubtitles';
 import {
   SubtitleOverlay,
@@ -502,9 +502,15 @@ export function Player({
   const cues = useSubtitleCues(subtitle >= 0 ? (subtitles[subtitle]?.url ?? null) : null);
 
   // Which audio track is playing, and whether this device can change it.
-  const [audioTrack, setAudioTrack] = React.useState(() =>
-    matchLanguage(item.audioTracks, item.audioLang),
-  );
+  const [audioTrack, setAudioTrack] = React.useState(() => pickAudioTrack(item));
+  // What was last chosen in this player, by language, so the next episode opens
+  // the way this one was left. The library entry for that episode was read before
+  // the choice and still says what it said then.
+  const chosenAudio = React.useRef<string | undefined>(undefined);
+  const chosenSubtitle = React.useRef<string | undefined>(undefined);
+  // The tracks an episode was just opened on, until the state has caught up with
+  // them: see the effect that remembers choices.
+  const pendingTracks = React.useRef<{ audio: number; subtitle: number } | null>(null);
   // A remuxed stream has no timeline of its own, so seeking re-requests it
   // rather than scrubbing: `sourceOffset` is the point it was asked to begin at.
   //
@@ -592,7 +598,12 @@ export function Player({
     // An episode that opens straight onto the re-cut stream (its audio language
     // is already chosen) is asked for from where it was left; asked for from 0
     // it ignored the saved place and began again.
-    const track = matchLanguage(item.audioTracks, item.audioLang);
+    const track = pickAudioTrack(item, chosenAudio.current);
+    const subtitlePick =
+      chosenSubtitle.current !== undefined && !(item.watchedAt && item.subtitleLang !== undefined)
+        ? matchLanguage(item.subtitles, chosenSubtitle.current)
+        : matchLanguage(item.subtitles, item.subtitleLang);
+    pendingTracks.current = { audio: track, subtitle: subtitlePick };
     setSourceOffset(track >= 0 ? begin : 0);
     setStreamStart(track >= 0 ? begin : 0);
     setNatural({ w: 0, h: 0 });
@@ -600,8 +611,8 @@ export function Player({
     setRepeatA(null);
     setRepeatB(null);
     setPlaying(true);
-    setSubtitle(matchLanguage(item.subtitles, item.subtitleLang));
-    setAudioTrack(matchLanguage(item.audioTracks, item.audioLang));
+    setSubtitle(subtitlePick);
+    setAudioTrack(track);
     setAudioDelay(0);
     // An answer still in flight belongs to the last episode.
     startGen.current++;
@@ -698,12 +709,30 @@ export function Player({
     // The first run reports what was just restored; writing it back would be
     // harmless but pointless, and would promote a default to a real choice.
     const key = `${audioLang}|${subtitleLang}`;
+
+    // A new episode was just opened on tracks it chose for itself. Until the state
+    // has caught up with them this effect sees the *previous* episode's tracks
+    // and then, one render later, the new ones - and either was recorded as
+    // somebody's choice. The second was the one that mattered: an episode that
+    // opened in the file's language wrote that down as the usual choice, undoing
+    // an English that had just been picked, and the sync carried it to the other
+    // devices.
+    const pending = pendingTracks.current;
+    if (pending) {
+      if (audioTrack !== pending.audio || subtitle !== pending.subtitle) return;
+      pendingTracks.current = null;
+      savedChoice.current = key;
+      return;
+    }
+
     if (savedChoice.current === '') {
       savedChoice.current = key;
       return;
     }
     if (savedChoice.current === key) return;
     savedChoice.current = key;
+    chosenAudio.current = audioLang;
+    chosenSubtitle.current = subtitleLang;
 
     void api.media.setTracks(item.id, audioLang, subtitleLang).catch(() => {
       /* a lost preference is not worth interrupting playback for */
