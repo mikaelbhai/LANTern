@@ -273,6 +273,15 @@ pub fn items_for_share(
                 .any(|t| t.get("webSafe").and_then(|v| v.as_bool()) == Some(false));
             if audio_tracks.len() > 1 || unplayable {
                 obj.insert("audioTracks".into(), serde_json::Value::Array(audio_tracks));
+                // Whether *this* device, the one holding the file, can re-cut it
+                // for a chosen track. The viewer used to ask itself, and a phone
+                // has no ffmpeg, so it refused every switch on a film its host
+                // could perfectly well have done - the menu said "needs ffmpeg
+                // on the device sharing this file" about a PC that had it.
+                obj.insert(
+                    "canSwitchAudio".into(),
+                    serde_json::Value::Bool(crate::audiotrack::ffmpeg_path().is_some()),
+                );
             }
         }
 

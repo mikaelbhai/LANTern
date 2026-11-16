@@ -630,8 +630,21 @@ export function Player({
 
   React.useEffect(() => {
     if (audioTracks.length < 2 && !unplayable) return;
+    // The device holding the file does the re-cut, so it is the one that has to
+    // have ffmpeg - and it says so in the title's entry. Asking this device
+    // instead made every phone refuse, having no ffmpeg of its own.
+    if (typeof item.canSwitchAudio === 'boolean') {
+      setCanSwitchAudio(item.canSwitchAudio);
+      return;
+    }
+    // A host from before it said so: let it answer. If it cannot, the stream
+    // fails and the player falls back to the plain file.
+    if (item.peerId) {
+      setCanSwitchAudio(true);
+      return;
+    }
     void api.media.canSwitchAudio().then(setCanSwitchAudio).catch(() => setCanSwitchAudio(false));
-  }, [audioTracks.length, unplayable]);
+  }, [audioTracks.length, unplayable, item.id, item.canSwitchAudio, item.peerId]);
 
   /**
    * Asks for the remuxed stream when the only track is one this device cannot

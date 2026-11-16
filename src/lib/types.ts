@@ -437,6 +437,11 @@ export interface MediaItem {
    */
   audioTracks?: { label: string; lang: string; codec: string; default: boolean }[];
   /**
+   * Whether the device holding the file can switch its audio track (it needs
+   * ffmpeg to re-cut the stream). Absent from an older host, which never said.
+   */
+  canSwitchAudio?: boolean;
+  /**
    * The lowest age this title is meant for, or absent when nobody has said.
    *
    * On our own titles it is the host's rating where they gave one and the
