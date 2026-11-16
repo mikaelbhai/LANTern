@@ -661,6 +661,7 @@ pub fn net_add_manual_peer(
         // Filled in when a link is established; unknown until then.
         local_address: String::new(),
         host_only: false,
+        form: String::new(),
     };
     state.with(|s| s.peers.insert(peer.id.clone(), peer.clone()));
     let _ = app.emit("peer:joined", &peer);
@@ -3337,6 +3338,29 @@ pub fn call_signal(
             v: 1,
             from: me,
             kind: "signal".into(),
+            payload,
+        },
+    )
+}
+
+/// Sends a screen-mirroring message (offer, accept, decline, stop) to a peer.
+///
+/// Its own kind rather than riding `signal`, which is a call's: a phone that is
+/// mirroring is not in a call, and the call screen would have taken the message
+/// for one. False when there is no live link to say it on.
+#[tauri::command]
+pub fn mirror_signal(
+    state: State<'_, AppState>,
+    peer_id: String,
+    payload: serde_json::Value,
+) -> bool {
+    let (links, me) = state.with(|s| (s.links.clone(), s.device_id.clone()));
+    links.send(
+        &peer_id,
+        &Envelope {
+            v: 1,
+            from: me,
+            kind: "mirror".into(),
             payload,
         },
     )

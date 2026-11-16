@@ -35,7 +35,7 @@ export function useRootBack(onBack: () => void): void {
  * the stack says there is a layer and the browser is one entry below it, so the
  * next Back leaves the page.
  */
-function useArmedBack(onBack: () => void, rearm: boolean): void {
+export function useArmedBack(onBack: () => void, rearm: boolean): void {
   const handler = React.useRef(onBack);
   handler.current = onBack;
   const layer = React.useRef<(() => void) | null>(null);

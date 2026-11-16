@@ -81,6 +81,7 @@ pub fn start(
                     // and a host's record can linger in caches after it left.
                     let host_only = info.get_property_val_str("mode") == Some("host")
                         && !state.with(|s| s.links.has(&peer_id));
+                    let form = info.get_property_val_str("form").unwrap_or("").to_string();
 
                     let (peer, is_new) = state.with(|s| {
                         match s.peers.get_mut(&peer_id) {
@@ -99,6 +100,7 @@ pub fn start(
                                 }
                                 existing.name = name.clone();
                                 existing.device_name = device_name.clone();
+                                existing.form = form.clone();
                                 // A host announces its file port, not the one a link
                                 // is dialled on; keep the app's if it is known.
                                 if !host_only {
@@ -147,6 +149,7 @@ pub fn start(
         // Filled in when a link is established; unknown until then.
         local_address: String::new(),
         host_only,
+        form: form.clone(),
     };
                                 s.peers.insert(peer_id.clone(), peer.clone());
                                 (peer, true)
@@ -203,6 +206,14 @@ fn register(
     // the app, which is what an older device sees too.
     if let Some(mode) = mode {
         props.insert("mode".into(), mode.to_string());
+    }
+    // "tv" on a television, set by the Android shell before this starts (see
+    // MainActivity.publishDeviceName). What lets a phone offer to mirror its
+    // screen to it without guessing from the name.
+    if let Ok(form) = std::env::var("LANTERN_FORM") {
+        if !form.is_empty() {
+            props.insert("form".into(), form);
+        }
     }
 
     // Announce on every address this device holds, so peers on any of its

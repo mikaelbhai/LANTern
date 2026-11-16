@@ -11,6 +11,7 @@ import type {
   GameKind,
   GameSession,
   MediaItem,
+  MirrorPayload,
   NetInfo,
   Peer,
   PortMapping,
@@ -155,6 +156,8 @@ export async function startBridge() {
       'tv:backhold',
       // Another device published how it groups its library.
       'library:collections',
+      // A phone offering to mirror its screen to this television, or the answer.
+      'mirror:signal',
       /*
        * Everything below was emitted by Rust and listened for by the page, and
        * never forwarded - so none of it ever arrived in the real app. The
@@ -617,6 +620,12 @@ export const api = {
     /** The same as `download`, from one of those devices rather than from GitHub. */
     downloadLan: (url: string, name: string, expected?: string) =>
       call<string>('update_download_lan', { url, name, expected: expected ?? null }),
+  },
+  /** Arranging a phone-to-television screen mirror. The picture goes natively. */
+  mirror: {
+    /** Returns false when there is no live link to that peer. */
+    signal: (peerId: string, payload: MirrorPayload) =>
+      call<boolean>('mirror_signal', { peerId, payload }),
   },
   /** WebRTC negotiation. The media itself never comes through here. */
   call: {

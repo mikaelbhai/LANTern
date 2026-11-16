@@ -24,7 +24,14 @@
     <uses-feature android:name="android.hardware.camera" tools:node="remove" />
     <uses-feature android:name="android.hardware.microphone" tools:node="remove" />
 
+    <!-- A television shows a phone's screen; it never sends its own. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" tools:node="remove" />
+
     <application>
         <receiver android:name=".CallDeclineReceiver" tools:node="remove" />
+        <service
+            android:name=".LanternService"
+            android:foregroundServiceType="specialUse"
+            tools:replace="android:foregroundServiceType" />
     </application>
 </manifest>

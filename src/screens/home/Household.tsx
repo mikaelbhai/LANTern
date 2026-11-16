@@ -27,6 +27,7 @@ import React from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Cast,
   ChevronDown,
   ChevronUp,
   Laptop,
@@ -43,6 +44,7 @@ import {
 import { api } from '../../lib/bridge';
 import { openDm, sendFilesToPeer } from '../../lib/actions';
 import { pickFilesToSend } from '../../lib/picker';
+import { canMirror, isTelevision, useMirror } from '../../lib/mirror';
 import { useStore } from '../../lib/store';
 import { Avatar } from '../../components/Avatar';
 import { Button, IconButton } from '../../components/ui';
@@ -468,6 +470,12 @@ function PersonRow({
    * that could not be reached from this screen at all.
    */
   const several = here && person.devices.length > 1;
+  const mirrorPhase = useMirror((s) => s.phase);
+  const startMirror = useMirror((s) => s.start);
+  // A television that is here, seen from a phone that can mirror: one tap away,
+  // on the row itself, since mirroring to it is the main thing to do with it.
+  const mirrorTarget =
+    appliance && here && canMirror() ? (person.here.find((d) => isTelevision(d)) ?? null) : null;
 
   return (
     <Row
@@ -500,6 +508,18 @@ function PersonRow({
       onAvatarClick={here ? onToggle : undefined}
       right={
         <div className="flex items-center gap-1.5">
+          {mirrorTarget && (
+            <Button
+              size="sm"
+              variant="accent"
+              className="rounded-full"
+              icon={<Cast size={12} />}
+              disabled={mirrorPhase !== 'idle'}
+              onClick={() => startMirror(mirrorTarget)}
+            >
+              Mirror
+            </Button>
+          )}
           {canWake &&
             (woken ? (
               <span className="text-2xs text-muted">{woken}</span>
@@ -577,6 +597,14 @@ function PersonRow({
                   does not say which device it will land on. Here the device
                   is the row, so the question is already answered.
                 */}
+                {!asleep && canMirror() && isTelevision(device) && (
+                  <IconButton
+                    label={`Mirror this screen to ${label}`}
+                    onClick={() => startMirror(device)}
+                  >
+                    <Cast size={14} />
+                  </IconButton>
+                )}
                 {!asleep && (
                   <IconButton
                     label={`Send a file to ${label}`}
@@ -750,6 +778,9 @@ function DeviceIcon({ peer }: { peer: Peer }) {
 
 /** A machine that belongs to the house rather than to a person. */
 function isAppliance(peer: Peer): boolean {
+  // A television says so now (LANTV announces form=tv); the name test is for
+  // one too old to.
+  if (peer.form === 'tv') return true;
   const name = `${peer.deviceName ?? ''} ${peer.name ?? ''}`.toLowerCase();
   return /(^|\W)(tv|television|shield|chromecast|firestick|projector)(\W|$)/.test(name);
 }

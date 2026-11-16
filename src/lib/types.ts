@@ -64,7 +64,22 @@ export interface Peer {
    * no app there to chat with or call.
    */
   hostOnly?: boolean;
+  /** "tv" for LANTV; empty for a phone or computer, or anything too old to say. */
+  form?: string;
 }
+
+/**
+ * Arranging a screen mirror between a phone and a television.
+ *
+ * The phone offers; the television accepts with the port it is listening on
+ * and a one-time token the phone must present on that connection, or declines.
+ * Either side stops. `from` is stamped on arrival by the native side.
+ */
+export type MirrorPayload =
+  | { op: 'offer'; name: string }
+  | { op: 'accept'; port: number; token: string }
+  | { op: 'decline'; reason?: string }
+  | { op: 'stop' };
 
 export interface Profile {
   id: string;

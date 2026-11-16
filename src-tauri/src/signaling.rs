@@ -848,6 +848,7 @@ fn register_peer(app: &AppHandle, state: &AppState, envelope: &Envelope) {
                     initiated_by: crate::model::Initiator::Them,
                     local_address: local_address.clone(),
                     host_only: false,
+                    form: String::new(),
                 };
                 s.peers.insert(peer_id.clone(), peer.clone());
                 (peer, true)
@@ -1308,6 +1309,10 @@ fn deliver(app: &AppHandle, envelope: &Envelope) {
         "fsbrowseresult" => "companion:browsed",
         "fsfetchresult" => "companion:fetched",
         "signal" => "call:state",
+        // A phone offering to mirror its screen to a television, and the
+        // answer. Only the arrangement travels here; the picture goes over its
+        // own connection between the two (ScreenMirror.kt, MirrorReceiver.kt).
+        "mirror" => "mirror:signal",
         _ => return,
     };
 

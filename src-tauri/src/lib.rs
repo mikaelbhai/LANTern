@@ -209,6 +209,7 @@ pub fn run() {
             commands::chat_typing,
             commands::chat_react,
             commands::call_signal,
+            commands::mirror_signal,
             commands::files_offer,
             commands::files_accept,
             commands::media_sync_start,

@@ -499,6 +499,7 @@ fn peer_for(state: &AppState, g: &Guest) -> crate::model::Peer {
         addresses: Vec::new(),
         local_address: String::new(),
         host_only: false,
+        form: String::new(),
         port,
         layer: crate::model::ConnLayer::Direct,
         latency_ms: -1.0,

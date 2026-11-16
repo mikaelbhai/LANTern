@@ -8,7 +8,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.app.ForegroundServiceStartNotAllowedException
+import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.core.content.ContextCompat
 import android.os.IBinder
 import android.util.Log
 
@@ -31,6 +33,28 @@ class LanternService : Service() {
     private const val CHANNEL_ID = "lantern-running"
     private const val NOTIFICATION_ID = 1
     const val ACTION_STOP = "app.lantern.desktop.STOP"
+    private const val ACTION_MIRROR_ON = "app.lantern.desktop.MIRROR_ON"
+    private const val ACTION_MIRROR_OFF = "app.lantern.desktop.MIRROR_OFF"
+    private const val ACTION_MIRROR_STOP = "app.lantern.desktop.MIRROR_STOP"
+    private const val EXTRA_LABEL = "label"
+
+    /** What the notification says while the screen is being mirrored, if it is. */
+    @Volatile private var mirroringTo: String? = null
+
+    /**
+     * Puts the service into (or takes it out of) screen-capture mode.
+     *
+     * Android 14 hands a MediaProjection only to an app whose foreground service
+     * is already running as a mediaProjection one; ScreenMirror asks here first
+     * and is told when it is.
+     */
+    fun mirroring(context: Context, on: Boolean, label: String) {
+      val intent = Intent(context, LanternService::class.java)
+        .setAction(if (on) ACTION_MIRROR_ON else ACTION_MIRROR_OFF)
+        .putExtra(EXTRA_LABEL, label)
+      runCatching { ContextCompat.startForegroundService(context, intent) }
+        .onFailure { if (on) ScreenMirror.onServicePromoted(false) }
+    }
 
     fun start(context: Context) {
       val intent = Intent(context, LanternService::class.java)
@@ -48,12 +72,34 @@ class LanternService : Service() {
     // The notification's Stop action routes back here rather than to the
     // activity, so quitting works without bringing the window up first.
     if (intent?.action == ACTION_STOP) {
+      ScreenMirror.stopFromNotification()
       stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf()
       return START_NOT_STICKY
     }
 
     createChannel()
+
+    when (intent?.action) {
+      ACTION_MIRROR_STOP -> {
+        ScreenMirror.stopFromNotification()
+        return START_STICKY
+      }
+      ACTION_MIRROR_ON -> {
+        mirroringTo = intent.getStringExtra(EXTRA_LABEL).orEmpty()
+        val ok = runCatching { goForeground(mirroring = true) }
+          .onFailure { Log.w("LanternService", "could not become a screen-capture service", it) }
+          .isSuccess
+        if (!ok) mirroringTo = null
+        ScreenMirror.onServicePromoted(ok)
+        return START_STICKY
+      }
+      ACTION_MIRROR_OFF -> {
+        mirroringTo = null
+        runCatching { goForeground(mirroring = false) }
+        return START_STICKY
+      }
+    }
 
     /*
      * `intent` arrives null here whenever Android is the one calling this,
@@ -75,7 +121,7 @@ class LanternService : Service() {
      * system crash dialog over whatever the person is actually doing.
      */
     try {
-      startForeground(NOTIFICATION_ID, buildNotification())
+      goForeground(mirroring = mirroringTo != null)
     } catch (refused: ForegroundServiceStartNotAllowedException) {
       Log.w("LanternService", "background start refused, stopping quietly", refused)
       stopSelf()
@@ -93,6 +139,32 @@ class LanternService : Service() {
     // never started. The catch above is what keeps that restart from being
     // a crash the next time it is refused.
     return START_STICKY
+  }
+
+  /**
+   * Starts (or restates) the foreground service with the types it needs now.
+   *
+   * Named explicitly rather than left to the manifest: the manifest also lists
+   * mediaProjection, and Android 14 refuses to start a service as that type
+   * without a screen-capture grant in hand - which would have stopped the
+   * service on every ordinary launch.
+   */
+  private fun goForeground(mirroring: Boolean) {
+    val notification = buildNotification()
+    when {
+      Build.VERSION.SDK_INT >= 34 -> startForeground(
+        NOTIFICATION_ID,
+        notification,
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
+          (if (mirroring) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0),
+      )
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> startForeground(
+        NOTIFICATION_ID,
+        notification,
+        if (mirroring) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0,
+      )
+      else -> startForeground(NOTIFICATION_ID, notification)
+    }
   }
 
   private fun createChannel() {
@@ -135,6 +207,24 @@ class LanternService : Service() {
     } else {
       @Suppress("DEPRECATION")
       Notification.Builder(this)
+    }
+
+    val target = mirroringTo
+    if (target != null) {
+      val stopMirror = PendingIntent.getService(
+        this,
+        2,
+        Intent(this, LanternService::class.java).setAction(ACTION_MIRROR_STOP),
+        PendingIntent.FLAG_IMMUTABLE,
+      )
+      return builder
+        .setContentTitle(if (target.isEmpty()) "Mirroring this screen" else "Mirroring to $target")
+        .setContentText("Everything on this screen is showing on the television.")
+        .setSmallIcon(android.R.drawable.ic_menu_slideshow)
+        .setContentIntent(open)
+        .setOngoing(true)
+        .addAction(Notification.Action.Builder(null, "Stop mirroring", stopMirror).build())
+        .build()
     }
 
     return builder

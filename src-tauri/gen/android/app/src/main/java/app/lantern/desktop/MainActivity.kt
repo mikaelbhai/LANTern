@@ -72,6 +72,11 @@ class MainActivity : TauriActivity() {
     // device drops off the network the moment you switch apps.
     runCatching { LanternService.start(this) }
 
+    // A phone can mirror its screen to a television. Built here and not when the
+    // page arrives: the launchers it asks Android through can only be registered
+    // before the activity starts.
+    if (!isTvDevice()) screenMirror = ScreenMirror(this)
+
     ContextCompat.registerReceiver(
       this,
       pipReceiver,
@@ -110,6 +115,10 @@ class MainActivity : TauriActivity() {
       ?: deviceModelName(Build.MANUFACTURER, Build.MODEL)
 
     runCatching { android.system.Os.setenv("LANTERN_DEVICE_NAME", name, true) }
+    // And what kind of device it is, announced beside the name (discovery.rs),
+    // so a phone can offer to mirror its screen here. Televisions were known
+    // only by "tv" turning up in their name.
+    if (isTvDevice()) runCatching { android.system.Os.setenv("LANTERN_FORM", "tv", true) }
   }
 
   /** "Pixel 9a", not "Google Pixel 9a" - the model usually carries the brand. */
@@ -281,10 +290,21 @@ class MainActivity : TauriActivity() {
       val native = TvNativePlayer(this, webView)
       tvPlayer = native
       webView.addJavascriptInterface(native, "LanternTv")
+      // And the other end of a phone mirroring its screen here.
+      val receiver = MirrorReceiver(this, webView)
+      mirrorReceiver = receiver
+      webView.addJavascriptInterface(receiver, "LanternMirrorTv")
+    } else {
+      screenMirror?.let {
+        it.webView = webView
+        webView.addJavascriptInterface(it, "LanternMirror")
+      }
     }
   }
 
   private var tvPlayer: TvNativePlayer? = null
+  private var mirrorReceiver: MirrorReceiver? = null
+  private var screenMirror: ScreenMirror? = null
 
   private fun keepPageAwake() {
     pipWebView?.let {
@@ -298,6 +318,9 @@ class MainActivity : TauriActivity() {
     // The native player is not the page's: pausing the WebView does not pause
     // it, so a film would play on, picture and sound, behind whatever replaced us.
     tvPlayer?.hostPaused()
+    // A television that left the foreground has nowhere to show a phone's
+    // screen. (A phone that leaves keeps mirroring - that is the point of it.)
+    mirrorReceiver?.hostPaused()
     // The base class has just paused the page. If this is the floating window
     // being entered, undo that; the mode-changed callback below covers the
     // order in which Android delivers the two.
@@ -418,6 +441,8 @@ class MainActivity : TauriActivity() {
 
   override fun onDestroy() {
     runCatching { tvPlayer?.destroy() }
+    runCatching { mirrorReceiver?.stop() }
+    runCatching { screenMirror?.stopNow("stopped") }
     tvPlayer = null
     runCatching { unregisterReceiver(pipReceiver) }
     multicastLock?.let { lock ->

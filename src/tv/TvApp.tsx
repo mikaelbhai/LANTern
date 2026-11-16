@@ -9,6 +9,8 @@ import type { MediaItem } from '../lib/types';
 import { TvDetail } from './TvDetail';
 import { TvDevices } from './TvDevices';
 import { TvExitPrompt, useRootBack } from './TvExit';
+import { TvMirror } from './TvMirror';
+import { useMirrorShow } from '../lib/mirror';
 import { TvGrid } from './TvGrid';
 import { TvEmpty, TvHome } from './TvLibrary';
 import { TvPlayer } from './TvPlayer';
@@ -222,11 +224,19 @@ export function TvApp() {
   const rescanRef = React.useRef(rescan);
   rescanRef.current = rescan;
 
+  // A phone's screen on this one, or a phone asking to be: the library and its
+  // keys stand down, and a film that was playing makes way.
+  const mirrorShowing = useMirrorShow((s) => !!s.showing);
+  const mirrorBusy = useMirrorShow((s) => !!s.showing || !!s.offer);
+  React.useEffect(() => {
+    if (mirrorShowing) setPlaying(null);
+  }, [mirrorShowing]);
+
   const open = React.useCallback((t: Tile) => setDetail(t), []);
   const up = React.useCallback(() => setZone('tabs'), []);
 
-  const barActive = zone === 'tabs' && !detail && !playing && !leaving;
-  const pageActive = zone === 'page' && !detail && !playing && !leaving;
+  const barActive = zone === 'tabs' && !detail && !playing && !leaving && !mirrorBusy;
+  const pageActive = zone === 'page' && !detail && !playing && !leaving && !mirrorBusy;
   const empty = !items.length;
 
   // The bar's keys. Moving across it changes the page at once.
@@ -265,7 +275,7 @@ export function TvApp() {
       className="cinema tv-apple fixed inset-0 bg-black text-white overflow-hidden select-none"
       style={{ ['--u' as string]: UNIT, cursor: pointer ? 'default' : 'none' }}
     >
-      <div className={playing ? 'invisible h-full' : 'h-full'}>
+      <div className={playing || mirrorShowing ? 'invisible h-full' : 'h-full'}>
         <div className="relative h-full">
           <div key={tab} className="tv-fade-in h-full">
             {empty && tab !== 'devices' ? (
@@ -328,6 +338,7 @@ export function TvApp() {
           }}
         />
       )}
+      <TvMirror />
       {leaving && (
         <TvExitPrompt
           onStay={() => setLeaving(false)}

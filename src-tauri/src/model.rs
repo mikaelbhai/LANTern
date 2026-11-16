@@ -93,6 +93,11 @@ pub struct Peer {
     /// dialling it only fails every five seconds.
     #[serde(default)]
     pub host_only: bool,
+    /// What kind of device this is, when it says: "tv" for LANTV, empty for a
+    /// phone or a computer and for anything too old to say. A television used to
+    /// be recognised only by "tv" appearing in its name.
+    #[serde(default)]
+    pub form: String,
 }
 
 /// Two of this device's interfaces addressing the same network.

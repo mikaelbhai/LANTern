@@ -28,6 +28,10 @@
          reason string Android requires alongside it.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Mirroring this phone's screen to a television (ScreenMirror.kt). Android 14
+         hands over the screen only to a foreground service running as this type,
+         and still asks the person every time. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- What makes an incoming call take over the screen instead of sitting
          as a heads-up banner a backgrounded app's notification would
@@ -94,7 +98,7 @@
         <service
             android:name=".LanternService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <!-- Required by Android 14+ for any specialUse foreground
                  service - a free-text reason, reviewed only if this ever
                  goes through the Play Store, which a sideloaded LAN app

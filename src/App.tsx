@@ -40,6 +40,8 @@ import { OwnerHost } from './screens/owner/OwnerKey';
 import { initOwner } from './lib/owner';
 import { IncomingGame } from './components/IncomingGame';
 import { NetworkStrip } from './components/NetworkStrip';
+import { MirrorBanner } from './components/MirrorBanner';
+import { initMirror } from './lib/mirror';
 import { useHud } from './lib/useHud';
 import { RejoinBanner } from './screens/games/LeaveGuard';
 
@@ -94,6 +96,8 @@ export default function App() {
         // Whether this build has the owner key. A stock build answers no and
         // nothing else about it is ever touched.
         void initOwner();
+        // Screen mirroring, on a phone (sending) or a television (showing).
+        initMirror();
       });
   }, [init]);
 
@@ -279,6 +283,8 @@ export default function App() {
         {/* The network, when it has something to say. Silent otherwise, and
             it yields to a call, which wants the same strip of screen. */}
         <NetworkStrip onNavigate={go} />
+        {/* While this phone's screen is on a television, and how to stop it. */}
+        <MirrorBanner />
 
         {/*
           Screens are rendered plainly, with no entrance animation. Anything
