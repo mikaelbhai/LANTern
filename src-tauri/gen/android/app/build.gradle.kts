@@ -57,7 +57,12 @@ android {
         abi {
             isEnable = project.hasProperty("lanternSplit")
             reset()
-            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            // No television runs x86_64: that library was 14.5 MB of the LANTV
+            // APK for emulators. The phone keeps it for Chromebooks. The TV pass
+            // also narrows the universal flavour itself (-PabiList, see
+            // rebuild-all.ps1), which this list has to agree with.
+            if (isTvBuild) include("arm64-v8a", "armeabi-v7a")
+            else include("arm64-v8a", "armeabi-v7a", "x86_64")
             isUniversalApk = true
         }
     }
@@ -72,7 +77,19 @@ android {
             manifestPlaceholders["appRoundIcon"] = if (isTvBuild) "@mipmap/ic_launcher_tv_round" else "@mipmap/ic_launcher_round"
             isDebuggable = true
             isJniDebuggable = true
-            isMinifyEnabled = false
+            // Shrunk, although it is the build type every release ships as (it
+            // is debug for its signing, and adb run-as needs it debuggable). Left
+            // unshrunk it carried 20 MB of Java - two thirds of the APK that was
+            // not the Rust library - for the androidx, Material and Media3 code
+            // nothing calls. What Rust and the page reach by name is kept in
+            // proguard-rules.pro; resources are not shrunk, since some are looked
+            // up by name at run time.
+            isMinifyEnabled = true
+            proguardFiles(
+                *fileTree(".") { include("**/*.pro") }
+                    .plus(getDefaultProguardFile("proguard-android-optimize.txt"))
+                    .toList().toTypedArray()
+            )
             packaging {                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
                 jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
                 jniLibs.keepDebugSymbols.add("*/x86/*.so")
@@ -87,6 +104,14 @@ android {
                     .toList().toTypedArray()
             )
         }
+    }
+    // The television's manifest, merged over the shared one: it takes back the
+    // permissions LANTV never uses (src/tv/AndroidManifest.xml says which, and
+    // why). Through the debug source set because that is the build type every
+    // APK ships as, and a source set rather than a flavour for the reason given
+    // at isTvBuild.
+    if (isTvBuild) {
+        sourceSets.getByName("debug").manifest.srcFile("src/tv/AndroidManifest.xml")
     }
     kotlinOptions {
         jvmTarget = "1.8"

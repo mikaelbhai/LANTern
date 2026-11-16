@@ -1,21 +1,23 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# What must survive shrinking, because something reaches it by name that R8
+# cannot see.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# The debug build type is minified (see build.gradle.kts), so these rules are in
+# force in every APK that ships.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Rust calls into the app through JNI by class and method name: MainActivity's
+# statics (pip.rs, battery.rs, storage.rs, callaudio.rs, incomingcall.rs,
+# apkinstall.rs, commands.rs), and Tauri's generated classes. A renamed or
+# removed method there is a crash the first time that feature is used, not at
+# start, so all of it is kept rather than method by method.
+-keep class app.lantern.desktop.** { *; }
+-keep class app.tauri.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# The page calls these through addJavascriptInterface (TvNativePlayer, Ipc, the
+# mirroring classes). R8 cannot see a call that arrives from JavaScript.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keepattributes JavascriptInterface,*Annotation*
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Stack traces that still name the line, for the crash log.
+-keepattributes SourceFile,LineNumberTable

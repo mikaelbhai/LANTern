@@ -265,10 +265,18 @@ function Save-SplitApks {
     Copy-Item $apk $phoneApk -Force
 
     Remove-Item $apk -ErrorAction SilentlyContinue
+    # The phone's per-architecture APKs are in the same folder, and LANTV makes
+    # no x86_64 one (no television runs it). Left there, the phone's x86_64 APK
+    # was what got copied out as LANTV-x86_64; cleared so only what this pass
+    # writes can be collected.
+    Remove-Item "$root\src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-*-debug.apk" -ErrorAction SilentlyContinue
+    Remove-Item "$root\src-tauri\gen\android\LANTV-x86_64.apk" -ErrorAction SilentlyContinue
+    # Quoted: unquoted, PowerShell reads the comma as an array and hands gradle
+    # two arguments.
     if ($Split) {
-      .\gradlew.bat assembleUniversalDebug -PlanternTv=true -PlanternSplit=true -x rustBuildUniversalDebug --no-daemon -q
+      .\gradlew.bat assembleUniversalDebug -PlanternTv=true -PlanternSplit=true "-PabiList=arm64-v8a,armeabi-v7a" -x rustBuildUniversalDebug --no-daemon -q
     } else {
-      .\gradlew.bat assembleUniversalDebug -PlanternTv=true -x rustBuildUniversalDebug --no-daemon -q
+      .\gradlew.bat assembleUniversalDebug -PlanternTv=true "-PabiList=arm64-v8a,armeabi-v7a" -x rustBuildUniversalDebug --no-daemon -q
     }
     if ($LASTEXITCODE -ne 0) { Write-Error "LANTV build failed"; exit 1 }
 
