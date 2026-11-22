@@ -4586,11 +4586,19 @@ fn remember_macs(state: &AppState) {
                     // An empty address never replaces a known one: a phone
                     // cannot read ARP, so every look it took used to blank the
                     // address a paired device had just announced.
+                    //
+                    // The same for the kind of machine. A peer that dialled this
+                    // device first has no `os` until discovery has caught up, and
+                    // writing that blank over the one on file made a paired PC
+                    // look like something that cannot be woken - no Wake button,
+                    // with its hardware address sitting right there.
                     "INSERT INTO device_macs (device_id, mac, name, device_name, os, seen_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                      ON CONFLICT(device_id) DO UPDATE SET
                         mac = CASE WHEN ?2 = '' THEN device_macs.mac ELSE ?2 END,
-                        name = ?3, device_name = ?4, os = ?5, seen_at = ?6",
+                        name = ?3, device_name = ?4,
+                        os = CASE WHEN ?5 = '' THEN device_macs.os ELSE ?5 END,
+                        seen_at = ?6",
                     rusqlite::params![
                         device_id,
                         mac,
@@ -5002,6 +5010,70 @@ mod wake_announce_tests {
             state.with(|s| s.macs.get("pc").cloned()),
             Some("74:56:3c:8d:cf:30".to_string()),
         );
+    }
+
+    fn with_db() -> AppState {
+        let state = me();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn).unwrap();
+        state.with(|s| s.db = Some(conn));
+        state
+    }
+
+    fn os_on_file(state: &AppState, id: &str) -> String {
+        state.with(|s| {
+            s.db.as_ref()
+                .unwrap()
+                .query_row("SELECT os FROM device_macs WHERE device_id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        })
+    }
+
+    fn peer(id: &str, os: &str) -> crate::model::Peer {
+        crate::model::Peer {
+            id: id.into(),
+            device_id: id.into(),
+            name: "MIKAEL".into(),
+            device_name: "MIKAEL-PC".into(),
+            color: String::new(),
+            emoji: String::new(),
+            os: os.into(),
+            ip: "192.168.100.67".into(),
+            addresses: vec!["192.168.100.67".into()],
+            local_address: String::new(),
+            port: 7979,
+            layer: crate::model::ConnLayer::Direct,
+            latency_ms: -1.0,
+            loss_pct: 0.0,
+            status: crate::model::PeerStatus::Available,
+            status_message: None,
+            last_seen: 0,
+            trusted: true,
+            scope: crate::model::PeerScope::Local,
+            initiated_by: crate::model::Initiator::Them,
+            host_only: false,
+            form: String::new(),
+        }
+    }
+
+    /// A paired PC dialled this phone before discovery had seen it, so the peer
+    /// was made from the handshake with no `os`. Seeing it again, still with
+    /// none, must not wipe the "windows" that was written when discovery had.
+    #[test]
+    fn a_known_kind_of_machine_is_not_blanked_by_a_peer_that_does_not_say() {
+        let state = with_db();
+        state.with(|s| s.peers.insert("pc".into(), peer("pc", "windows")));
+        remember_macs(&state);
+        assert_eq!(os_on_file(&state, "pc"), "windows");
+
+        state.with(|s| s.peers.get_mut("pc").unwrap().os = String::new());
+        remember_macs(&state);
+        assert_eq!(os_on_file(&state, "pc"), "windows", "a blank os replaced a known one");
+
+        // A real change is still taken.
+        state.with(|s| s.peers.get_mut("pc").unwrap().os = "linux".into());
+        remember_macs(&state);
+        assert_eq!(os_on_file(&state, "pc"), "linux");
     }
 
     #[test]

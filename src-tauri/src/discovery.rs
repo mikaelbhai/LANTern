@@ -101,6 +101,15 @@ pub fn start(
                                 existing.name = name.clone();
                                 existing.device_name = device_name.clone();
                                 existing.form = form.clone();
+                                // A peer that dialled us first was made from its
+                                // handshake, which does not say what it runs on, and
+                                // this was the only place that could learn it. Never
+                                // blanked: an announcement without one says nothing.
+                                if let Some(os) = info.get_property_val_str("os") {
+                                    if !os.is_empty() && existing.os != os {
+                                        existing.os = os.to_string();
+                                    }
+                                }
                                 // A host announces its file port, not the one a link
                                 // is dialled on; keep the app's if it is known.
                                 if !host_only {
