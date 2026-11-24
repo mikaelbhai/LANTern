@@ -33,6 +33,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { RotationLock } from '../components/RotationLock';
 import { Avatar } from '../components/Avatar';
 import { LockButton } from '../components/PinUnlock';
+import { browseAvailable, openBrowse } from '../lib/browse';
 import { canHost } from '../lib/picker';
 import { Badge, Button, Empty, IconButton, Input, Modal, Select, Spinner } from '../components/ui';
 import { Audience, TITLE_AGES, ratingLabel } from '../components/Audience';
@@ -572,7 +573,16 @@ export function Theatre() {
                * further into what is already published: a phrase, tried
                * against every host on the network at once.
                */
-              <LockButton />
+              <>
+                {/* This phone's own folders and other computers' shared drives, which
+                    otherwise sit two taps deep under the menu and the Files tabs. */}
+                {browseAvailable() && (
+                  <IconButton label="Browse this phone and the network" onClick={() => openBrowse(useStore.getState().navigate)}>
+                    <HardDrive size={16} />
+                  </IconButton>
+                )}
+                <LockButton />
+              </>
             )}
           </>
         }

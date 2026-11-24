@@ -24,6 +24,8 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Avatar } from '../components/Avatar';
 import { CreateShareModal, Hosting, rootOf, toEntries } from './files/Hosting';
 import { PeerFolders } from './files/PeerFolders';
+import { Browse } from './files/Browse';
+import { browseAvailable, takeBrowseRequest } from '../lib/browse';
 import {
   Badge,
   Button,
@@ -60,12 +62,15 @@ type Filter = 'all' | 'in' | 'out' | 'active';
 type KindFilter = 'all' | 'image' | 'video' | 'audio' | 'file';
 type SortKey = 'recent' | 'name' | 'size';
 
-type Tab = 'transfers' | 'hosting' | 'peers';
+type Tab = 'transfers' | 'hosting' | 'peers' | 'browse';
 
 export function Files() {
-  const [tab, setTab] = React.useState<Tab>('transfers');
+  const [tab, setTab] = React.useState<Tab>(() => (browseAvailable() && takeBrowseRequest() ? 'browse' : 'transfers'));
   const shares = useStore((s) => s.shares);
   const liveShares = shares.filter((s) => s.running).length;
+  // Only the phone app can read the phone's folders and other computers' shared
+  // drives; elsewhere the tab does not exist.
+  const canBrowse = browseAvailable();
 
   return (
     <div className="h-full flex flex-col">
@@ -75,6 +80,7 @@ export function Files() {
           onChange={setTab}
           options={[
             { value: 'transfers', label: 'Transfers' },
+            ...(canBrowse ? [{ value: 'browse' as const, label: 'Browse' }] : []),
             {
               value: 'peers',
               // Where "how do I see other people's folders" is answered. It
@@ -106,7 +112,15 @@ export function Files() {
       </ScreenHeader>
 
       <div className="flex-1 min-h-0">
-        {tab === 'transfers' ? <Transfers /> : tab === 'peers' ? <PeerFolders /> : <Hosting />}
+        {tab === 'transfers' ? (
+          <Transfers />
+        ) : tab === 'browse' ? (
+          <Browse />
+        ) : tab === 'peers' ? (
+          <PeerFolders />
+        ) : (
+          <Hosting />
+        )}
       </div>
     </div>
   );

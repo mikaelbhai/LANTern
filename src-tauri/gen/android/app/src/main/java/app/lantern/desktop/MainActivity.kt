@@ -35,6 +35,7 @@ import android.util.Rational
 import android.webkit.WebView
 import android.view.WindowManager
 import androidx.activity.enableEdgeToEdge
+import app.lantern.desktop.browse.BrowseBridge
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -299,12 +300,17 @@ class MainActivity : TauriActivity() {
         it.webView = webView
         webView.addJavascriptInterface(it, "LanternMirror")
       }
+      // The phone's own files and other computers' shared drives (browse/).
+      val browse = BrowseBridge(applicationContext, webView)
+      browseBridge = browse
+      webView.addJavascriptInterface(browse, "LanternBrowse")
     }
   }
 
   private var tvPlayer: TvNativePlayer? = null
   private var mirrorReceiver: MirrorReceiver? = null
   private var screenMirror: ScreenMirror? = null
+  private var browseBridge: BrowseBridge? = null
 
   private fun keepPageAwake() {
     pipWebView?.let {
@@ -442,6 +448,7 @@ class MainActivity : TauriActivity() {
   override fun onDestroy() {
     runCatching { tvPlayer?.destroy() }
     runCatching { mirrorReceiver?.stop() }
+    runCatching { browseBridge?.destroy() }
     runCatching { screenMirror?.stopNow("stopped") }
     tvPlayer = null
     runCatching { unregisterReceiver(pipReceiver) }

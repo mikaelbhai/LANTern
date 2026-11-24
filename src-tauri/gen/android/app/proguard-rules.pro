@@ -21,3 +21,12 @@
 
 # Stack traces that still name the line, for the crash log.
 -keepattributes SourceFile,LineNumberTable
+
+# jcifs-ng finds its providers and ciphers by name at run time (browse/Sources.kt),
+# and uses slf4j and BouncyCastle by reflection; shrinking them leaves a share that
+# will not open, found only on the first one.
+-keep class jcifs.** { *; }
+-dontwarn jcifs.**
+-keep class org.bouncycastle.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn org.slf4j.**

@@ -105,6 +105,14 @@ android {
             )
         }
     }
+    // BouncyCastle (for jcifs-ng) and jspecify (from Media3) both ship the same
+    // OSGi manifest under META-INF/versions. It is packaging metadata nothing
+    // reads on Android, and two copies of it fail the merge.
+    packaging {
+        resources {
+            excludes += setOf("META-INF/versions/*/OSGI-INF/MANIFEST.MF", "META-INF/DEPENDENCIES")
+        }
+    }
     // The television's manifest, merged over the shared one: it takes back the
     // permissions LANTV never uses (src/tv/AndroidManifest.xml says which, and
     // why). Through the debug source set because that is the build type every
@@ -135,6 +143,13 @@ dependencies {
     // picture goes to a bare SurfaceView and every control is the page's own, so
     // none of Media3's UI artifacts are wanted.
     implementation("androidx.media3:media3-exoplayer:1.8.0")
+    // Browsing other computers' shared drives (browse/SmbSource.kt). jcifs-ng
+    // speaks SMB 2 and 3, which is what Windows and every current NAS offer, and
+    // lists a host's shares as well as what is inside them. It wants slf4j and
+    // BouncyCastle for the hashing and ciphers Android's own providers do not have.
+    implementation("eu.agno3.jcifs:jcifs-ng:2.1.10")
+    implementation("org.slf4j:slf4j-api:1.7.36")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
